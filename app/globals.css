@@ -1,0 +1,510 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   Theme: CSS変数で統一。Light = 白+薄紫 / Dark = 黒+濃紫（青っぽさなし）
+   prefers-color-scheme で切替。入力・chip は十分なコントラスト。
+   --------------------------------------------------------------------------- */
+:root {
+  --font-geist-sans: Arial, Helvetica, sans-serif;
+  --font-geist-mono: "Courier New", Courier, monospace;
+  --bg: #ffffff;
+  --bg-grad: linear-gradient(160deg, #faf5ff 0%, #f5f3ff 35%, #ffffff 70%),
+    radial-gradient(ellipse 120% 80% at 20% -10%, rgba(196, 181, 253, 0.28) 0%, transparent 50%);
+  --surface: #f5f3ff;
+  --surface-2: #ede9fe;
+  --border: #c4b5fd;
+  --text: #0f172a;
+  --muted: #475569;
+
+  --primary: #0f172a;
+  --primary-contrast: #ffffff;
+
+  --chip-bg: #ede9fe;
+  --chip-text: #4c1d95;
+  --chip-border: #a78bfa;
+
+  --input-bg: #ffffff;
+  --input-text: #0f172a;
+  --placeholder: #4c1d95;
+
+  --button-bg: #ffffff;
+  --button-text: #0f172a;
+  --button-border: #a78bfa;
+  --button-ghost-bg: #f5f3ff;
+
+  --table-bg: #ffffff;
+  --table-border: #e9e5ff;
+  --table-header-bg: #f5f3ff;
+
+  /* Legacy / 互換 */
+  --background: var(--bg);
+  --foreground: var(--text);
+  --panel: var(--surface);
+  --panel-bg: var(--surface);
+  --panel-border: var(--border);
+  --panel-2: var(--surface-2);
+  --text-muted: var(--muted);
+  --button-primary-bg: var(--primary);
+  --button-primary-text: var(--primary-contrast);
+  --button-secondary-bg: var(--button-bg);
+  --button-secondary-border: var(--button-border);
+  --button-secondary-text: var(--button-text);
+  --chip-fg: var(--chip-text);
+  --input-border: var(--button-border);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* 黒 + 濃い紫（インディゴ/青を排除） */
+    --bg: #08111f;
+    --bg-grad: linear-gradient(160deg, #08111f 0%, #0c1728 42%, #091423 100%),
+      radial-gradient(ellipse 110% 72% at 78% 0%, rgba(96, 165, 250, 0.14) 0%, transparent 48%);
+    --surface: #111b2e;
+    --surface-2: #172338;
+    --border: #2a3850;
+    --text: #e8eef8;
+    --muted: #9aa9bf;
+
+    --primary: #8fb7ff;
+    --primary-contrast: #08111f;
+
+    --chip-bg: #16253a;
+    --chip-text: #dce9ff;
+    --chip-border: #334155;
+
+    --input-bg: #0d1626;
+    --input-text: #e8eef8;
+    --placeholder: #7f93af;
+
+    --button-bg: #121d31;
+    --button-text: #e8eef8;
+    --button-border: #334155;
+    --button-ghost-bg: #0d1626;
+
+    --table-bg: #0d1626;
+    --table-border: #223148;
+    --table-header-bg: #152136;
+
+    --background: var(--bg);
+    --foreground: var(--text);
+    --panel: var(--surface);
+    --panel-bg: var(--surface);
+    --panel-2: var(--surface-2);
+    --text-muted: var(--muted);
+    --button-primary-bg: var(--primary);
+    --button-primary-text: var(--primary-contrast);
+    --button-secondary-bg: var(--button-bg);
+    --button-secondary-border: var(--button-border);
+    --button-secondary-text: var(--button-text);
+    --chip-fg: var(--chip-text);
+    --input-border: var(--button-border);
+  }
+}
+
+/* 設定画面のテーマ切替: data-theme で強制（システムは属性なしで prefers-color-scheme に従う） */
+[data-theme="light"] {
+  --bg: #ffffff;
+  --bg-grad: linear-gradient(160deg, #faf5ff 0%, #f5f3ff 35%, #ffffff 70%),
+    radial-gradient(ellipse 120% 80% at 20% -10%, rgba(196, 181, 253, 0.28) 0%, transparent 50%);
+  --surface: #f5f3ff;
+  --surface-2: #ede9fe;
+  --border: #c4b5fd;
+  --text: #0f172a;
+  --muted: #475569;
+  --primary: #0f172a;
+  --primary-contrast: #ffffff;
+  --chip-bg: #ede9fe;
+  --chip-text: #4c1d95;
+  --chip-border: #a78bfa;
+  --input-bg: #ffffff;
+  --input-text: #0f172a;
+  --placeholder: #4c1d95;
+  --button-bg: #ffffff;
+  --button-text: #0f172a;
+  --button-border: #a78bfa;
+  --button-ghost-bg: #f5f3ff;
+  --table-bg: #ffffff;
+  --table-border: #e9e5ff;
+  --table-header-bg: #f5f3ff;
+  --background: var(--bg);
+  --foreground: var(--text);
+  --panel: var(--surface);
+  --panel-bg: var(--surface);
+  --panel-2: var(--surface-2);
+  --text-muted: var(--muted);
+  --button-primary-bg: var(--primary);
+  --button-primary-text: var(--primary-contrast);
+  --button-secondary-bg: var(--button-bg);
+  --button-secondary-border: var(--button-border);
+  --button-secondary-text: var(--button-text);
+  --chip-fg: var(--chip-text);
+  --input-border: var(--button-border);
+}
+
+/* 設定画面ボタン: 丸み・hover/active */
+.settings-switch:hover:not(:disabled) {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+.settings-switch:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+/* サイドバー「新規ページ作成」CTA（控えめ） */
+.create-page-cta:hover:not(:disabled) {
+  transform: translateY(-1px) scale(1.005);
+  box-shadow: 0 12px 24px rgba(7, 9, 14, 0.42);
+  filter: brightness(1.06);
+}
+.create-page-cta:active:not(:disabled) {
+  transform: scale(0.985);
+  box-shadow: 0 4px 10px rgba(7, 9, 14, 0.3);
+}
+
+/* サイドバーメニュー UI/UX */
+.sidebar-menu .sidebar-workspace-btn:hover:not(:disabled) {
+  background: var(--surface);
+  border-color: var(--border);
+}
+.sidebar-nav a:hover {
+  background: var(--surface-2);
+}
+.sidebar-nav a:active {
+  background: var(--surface-2);
+}
+.sidebar-logout-btn:hover {
+  color: #991b1b;
+  background: #fee2e2;
+  box-shadow: 0 4px 10px rgba(185, 28, 28, 0.16);
+  transform: translateY(-1px);
+}
+.sidebar-logout-btn:active {
+  transform: scale(0.985);
+  box-shadow: 0 1px 4px rgba(185, 28, 28, 0.14);
+}
+
+/* Pages 展開直下の「新規ページを追加」ボタン（控えめ） */
+
+/* 選択範囲コメントのハイライト表示 */
+.pages-comment-highlight {
+  background: rgba(167, 139, 250, 0.35);
+  border-radius: 2px;
+}
+
+.create-page-spinner {
+  display: inline-block;
+  border: 2px solid var(--border);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: create-page-spin 0.7s linear infinite;
+  box-sizing: border-box;
+}
+@keyframes create-page-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+[data-theme="dark"] {
+  --bg: #08111f;
+  --bg-grad: linear-gradient(160deg, #08111f 0%, #0c1728 42%, #091423 100%),
+    radial-gradient(ellipse 110% 72% at 78% 0%, rgba(96, 165, 250, 0.14) 0%, transparent 48%);
+  --surface: #111b2e;
+  --surface-2: #172338;
+  --border: #2a3850;
+  --text: #e8eef8;
+  --muted: #9aa9bf;
+  --primary: #8fb7ff;
+  --primary-contrast: #08111f;
+  --chip-bg: #16253a;
+  --chip-text: #dce9ff;
+  --chip-border: #334155;
+  --input-bg: #0d1626;
+  --input-text: #e8eef8;
+  --placeholder: #7f93af;
+  --button-bg: #121d31;
+  --button-text: #e8eef8;
+  --button-border: #334155;
+  --button-ghost-bg: #0d1626;
+  --table-bg: #0d1626;
+  --table-border: #223148;
+  --table-header-bg: #152136;
+  --background: var(--bg);
+  --foreground: var(--text);
+  --panel: var(--surface);
+  --panel-bg: var(--surface);
+  --panel-2: var(--surface-2);
+  --text-muted: var(--muted);
+  --button-primary-bg: var(--primary);
+  --button-primary-text: var(--primary-contrast);
+  --button-secondary-bg: var(--button-bg);
+  --button-secondary-border: var(--button-border);
+  --button-secondary-text: var(--button-text);
+  --chip-fg: var(--chip-text);
+  --input-border: var(--button-border);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+html {
+  background: var(--bg);
+  color: var(--text);
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+/* オンボーディング: フルスクリーン・中央寄せ・薄い紫グラデ背景（余白で閉じるが見切れない） */
+.onboarding-page {
+  background: var(--bg-grad);
+  background-attachment: fixed;
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 20px 32px;
+  box-sizing: border-box;
+}
+
+.onboarding-page .onboarding-close-btn {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+/* 参考画像どおり: カード上段＝ロゴ中央・ステップ数右上 */
+.onboarding-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  gap: 12px;
+}
+
+.onboarding-card-header .onboarding-logo-wrap {
+  flex-shrink: 0;
+}
+
+/* ロゴ: ライト＝紫グラデ＋薄ラベンダー背景のロゴそのまま、ダーク＝通常ロゴ */
+.onboarding-logo-wrap {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  position: relative;
+}
+
+.onboarding-logo-wrap img {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+}
+
+@media (prefers-color-scheme: light) {
+  .onboarding-logo-wrap {
+    background: #ede9fe;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+  }
+  .onboarding-logo-light {
+    display: block !important;
+    filter: brightness(0) invert(1);
+  }
+  .onboarding-logo-dark {
+    display: none !important;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .onboarding-logo-wrap {
+    background: transparent;
+  }
+  .onboarding-logo-light {
+    display: none !important;
+  }
+  .onboarding-logo-dark {
+    display: block !important;
+  }
+}
+
+/* 中央カード: max-width 520px、洗練された余白 */
+.onboarding-card {
+  width: 100%;
+  max-width: 520px;
+  margin: 0 auto;
+  padding: 32px 28px 40px;
+  background: var(--surface);
+  border-radius: 20px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+  border: 1px solid var(--border);
+  box-sizing: border-box;
+}
+
+@media (prefers-color-scheme: dark) {
+  .onboarding-card {
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+  }
+}
+
+/* オンボーディング CTA: 横幅100%、rounded-xl、黒ベース、shadow-lg、hover/押下で気持ち良い */
+.onboarding-cta {
+  width: 100%;
+  padding: 16px 24px;
+  border-radius: 14px;
+  border: none;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  color: #fff;
+  background: #0f172a;
+}
+
+.onboarding-cta:hover:not(:disabled) {
+  transform: scale(1.02);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+}
+
+.onboarding-cta:active:not(:disabled) {
+  transform: scale(0.98);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
+}
+
+.onboarding-cta:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+  background: var(--surface-2);
+  color: var(--muted);
+  box-shadow: none;
+  transform: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  .onboarding-cta:not(:disabled) {
+    background: #8fb7ff;
+    color: #08111f;
+    box-shadow: 0 12px 30px rgba(4, 10, 20, 0.42);
+  }
+  .onboarding-cta:hover:not(:disabled) {
+    box-shadow: 0 14px 34px rgba(4, 10, 20, 0.48);
+  }
+}
+
+/* 進捗バー（3ステップ） */
+.onboarding-progress {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 28px;
+}
+
+.onboarding-progress-dots {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.onboarding-progress-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  transition: background 0.2s, opacity 0.2s;
+}
+
+.onboarding-progress-dot.done {
+  background: #7c3aed;
+  opacity: 0.9;
+}
+
+.onboarding-progress-dot.current {
+  background: #7c3aed;
+  opacity: 1;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+.onboarding-progress-dot.pending {
+  background: var(--surface-2);
+  opacity: 0.5;
+}
+
+@media (prefers-color-scheme: dark) {
+  .onboarding-progress-dot.done,
+  .onboarding-progress-dot.current {
+    background: #8fb7ff;
+  }
+}
+
+/* オンボーディング入力: 角丸・影・余白 */
+.onboarding-input {
+  width: 100%;
+  padding: 14px 18px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--input-bg);
+  color: var(--input-text);
+  font-size: 16px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  box-sizing: border-box;
+}
+
+.onboarding-input::placeholder {
+  color: var(--placeholder);
+}
+
+/* アクセシビリティ: フォーカスリング（キーボード操作時） */
+.onboarding-page button:focus-visible,
+aside button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+input::placeholder,
+select::placeholder,
+textarea::placeholder {
+  color: var(--placeholder);
+  opacity: 1;
+}
+
+/* 請求書印刷: サイドバー・ボタン類を非表示、請求書部分のみ印刷 */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .invoice-print-area,
+  .invoice-print-area * {
+    visibility: visible;
+  }
+  .invoice-print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    max-width: none;
+    padding: 16px;
+    margin: 0;
+    background: #fff;
+    color: #111;
+    box-shadow: none;
+    border: none;
+  }
+  .invoice-print-area table,
+  .invoice-print-area th,
+  .invoice-print-area td {
+    border-color: #ccc !important;
+    color: #111;
+  }
+  .no-print {
+    display: none !important;
+  }
+}
