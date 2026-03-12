@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server"
 import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
 import { getOrgRole, getUserIdFromToken, isOrgAdmin } from "@/lib/apiAuth"
