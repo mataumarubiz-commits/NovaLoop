@@ -2,11 +2,12 @@ import { NextRequest, NextResponse } from "next/server"
 import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
 import { getOrgRole, getUserIdFromToken, isOrgAdmin } from "@/lib/apiAuth"
 import { writeAuditLog } from "@/lib/auditLog"
+import { type AppOrgRole, updateOrgMembershipRole } from "@/lib/orgRoles"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
-const ALLOWED_ROLES = ["owner", "executive_assistant", "member"] as const
+const ALLOWED_ROLES = ["owner", "executive_assistant", "member"] as const satisfies readonly AppOrgRole[]
 
 export async function POST(req: NextRequest) {
   try {
@@ -16,9 +17,9 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}))
     const orgId = typeof body?.orgId === "string" ? body.orgId.trim() : null
     const targetUserId = typeof body?.userId === "string" ? body.userId.trim() : null
-    const nextRole =
+    const nextRole: AppOrgRole | null =
       typeof body?.role === "string" && (ALLOWED_ROLES as readonly string[]).includes(body.role)
-        ? body.role
+        ? (body.role as AppOrgRole)
         : null
 
     if (!orgId || !targetUserId || !nextRole) {
@@ -46,14 +47,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "Owner role cannot be changed" }, { status: 400 })
     }
 
-    const { error } = await admin
-      .from("app_users")
-      .update({ role: nextRole })
-      .eq("user_id", targetUserId)
-      .eq("org_id", orgId)
+    const membershipUpdate = await updateOrgMembershipRole(admin, {
+      userId: targetUserId,
+      orgId,
+      role: nextRole,
+    })
 
-    if (error) {
-      return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+    if (membershipUpdate.error) {
+      return NextResponse.json({ ok: false, error: membershipUpdate.error.message }, { status: 500 })
     }
 
     await writeAuditLog(admin, {
@@ -65,6 +66,7 @@ export async function POST(req: NextRequest) {
       meta: {
         previous_role: currentRole,
         next_role: nextRole,
+        stored_role: membershipUpdate.storedRole,
       },
     })
 

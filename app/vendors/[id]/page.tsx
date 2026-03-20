@@ -3,6 +3,7 @@
 import Link from "next/link"
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react"
 import { useParams } from "next/navigation"
+import type { ApplyAiResultDetail } from "@/lib/aiClientEvents"
 import { supabase } from "@/lib/supabase"
 import { useAuthOrg } from "@/hooks/useAuthOrg"
 
@@ -62,8 +63,8 @@ const buttonStyle: CSSProperties = {
 }
 
 function currentMonth() {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`
+  const date = new Date()
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`
 }
 
 function invoiceStateLabel(status?: string | null) {
@@ -100,6 +101,17 @@ function maskAccount(value?: string | null) {
   return `****${value.slice(-4)}`
 }
 
+function buildRejectAiContext(vendorName: string, invoice: VendorInvoiceRow | null) {
+  return [
+    `外注名: ${vendorName}`,
+    `対象月: ${invoice?.billing_month ?? "-"}`,
+    `請求ステータス: ${invoice?.status ?? "-"}`,
+    `請求額: ${invoice?.total ?? 0}`,
+    `差し戻し回数: ${invoice?.return_count ?? 0}`,
+    `前回理由: ${invoice?.rejected_reason ?? "-"}`,
+  ].join("\n")
+}
+
 export default function VendorDetailPage() {
   const params = useParams()
   const id = typeof params?.id === "string" ? params.id : null
@@ -112,6 +124,8 @@ export default function VendorDetailPage() {
   const [vendorUser, setVendorUser] = useState<VendorUserRow | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busyKey, setBusyKey] = useState<string | null>(null)
+  const [rejectOpen, setRejectOpen] = useState(false)
+  const [rejectReasonDraft, setRejectReasonDraft] = useState("")
   const month = currentMonth()
   const canAccess = role === "owner" || role === "executive_assistant"
 
@@ -143,7 +157,7 @@ export default function VendorDetailPage() {
     ])
 
     if (vendorRes.error || !vendorRes.data) {
-      setError("外注先詳細の読み込みに失敗しました")
+      setError("外注詳細の読み込みに失敗しました。")
       setLoading(false)
       return
     }
@@ -159,6 +173,18 @@ export default function VendorDetailPage() {
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<ApplyAiResultDetail>).detail
+      if (detail?.source !== "vendor" || detail.applyTarget !== "vendor_reject_reason" || !detail.result?.text) return
+      setRejectReasonDraft(detail.result.text)
+      setRejectOpen(true)
+    }
+
+    window.addEventListener("apply-ai-result", handler as EventListener)
+    return () => window.removeEventListener("apply-ai-result", handler as EventListener)
+  }, [])
 
   const currentInvoice = useMemo(() => invoices.find((invoice) => invoice.billing_month === month) ?? invoices[0] ?? null, [invoices, month])
 
@@ -223,14 +249,24 @@ export default function VendorDetailPage() {
     }
   }
 
+  const openRejectComposer = () => {
+    setRejectReasonDraft(currentInvoice?.rejected_reason ?? "")
+    setRejectOpen(true)
+  }
+
   const handleReject = async () => {
     if (!currentInvoice) return
-    const reason = window.prompt("差し戻し理由を入力してください")
-    if (!reason) return
+    const reason = rejectReasonDraft.trim()
+    if (!reason) {
+      setError("差し戻し理由を入力してください")
+      return
+    }
+
     setBusyKey("reject")
     setError(null)
     try {
       await callApi(`/api/vendor-invoices/${currentInvoice.id}/review`, { action: "reject", category: "other", reason })
+      setRejectOpen(false)
       await load()
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "差し戻しに失敗しました")
@@ -259,7 +295,7 @@ export default function VendorDetailPage() {
 
   if (authLoading || loading) return <div style={{ padding: 32, color: "var(--muted)" }}>読み込み中...</div>
   if (!canAccess) return <div style={{ padding: 32, color: "var(--muted)" }}>owner / executive_assistant のみ利用できます。</div>
-  if (!vendor) return <div style={{ padding: 32, color: "var(--muted)" }}>外注先が見つかりません。</div>
+  if (!vendor) return <div style={{ padding: 32, color: "var(--muted)" }}>外注が見つかりません。</div>
 
   return (
     <div style={{ padding: "32px 40px 60px", minHeight: "100vh", background: "var(--bg-grad)" }}>
@@ -267,7 +303,7 @@ export default function VendorDetailPage() {
         <header style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "end" }}>
           <div>
             <Link href="/vendors" style={{ color: "var(--primary)", textDecoration: "none", fontWeight: 700 }}>
-              外注先一覧へ
+              外注一覧へ
             </Link>
             <h1 style={{ fontSize: 28, margin: "10px 0 8px", color: "var(--text)" }}>{vendor.name}</h1>
             <p style={{ margin: 0, color: "var(--muted)" }}>{vendor.email || "メール未登録"}</p>
@@ -285,9 +321,9 @@ export default function VendorDetailPage() {
         {error ? <section style={{ ...cardStyle, borderColor: "#fecaca", background: "#fff1f2", color: "#b91c1c" }}>{error}</section> : null}
 
         <section style={{ ...cardStyle, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 }}>
-          <SummaryBlock label="招待状態" value={vendorUser ? "参加済み" : vendor.vendor_portal_invited_at ? "招待送信済み" : "未招待"} />
-          <SummaryBlock label="プロフィール" value={profile?.billing_name ? "登録済み" : vendorUser ? "参加済み" : "未登録"} />
-          <SummaryBlock label="口座情報" value={bank?.bank_name ? "登録済み" : "未登録"} />
+          <SummaryBlock label="招待状態" value={vendorUser ? "登録済み" : vendor.vendor_portal_invited_at ? "招待済み" : "未招待"} />
+          <SummaryBlock label="プロフィール" value={profile?.billing_name ? "登録済み" : vendorUser ? "登録途中" : "未登録"} />
+          <SummaryBlock label="振込先" value={bank?.bank_name ? "登録済み" : "未登録"} />
           <SummaryBlock label="当月請求" value={invoiceStateLabel(currentInvoice?.status)} />
         </section>
 
@@ -303,23 +339,23 @@ export default function VendorDetailPage() {
             <button type="button" onClick={() => void handleApprove()} disabled={!currentInvoice || busyKey === "approve"} style={buttonStyle}>
               承認
             </button>
-            <button type="button" onClick={() => void handleReject()} disabled={!currentInvoice || busyKey === "reject"} style={buttonStyle}>
+            <button type="button" onClick={openRejectComposer} disabled={!currentInvoice || busyKey === "reject"} style={buttonStyle}>
               差し戻し
             </button>
             <button type="button" onClick={() => void handleAddPayout()} disabled={!currentInvoice || busyKey === "payout"} style={buttonStyle}>
-              Payout へ追加
+              Payout へ渡す
             </button>
           </div>
         </section>
 
         <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 16 }}>
           <section style={cardStyle}>
-            <h2 style={{ margin: 0, fontSize: 18, color: "var(--text)" }}>外注先情報</h2>
+            <h2 style={{ margin: 0, fontSize: 18, color: "var(--text)" }}>外注情報</h2>
             <dl style={{ display: "grid", gap: 10, marginTop: 14 }}>
-              <InfoRow label="外注先名" value={vendor.name} />
+              <InfoRow label="外注名" value={vendor.name} />
               <InfoRow label="メール" value={vendor.email || "-"} />
               <InfoRow label="メモ" value={vendor.notes || "-"} />
-              <InfoRow label="招待送信日" value={fmtDate(vendor.vendor_portal_invited_at)} />
+              <InfoRow label="招待日" value={fmtDate(vendor.vendor_portal_invited_at)} />
             </dl>
           </section>
 
@@ -338,7 +374,7 @@ export default function VendorDetailPage() {
         </section>
 
         <section style={cardStyle}>
-          <h2 style={{ margin: 0, fontSize: 18, color: "var(--text)" }}>当月または最新の請求</h2>
+          <h2 style={{ margin: 0, fontSize: 18, color: "var(--text)" }}>最新請求</h2>
           <dl style={{ display: "grid", gap: 10, marginTop: 14 }}>
             <InfoRow label="対象月" value={currentInvoice?.billing_month || month} />
             <InfoRow label="ステータス" value={invoiceStateLabel(currentInvoice?.status)} />
@@ -367,7 +403,17 @@ export default function VendorDetailPage() {
                 <Link
                   key={invoice.id}
                   href={`/vendors/${vendor.id}/invoices/${invoice.id}`}
-                  style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 14, textDecoration: "none", color: "inherit", display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}
+                  style={{
+                    border: "1px solid var(--border)",
+                    borderRadius: 12,
+                    padding: 14,
+                    textDecoration: "none",
+                    color: "inherit",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    flexWrap: "wrap",
+                  }}
                 >
                   <div>
                     <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -387,6 +433,114 @@ export default function VendorDetailPage() {
           </div>
         </section>
       </div>
+
+      {rejectOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setRejectOpen(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(15,23,42,0.42)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 20,
+            zIndex: 70,
+          }}
+        >
+          <div
+            onClick={(event) => event.stopPropagation()}
+            style={{
+              width: "min(720px, 100%)",
+              borderRadius: 18,
+              border: "1px solid var(--border)",
+              background: "var(--surface)",
+              boxShadow: "0 18px 48px rgba(15,23,42,0.24)",
+              padding: 20,
+              display: "grid",
+              gap: 14,
+            }}
+          >
+            <div>
+              <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>{vendor.name} / {currentInvoice?.billing_month ?? month}</div>
+              <h2 style={{ margin: 0, fontSize: 22, color: "var(--text)" }}>差し戻し理由を確認</h2>
+            </div>
+
+            <div style={{ fontSize: 13, color: "var(--muted)", lineHeight: 1.7 }}>
+              AI整形は文面の下書きだけです。実際の差し戻しは下の「差し戻しを確定」で送信されます。
+            </div>
+
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                onClick={() =>
+                  window.dispatchEvent(
+                    new CustomEvent("open-ai-palette", {
+                      detail: {
+                        source: "vendor" as const,
+                        mode: "reject_reason" as const,
+                        text: rejectReasonDraft,
+                        compareText: rejectReasonDraft,
+                        context: buildRejectAiContext(vendor.name, currentInvoice),
+                        title: "Vendor Billing AI",
+                        applyLabel: "差し戻し文面に反映",
+                        applyTarget: "vendor_reject_reason",
+                        meta: {
+                          sourceObject: "vendor_invoice",
+                          recordId: currentInvoice?.id ?? vendor.id,
+                          recordLabel: `${vendor.name} / ${currentInvoice?.billing_month ?? month}`,
+                        },
+                      },
+                    })
+                  )
+                }
+                style={buttonStyle}
+              >
+                AI整形
+              </button>
+            </div>
+
+            <textarea
+              value={rejectReasonDraft}
+              onChange={(event) => setRejectReasonDraft(event.target.value)}
+              rows={8}
+              placeholder="差し戻し理由を入力"
+              style={{
+                width: "100%",
+                borderRadius: 12,
+                border: "1px solid var(--input-border)",
+                background: "var(--input-bg)",
+                color: "var(--input-text)",
+                padding: 12,
+                resize: "vertical",
+                boxSizing: "border-box",
+              }}
+            />
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" }}>
+              <button type="button" onClick={() => setRejectOpen(false)} style={buttonStyle}>
+                キャンセル
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleReject()}
+                disabled={busyKey === "reject" || !rejectReasonDraft.trim()}
+                style={{
+                  ...buttonStyle,
+                  border: "1px solid var(--button-primary-bg)",
+                  background: "var(--button-primary-bg)",
+                  color: "var(--primary-contrast)",
+                  cursor: busyKey === "reject" || !rejectReasonDraft.trim() ? "not-allowed" : "pointer",
+                }}
+              >
+                {busyKey === "reject" ? "送信中..." : "差し戻しを確定"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

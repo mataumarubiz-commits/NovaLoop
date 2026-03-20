@@ -1,0 +1,34 @@
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+Error: Route "/help/[slug]" used `params.slug`. `params` is a Promise and must be unwrapped with `await` or `React.use()` before accessing its properties. Learn more: https://nextjs.org/docs/messages/sync-dynamic-apis
+    at <unknown> (app\help\[slug]\page.tsx:16:69)
+    at Array.find (<anonymous>)
+    at HelpArticlePage (app\help\[slug]\page.tsx:16:33)
+  14 |
+  15 | export default function HelpArticlePage({ params }: Props) {
+> 16 |   const article = HELP_ARTICLES.find((item) => item.slug === params.slug)
+     |                                                                     ^
+  17 |   if (!article) notFound()
+  18 |
+  19 |   const related = HELP_ARTICLES.filter((item) => item.category === article.category && item.id !== article.id)
+Error: Route "/help/[slug]" used `params.slug`. `params` is a Promise and must be unwrapped with `await` or `React.use()` before accessing its properties. Learn more: https://nextjs.org/docs/messages/sync-dynamic-apis
+    at <unknown> (app\help\[slug]\page.tsx:16:69)
+    at Array.find (<anonymous>)
+    at HelpArticlePage (app\help\[slug]\page.tsx:16:33)
+  14 |
+  15 | export default function HelpArticlePage({ params }: Props) {
+> 16 |   const article = HELP_ARTICLES.find((item) => item.slug === params.slug)
+     |                                                                     ^
+  17 |   if (!article) notFound()
+  18 |
+  19 |   const related = HELP_ARTICLES.filter((item) => item.category === article.category && item.id !== article.id)
+Error: Route "/help/[slug]" used `params.slug`. `params` is a Promise and must be unwrapped with `await` or `React.use()` before accessing its properties. Learn more: https://nextjs.org/docs/messages/sync-dynamic-apis
+    at <unknown> (app\help\[slug]\page.tsx:16:69)
+    at Array.find (<anonymous>)
+    at HelpArticlePage (app\help\[slug]\page.tsx:16:33)
+  14 |
+  15 | export default function HelpArticlePage({ params }: Props) {
+> 16 |   const article = HELP_ARTICLES.find((item) => item.slug === params.slug)
+     |                                                                     ^
+  17 |   if (!article) notFound()
+  18 |
+  19 |   const related = HELP_ARTICLES.filter((item) => item.category === article.category && item.id !== article.id)

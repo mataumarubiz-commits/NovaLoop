@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createUserClient, getBearerToken } from "@/lib/userClient"
 import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
 import { writeAuditLog } from "@/lib/auditLog"
+import { normalizeInvoiceSourceTypeForWrite } from "@/lib/invoiceSourceType"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -23,7 +24,7 @@ type CreateInvoiceBody = {
   bank_account_id?: string | null
   notes?: string
   request_id?: string | null
-  source_type?: "manual" | "copy" | "request" | "billing"
+  source_type?: "manual" | "copy" | "request" | "billing" | "billing_monthly" | "billing_bulk"
   copied_from_invoice_id?: string | null
   lines?: Array<{ description: string; quantity: number; unit_price: number }>
 }
@@ -112,6 +113,7 @@ export async function POST(req: NextRequest) {
     const withholdingRate = Number.isFinite(Number(body.withholding_rate)) ? Number(body.withholding_rate) : 10.21
     const subtotal = normalizedLines.reduce((sum, line) => sum + line.quantity * line.unit_price, 0)
     const totals = calcTotals(subtotal, taxMode, taxRate, withholdingEnabled, withholdingRate)
+    const sourceType = normalizeInvoiceSourceTypeForWrite(body.source_type)
 
     const invoiceNo = `INV-${issueDate.slice(0, 4)}-${String(nextSeq).padStart(7, "0")}`
     const bankAccountId = typeof body.bank_account_id === "string" && body.bank_account_id ? body.bank_account_id : null
@@ -176,7 +178,7 @@ export async function POST(req: NextRequest) {
       guest_client_address: body.client_id ? null : body.guest_client_address?.trim() || null,
       request_id: body.request_id ?? null,
       copied_from_invoice_id: body.copied_from_invoice_id ?? null,
-      source_type: body.source_type ?? "manual",
+      source_type: sourceType,
       notes: body.notes?.trim() || null,
       created_at: new Date().toISOString(),
     }
@@ -221,7 +223,7 @@ export async function POST(req: NextRequest) {
       resource_type: "invoice",
       resource_id: invoiceId,
       meta: {
-        source_type: body.source_type ?? "manual",
+        source_type: sourceType,
         invoice_no: invoiceNo,
         invoice_month: invoiceMonth,
         total: totals.total,

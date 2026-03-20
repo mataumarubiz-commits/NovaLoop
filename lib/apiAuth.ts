@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 import type { SupabaseClient } from "@supabase/supabase-js"
+import { normalizeAppOrgRole, type AppOrgRole } from "@/lib/orgRoles"
 
 export async function getUserIdFromToken(req: NextRequest): Promise<string | null> {
   const authHeader = req.headers.get("Authorization")
@@ -21,16 +22,14 @@ export async function getOrgRole(
   admin: SupabaseClient,
   userId: string,
   orgId: string
-): Promise<"owner" | "executive_assistant" | "member" | null> {
+): Promise<AppOrgRole | null> {
   const { data } = await admin
     .from("app_users")
     .select("role")
     .eq("user_id", userId)
     .eq("org_id", orgId)
     .maybeSingle()
-  const role = (data as { role?: string } | null)?.role
-  if (role === "owner" || role === "executive_assistant" || role === "member") return role
-  return null
+  return normalizeAppOrgRole((data as { role?: string } | null)?.role)
 }
 
 export function isOrgAdmin(role: string | null): boolean {

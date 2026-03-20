@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
 import { getUserIdFromToken } from "@/lib/apiAuth"
+import { normalizeAppOrgRole, upsertOrgMembership } from "@/lib/orgRoles"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -27,7 +28,7 @@ export async function POST(req: NextRequest) {
     }
     const row = inv as { status: string; expires_at: string; org_id: string; role_key: string }
     if (row.status !== "pending") {
-      return NextResponse.json({ error: "この招待は既に使用済みまたは無効です" }, { status: 400 })
+      return NextResponse.json({ error: "この招待はすでに使用済みか無効です" }, { status: 400 })
     }
     if (new Date(row.expires_at) < new Date()) {
       await admin.from("org_invites").update({ status: "expired" }).eq("id", (inv as { id: string }).id)
@@ -35,21 +36,18 @@ export async function POST(req: NextRequest) {
     }
 
     const orgId = row.org_id
-    const roleKey = row.role_key
+    const roleKey = normalizeAppOrgRole(row.role_key) ?? "member"
 
-    const { error: upsertErr } = await admin.from("app_users").upsert(
-      {
-        user_id: userId,
-        org_id: orgId,
-        role: roleKey,
-        status: "active",
-        display_name: displayName ?? null,
-      },
-      { onConflict: "user_id,org_id" }
-    )
-    if (upsertErr) {
+    const membershipWrite = await upsertOrgMembership(admin, {
+      userId,
+      orgId,
+      role: roleKey,
+      status: "active",
+      displayName,
+    })
+    if (membershipWrite.error) {
       return NextResponse.json(
-        { error: upsertErr.message ?? "参加に失敗しました" },
+        { error: membershipWrite.error.message ?? "参加に失敗しました" },
         { status: 500 }
       )
     }

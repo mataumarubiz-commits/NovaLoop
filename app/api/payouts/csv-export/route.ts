@@ -151,7 +151,7 @@ export async function POST(req: NextRequest) {
         notes: [
           "このローカル版のCSV出力は UTF-8 BOM / CRLF です。",
           "総合振込の本番運用前に、金融機関の取込仕様に合わせて確認してください。",
-          "委託者コードと口座名義カナは Workspace 設定で管理します。",
+          "委託者コードと口座名義カナはワークスペース設定で管理します。",
         ],
       })
     }

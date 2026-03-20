@@ -3,6 +3,7 @@
 import type { CSSProperties } from "react"
 import { useEffect, useState } from "react"
 import Link from "next/link"
+import ChecklistReturnButton from "@/components/home/ChecklistReturnButton"
 import { supabase } from "@/lib/supabase"
 import { useAuthOrg } from "@/hooks/useAuthOrg"
 
@@ -277,6 +278,9 @@ export default function WorkspaceSettingsPage() {
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg-grad)", padding: "32px 24px 56px" }}>
       <div style={{ maxWidth: 980, margin: "0 auto", display: "grid", gap: 16 }}>
+        <div>
+          <ChecklistReturnButton />
+        </div>
         <header>
           <h1 style={{ fontSize: 28, color: "var(--text)", marginBottom: 8 }}>ワークスペース</h1>
           <p style={{ margin: 0, color: "var(--muted)" }}>

@@ -63,8 +63,8 @@ export default function AiChannelsSettingsPage() {
   const [settings, setSettings] = useState<ChannelSettings>({
     discord_enabled: false,
     line_enabled: false,
-    discord_bot_label: "Nova loop AI",
-    line_bot_label: "Nova loop AI",
+    discord_bot_label: "NovaLoop AI",
+    line_bot_label: "NovaLoop AI",
     open_app_url: "",
   })
   const [links, setLinks] = useState<LinkRow[]>([])
@@ -270,7 +270,7 @@ export default function AiChannelsSettingsPage() {
               />
             </label>
             <label style={{ display: "grid", gap: 6, gridColumn: "1 / -1" }}>
-              <span>Nova loop URL</span>
+              <span>NovaLoop URL</span>
               <input
                 value={settings.open_app_url ?? ""}
                 disabled={!canManage}

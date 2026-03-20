@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react"
 import Link from "next/link"
+import ChecklistReturnButton from "@/components/home/ChecklistReturnButton"
 import GuideEmptyState from "@/components/shared/GuideEmptyState"
+import type { ApplyAiResultDetail } from "@/lib/aiClientEvents"
 import { useAuthOrg } from "@/hooks/useAuthOrg"
 import type { BillingDuplicateMode, BillingPreviewResult } from "@/lib/monthlyBilling"
 import { supabase } from "@/lib/supabase"
@@ -67,6 +69,7 @@ type InvoiceRequestLog = {
 type InvoiceRequestRow = {
   id: string
   client_id: string | null
+  client_name?: string | null
   guest_name: string | null
   guest_company_name: string | null
   recipient_email: string | null
@@ -86,6 +89,9 @@ type InvoiceRequestRow = {
   created_at: string
   reminder_logs?: InvoiceRequestLog[]
 }
+
+type RequestProgressFilter = "all" | "open" | "issued"
+type RequestDeadlineFilter = "all" | "overdue" | "soon" | "scheduled" | "unset"
 
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat("ja-JP", {
@@ -143,6 +149,9 @@ export default function BillingPage() {
   const [success, setSuccess] = useState<string | null>(null)
   const [requestMessage, setRequestMessage] = useState<string | null>(null)
   const [result, setResult] = useState<GenerateResponse | null>(null)
+  const [requestSearch, setRequestSearch] = useState("")
+  const [requestProgressFilter, setRequestProgressFilter] = useState<RequestProgressFilter>("all")
+  const [requestDeadlineFilter, setRequestDeadlineFilter] = useState<RequestDeadlineFilter>("all")
 
   const [requestClientId, setRequestClientId] = useState("")
   const [requestGuestName, setRequestGuestName] = useState("")
@@ -150,9 +159,52 @@ export default function BillingPage() {
   const [requestEmail, setRequestEmail] = useState("")
   const [requestTitle, setRequestTitle] = useState("請求書のご提出依頼")
   const [requestDescription, setRequestDescription] = useState("")
+  const [requestReminderMessage, setRequestReminderMessage] = useState("")
   const [requestDeadline, setRequestDeadline] = useState(new Date().toISOString().slice(0, 10))
   const [requestReminderEnabled, setRequestReminderEnabled] = useState(true)
   const [requestLeadDays, setRequestLeadDays] = useState(3)
+
+  const selectedRequestClient = useMemo(() => clients.find((client) => client.id === requestClientId) ?? null, [clients, requestClientId])
+
+  const buildRequestAiContext = useCallback(() => {
+    return [
+      `対象月: ${billingMonth}`,
+      `送付先クライアント: ${selectedRequestClient?.name ?? "-"}`,
+      `送付先担当者: ${requestGuestName || "-"}`,
+      `送付先会社名: ${requestGuestCompanyName || "-"}`,
+      `送付先メール: ${requestEmail || "-"}`,
+      `期限: ${requestDeadline || "-"}`,
+      `リマインド: ${requestReminderEnabled ? `ON / ${requestLeadDays}日前` : "OFF"}`,
+      preview ? `対象件数: ${preview.total_count} / 合計金額: ${formatCurrency(preview.total_amount)}` : "対象件数: 未取得",
+      `請求依頼本文: ${requestDescription || "-"}`,
+      `送付添え文: ${requestReminderMessage || "-"}`,
+    ].join("\n")
+  }, [
+    billingMonth,
+    preview,
+    requestDeadline,
+    requestDescription,
+    requestEmail,
+    requestGuestCompanyName,
+    requestGuestName,
+    requestLeadDays,
+    requestReminderEnabled,
+    requestReminderMessage,
+    selectedRequestClient,
+  ])
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<ApplyAiResultDetail>).detail
+      if (detail?.source !== "billing" || !detail.result?.text) return
+      if (detail.applyTarget === "billing_request_title") setRequestTitle(detail.result.text)
+      if (detail.applyTarget === "billing_request_description") setRequestDescription(detail.result.text)
+      if (detail.applyTarget === "billing_request_reminder_message") setRequestReminderMessage(detail.result.text)
+    }
+
+    window.addEventListener("apply-ai-result", handler as EventListener)
+    return () => window.removeEventListener("apply-ai-result", handler as EventListener)
+  }, [])
 
   useEffect(() => {
     if (!orgId || !canAccess) {
@@ -340,12 +392,14 @@ export default function BillingPage() {
 
       const generated = Array.isArray(json.generated) ? json.generated : []
       if (generated.length > 0) {
-        for (const row of generated) {
-          await fetch(`/api/invoices/${row.invoice_id}/pdf`, {
-            method: "POST",
-            headers: { Authorization: `Bearer ${token}` },
-          }).catch(() => null)
-        }
+        await Promise.allSettled(
+          generated.map((row) =>
+            fetch(`/api/invoices/${row.invoice_id}/pdf`, {
+              method: "POST",
+              headers: { Authorization: `Bearer ${token}` },
+            }).catch(() => null)
+          )
+        )
       }
 
       setResult(json)
@@ -430,6 +484,7 @@ export default function BillingPage() {
               request_deadline: requestDeadline,
               reminder_enabled: requestReminderEnabled,
               reminder_lead_days: requestLeadDays,
+              reminder_message: requestReminderMessage,
             },
           ],
         }),
@@ -445,6 +500,7 @@ export default function BillingPage() {
       setRequestGuestCompanyName("")
       setRequestEmail("")
       setRequestDescription("")
+      setRequestReminderMessage("")
       setRequestReminderEnabled(true)
       setRequestLeadDays(3)
       await loadInvoiceRequests()
@@ -502,6 +558,50 @@ export default function BillingPage() {
     () => invoiceRequests.filter((row) => requestDeadlineState(row.request_deadline).label === "期限超過").length,
     [invoiceRequests]
   )
+  const filteredInvoiceRequests = useMemo(() => {
+    const query = requestSearch.trim().toLowerCase()
+    return invoiceRequests.filter((row) => {
+      const deadlineState = requestDeadlineState(row.request_deadline)
+      const deadlineKey =
+        deadlineState.label === "期限超過"
+          ? "overdue"
+          : deadlineState.label === "期限が近い"
+            ? "soon"
+            : deadlineState.label === "期限未設定"
+              ? "unset"
+              : "scheduled"
+      const haystack = [
+        row.client_name,
+        row.guest_company_name,
+        row.guest_name,
+        row.recipient_email,
+        row.requested_title,
+        row.requested_description,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+      const matchesQuery = !query || haystack.includes(query)
+      const matchesProgress =
+        requestProgressFilter === "all" ||
+        (requestProgressFilter === "issued" ? Boolean(row.issued_invoice_id) : !row.issued_invoice_id)
+      const matchesDeadline = requestDeadlineFilter === "all" || requestDeadlineFilter === deadlineKey
+      return matchesQuery && matchesProgress && matchesDeadline
+    })
+  }, [invoiceRequests, requestDeadlineFilter, requestProgressFilter, requestSearch])
+  const previewClients = preview?.clients ?? []
+  const monthInvoiceTotal = useMemo(
+    () => monthInvoices.reduce((sum, row) => sum + Number(row.total ?? 0), 0),
+    [monthInvoices]
+  )
+  const openRequestCount = useMemo(
+    () => invoiceRequests.filter((row) => !row.issued_invoice_id).length,
+    [invoiceRequests]
+  )
+  const clientNameMap = useMemo(
+    () => new Map(clients.map((client) => [client.id, client.name])),
+    [clients]
+  )
 
   if (authLoading || loading) {
     return <div style={{ padding: 32, color: "var(--muted)" }}>読み込み中...</div>
@@ -519,8 +619,185 @@ export default function BillingPage() {
   }
 
   return (
-    <div style={{ padding: "32px 40px 60px", minHeight: "100vh", background: "var(--bg-grad)" }}>
-      <div style={{ display: "grid", gap: 16 }}>
+    <div style={{ padding: "32px 24px 72px", minHeight: "100vh", background: "var(--bg-grad)" }}>
+      <div style={{ display: "grid", gap: 20, maxWidth: 1380, margin: "0 auto" }}>
+        <div>
+          <ChecklistReturnButton />
+        </div>
+
+        <section style={heroCardStyle}>
+          <div
+            style={{
+              display: "grid",
+              gap: 20,
+              gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+              alignItems: "start",
+            }}
+          >
+            <div style={{ display: "grid", gap: 16 }}>
+              <div style={{ display: "grid", gap: 10 }}>
+                <p style={{ margin: 0, fontSize: 12, letterSpacing: "0.12em", color: "var(--muted)" }}>
+                  BILLING
+                </p>
+                <h1 style={{ margin: 0, fontSize: 34, lineHeight: 1.15, color: "var(--text)" }}>
+                  請求をまとめて進める
+                </h1>
+                <p style={{ margin: 0, color: "var(--muted)", fontSize: 15, lineHeight: 1.7 }}>
+                  対象月を選んで候補を確認し、必要な取引先だけ請求書を発行します。PDF の生成までをこの画面で終わらせて、送付判断は人が確認します。
+                </p>
+              </div>
+
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                {["1. 候補を見る", "2. 請求書を作る", "3. PDFを確認する"].map((step) => (
+                  <span key={step} style={heroStepStyle}>
+                    {step}
+                  </span>
+                ))}
+              </div>
+
+              <div
+                style={{
+                  display: "grid",
+                  gap: 12,
+                  gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+                }}
+              >
+                <MetricCard label="請求対象金額" value={formatCurrency(preview?.total_amount ?? 0)} />
+                <MetricCard label="発行できる取引先" value={`${generatableClientCount}社`} />
+                <MetricCard label="当月の請求書" value={`${monthInvoices.length}件`} />
+                <MetricCard
+                  label="期限超過の依頼"
+                  value={`${overdueCount}件`}
+                  accent={overdueCount > 0 ? "#b91c1c" : undefined}
+                />
+              </div>
+            </div>
+
+            <div style={controlPanelStyle}>
+              <SectionHeading
+                eyebrow="CONTROL"
+                title="対象月と発行条件"
+                description="候補を更新してから、一括発行か取引先単位の発行を選びます。"
+              />
+
+              <div
+                style={{
+                  display: "grid",
+                  gap: 12,
+                  gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+                }}
+              >
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={fieldLabelStyle}>対象月</span>
+                  <select
+                    value={billingMonth}
+                    onChange={(event) => setBillingMonth(event.target.value)}
+                    style={inputStyle}
+                  >
+                    {monthOptions.map((month) => (
+                      <option key={month} value={month}>
+                        {month}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={fieldLabelStyle}>表示する取引先</span>
+                  <select
+                    value={clientFilter}
+                    onChange={(event) => setClientFilter(event.target.value)}
+                    style={inputStyle}
+                  >
+                    <option value="">すべて</option>
+                    {clients.map((client) => (
+                      <option key={client.id} value={client.id}>
+                        {client.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={fieldLabelStyle}>既存請求書がある場合</span>
+                  <select
+                    value={duplicateMode}
+                    onChange={(event) =>
+                      setDuplicateMode(event.target.value as BillingDuplicateMode)
+                    }
+                    style={inputStyle}
+                  >
+                    <option value="skip_existing">スキップする</option>
+                    <option value="allow_additional">追加請求書として発行</option>
+                  </select>
+                </label>
+              </div>
+
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  onClick={() => void loadPreview()}
+                  disabled={previewLoading}
+                  style={{
+                    ...outlineButtonStyle,
+                    cursor: previewLoading ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {previewLoading ? "候補を更新中..." : "請求候補を更新"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void generateInvoices()}
+                  disabled={generating || previewClients.length === 0}
+                  style={{
+                    ...primaryButtonStyle,
+                    cursor:
+                      generating || previewClients.length === 0 ? "not-allowed" : "pointer",
+                    opacity: generating || previewClients.length === 0 ? 0.7 : 1,
+                  }}
+                >
+                  {generating && !generatingClientId ? "請求書を作成中..." : "この条件で一括発行"}
+                </button>
+              </div>
+
+              <div style={subtlePanelStyle}>
+                <div style={{ display: "grid", gap: 6 }}>
+                  <strong style={{ fontSize: 14, color: "var(--text)" }}>今の設定</strong>
+                  <span style={{ fontSize: 13, color: "var(--muted)", lineHeight: 1.6 }}>
+                    {clientFilter
+                      ? `${clientNameMap.get(clientFilter) ?? "選択中の取引先"}だけを表示しています。`
+                      : "すべての取引先を表示しています。"}{" "}
+                    {duplicateMode === "skip_existing"
+                      ? "既存の請求書がある取引先は新規発行せずにスキップします。"
+                      : "既存の請求書があっても追加の請求書を発行します。"}
+                  </span>
+                  <span style={{ fontSize: 13, color: "var(--muted)" }}>
+                    今月の請求書合計は {formatCurrency(monthInvoiceTotal)}、未処理の請求依頼は{" "}
+                    {openRequestCount} 件です。
+                  </span>
+                </div>
+
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <Link
+                    href={`/invoices?month=${encodeURIComponent(billingMonth)}`}
+                    style={inlineActionLinkStyle}
+                  >
+                    今月の請求書一覧
+                  </Link>
+                  <Link href="/invoices/new" style={inlineActionLinkStyle}>
+                    手動で請求書を作成
+                  </Link>
+                  <Link href="/settings/workspace" style={inlineActionLinkStyle}>
+                    振込先と請求元を見直す
+                  </Link>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <details style={advancedDetailsStyle}>
+          <summary style={advancedSummaryStyle}>詳細設定と従来ビューを開く</summary>
         <header style={{ display: "grid", gap: 8 }}>
           <p style={{ fontSize: 12, letterSpacing: "0.08em", color: "var(--muted)", margin: 0 }}>BILLING</p>
           <h1 style={{ fontSize: 28, margin: 0, color: "var(--text)" }}>月次請求と請求依頼</h1>
@@ -598,6 +875,7 @@ export default function BillingPage() {
             {zipLoading ? "ZIP 作成中..." : "当月の請求書 ZIP"}
           </button>
         </section>
+        </details>
 
         {error ? <div style={{ ...cardStyle, borderColor: "#fecaca", background: "#fff1f2", color: "#b91c1c" }}>{error}</div> : null}
 
@@ -625,7 +903,7 @@ export default function BillingPage() {
           </div>
         ) : null}
 
-        <section style={{ ...cardStyle, overflowX: "auto" }}>
+        <section style={{ ...sectionCardStyle, overflowX: "auto" }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
             <div>
               <h2 style={{ margin: 0, fontSize: 18, color: "var(--text)" }}>月次請求プレビュー</h2>
@@ -688,7 +966,7 @@ export default function BillingPage() {
           )}
         </section>
 
-        <section style={{ ...cardStyle, display: "grid", gap: 14 }}>
+        <section style={{ ...sectionCardStyle, display: "grid", gap: 14 }}>
           <div>
             <h2 style={{ margin: 0, fontSize: 18, color: "var(--text)" }}>請求依頼の登録</h2>
             <p style={{ margin: "4px 0 0", color: "var(--muted)", fontSize: 13 }}>
@@ -726,6 +1004,46 @@ export default function BillingPage() {
             </label>
             <label style={{ display: "grid", gap: 6 }}>
               <span>依頼タイトル</span>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 12, color: "var(--muted)" }}>AI</span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    window.dispatchEvent(
+                      new CustomEvent("open-ai-palette", {
+                        detail: {
+                          source: "billing" as const,
+                          mode: "request_title" as const,
+                          text: requestTitle,
+                          compareText: requestTitle,
+                          context: buildRequestAiContext(),
+                          title: "Billing AI",
+                          applyLabel: "件名に反映",
+                          applyTarget: "billing_request_title",
+                          applyTransform: "first_line" as const,
+                          meta: {
+                            sourceObject: "invoice_request_draft",
+                            recordId: requestClientId || requestEmail || billingMonth,
+                            recordLabel: selectedRequestClient?.name || requestGuestName || billingMonth,
+                          },
+                        },
+                      })
+                    )
+                  }
+                  style={{
+                    padding: "4px 8px",
+                    borderRadius: 8,
+                    border: "1px solid var(--border)",
+                    background: "var(--surface-2)",
+                    color: "var(--text)",
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  AI件名案
+                </button>
+              </div>
               <input value={requestTitle} onChange={(event) => setRequestTitle(event.target.value)} style={inputStyle} />
             </label>
             <label style={{ display: "grid", gap: 6 }}>
@@ -738,7 +1056,123 @@ export default function BillingPage() {
             </label>
             <label style={{ display: "grid", gap: 6, gridColumn: "1 / -1" }}>
               <span>メモ</span>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  onClick={() =>
+                    window.dispatchEvent(
+                      new CustomEvent("open-ai-palette", {
+                        detail: {
+                          source: "billing" as const,
+                          mode: "request_message" as const,
+                          text: requestDescription,
+                          compareText: requestDescription,
+                          context: buildRequestAiContext(),
+                          title: "Billing AI",
+                          applyLabel: "本文に反映",
+                          applyTarget: "billing_request_description", // request body
+                          meta: {
+                            sourceObject: "invoice_request_draft",
+                            recordId: requestClientId || requestEmail || billingMonth,
+                            recordLabel: selectedRequestClient?.name || requestGuestName || billingMonth,
+                          },
+                        },
+                      })
+                    )
+                  }
+                  style={{
+                    padding: "4px 8px",
+                    borderRadius: 8,
+                    border: "1px solid var(--border)",
+                    background: "var(--surface-2)",
+                    color: "var(--text)",
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  AI依頼文案
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    window.dispatchEvent(
+                      new CustomEvent("open-ai-palette", {
+                        detail: {
+                          source: "billing" as const,
+                          mode: "send_message" as const,
+                          text: requestReminderMessage,
+                          compareText: requestReminderMessage,
+                          context: buildRequestAiContext(),
+                          title: "Billing AI",
+                          applyLabel: "本文に反映",
+                          applyTarget: "billing_request_reminder_message",
+                          meta: {
+                            sourceObject: "invoice_request_draft",
+                            recordId: requestClientId || requestEmail || billingMonth,
+                            recordLabel: selectedRequestClient?.name || requestGuestName || billingMonth,
+                          },
+                        },
+                      })
+                    )
+                  }
+                  style={{
+                    padding: "4px 8px",
+                    borderRadius: 8,
+                    border: "1px solid var(--border)",
+                    background: "var(--surface-2)",
+                    color: "var(--text)",
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  AI送付文案
+                </button>
+              </div>
               <textarea value={requestDescription} onChange={(event) => setRequestDescription(event.target.value)} rows={3} style={{ ...inputStyle, resize: "vertical" }} />
+            </label>
+            <label style={{ display: "grid", gap: 6, gridColumn: "1 / -1" }}>
+              <span>送付添え文 / リマインド文</span>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  onClick={() =>
+                    window.dispatchEvent(
+                      new CustomEvent("open-ai-palette", {
+                        detail: {
+                          source: "billing" as const,
+                          mode: "send_message" as const,
+                          text: requestReminderMessage,
+                          compareText: requestReminderMessage,
+                          context: buildRequestAiContext(),
+                          title: "Billing AI",
+                          applyLabel: "送付文に反映",
+                          applyTarget: "billing_request_reminder_message",
+                          meta: {
+                            sourceObject: "invoice_request_draft",
+                            recordId: requestClientId || requestEmail || billingMonth,
+                            recordLabel: selectedRequestClient?.name || requestGuestName || billingMonth,
+                          },
+                        },
+                      })
+                    )
+                  }
+                  style={{
+                    padding: "4px 8px",
+                    borderRadius: 8,
+                    border: "1px solid var(--border)",
+                    background: "var(--surface-2)",
+                    color: "var(--text)",
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  AI送付文生成
+                </button>
+              </div>
+              <textarea value={requestReminderMessage} onChange={(event) => setRequestReminderMessage(event.target.value)} rows={3} style={{ ...inputStyle, resize: "vertical" }} />
             </label>
           </div>
 
@@ -757,7 +1191,7 @@ export default function BillingPage() {
           {requestMessage ? <div style={{ borderRadius: 10, padding: 12, background: "#f0fdf4", color: "#166534", border: "1px solid #bbf7d0" }}>{requestMessage}</div> : null}
         </section>
 
-        <section style={{ ...cardStyle, overflowX: "auto" }}>
+        <section style={{ ...sectionCardStyle, overflowX: "auto" }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
             <div>
               <h2 style={{ margin: 0, fontSize: 18, color: "var(--text)" }}>請求依頼一覧</h2>
@@ -768,15 +1202,40 @@ export default function BillingPage() {
             {requestLoading ? <span style={{ fontSize: 12, color: "var(--muted)" }}>請求依頼を更新中...</span> : null}
           </div>
 
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 1.6fr) repeat(2, minmax(180px, 0.8fr))", gap: 10, marginBottom: 12 }}>
+            <input
+              value={requestSearch}
+              onChange={(event) => setRequestSearch(event.target.value)}
+              placeholder="請求先 / client / 件名で検索"
+              style={{ ...inputStyle, width: "100%" }}
+            />
+            <select value={requestProgressFilter} onChange={(event) => setRequestProgressFilter(event.target.value as RequestProgressFilter)} style={{ ...inputStyle, width: "100%" }}>
+              <option value="all">すべての進行状態</option>
+              <option value="open">未請求書化のみ</option>
+              <option value="issued">請求書化済み</option>
+            </select>
+            <select value={requestDeadlineFilter} onChange={(event) => setRequestDeadlineFilter(event.target.value as RequestDeadlineFilter)} style={{ ...inputStyle, width: "100%" }}>
+              <option value="all">すべての期限状態</option>
+              <option value="overdue">期限超過</option>
+              <option value="soon">期限が近い</option>
+              <option value="scheduled">進行中</option>
+              <option value="unset">期限未設定</option>
+            </select>
+          </div>
+
           {invoiceRequests.length === 0 && !requestLoading ? (
             <GuideEmptyState
               title="請求依頼はまだありません"
               description="請求依頼を先に登録しておくと、期限超過やリマインド履歴を Billing でまとめて追えます。"
               primaryHref="/vendors"
               primaryLabel="外注先を見る"
-              helpHref="/help/billing"
+              helpHref="/help/billing-monthly"
               helpLabel="請求の流れを見る"
             />
+          ) : filteredInvoiceRequests.length === 0 ? (
+            <div style={{ padding: "18px 4px", color: "var(--muted)", fontSize: 13 }}>
+              条件に合う請求依頼はありません。検索語かフィルタを見直してください。
+            </div>
           ) : (
             <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1080 }}>
               <thead>
@@ -789,9 +1248,9 @@ export default function BillingPage() {
                 </tr>
               </thead>
               <tbody>
-                {invoiceRequests.map((row) => {
+                {filteredInvoiceRequests.map((row) => {
                   const deadlineState = requestDeadlineState(row.request_deadline)
-                  const recipient = row.guest_company_name || row.guest_name || "取引先指定"
+                  const recipient = row.client_name || row.guest_company_name || row.guest_name || "取引先指定"
                   return (
                     <tr key={row.id}>
                       <td style={tableCellStrong}>
@@ -804,6 +1263,7 @@ export default function BillingPage() {
                         <div style={{ display: "grid", gap: 4 }}>
                           <strong>{row.requested_title || "請求依頼"}</strong>
                           <span style={{ color: "var(--muted)", fontSize: 12 }}>{row.requested_description || "-"}</span>
+                          <span style={{ color: "var(--muted)", fontSize: 12, whiteSpace: "pre-wrap" }}>送付メッセージ: {row.reminder_message || "-"}</span>
                         </div>
                       </td>
                       <td style={tableCell}>
@@ -869,11 +1329,127 @@ export default function BillingPage() {
 
 function MetricCard({ label, value, accent }: { label: string; value: string; accent?: string }) {
   return (
-    <div style={cardStyle}>
+    <div style={metricCardStyle}>
       <div style={{ fontSize: 12, color: "var(--muted)" }}>{label}</div>
       <div style={{ fontSize: 24, fontWeight: 700, color: accent ?? "var(--text)" }}>{value}</div>
     </div>
   )
+}
+
+function SectionHeading({
+  eyebrow,
+  title,
+  description,
+}: {
+  eyebrow?: string
+  title: string
+  description: string
+}) {
+  return (
+    <div style={{ display: "grid", gap: 6 }}>
+      {eyebrow ? (
+        <span style={{ fontSize: 11, letterSpacing: "0.08em", color: "var(--muted)" }}>
+          {eyebrow}
+        </span>
+      ) : null}
+      <h2 style={{ margin: 0, fontSize: 22, color: "var(--text)" }}>{title}</h2>
+      <p style={{ margin: 0, color: "var(--muted)", fontSize: 13, lineHeight: 1.7 }}>
+        {description}
+      </p>
+    </div>
+  )
+}
+
+const heroCardStyle: CSSProperties = {
+  ...cardStyle,
+  padding: 24,
+  borderRadius: 24,
+  background: "linear-gradient(135deg, rgba(255,255,255,0.98), rgba(247,250,252,0.96))",
+  boxShadow: "0 20px 45px rgba(15, 23, 42, 0.08)",
+}
+
+const heroStepStyle: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  padding: "8px 12px",
+  borderRadius: 999,
+  background: "rgba(15, 23, 42, 0.06)",
+  color: "var(--text)",
+  fontSize: 13,
+  fontWeight: 700,
+}
+
+const metricCardStyle: CSSProperties = {
+  ...cardStyle,
+  padding: 18,
+  borderRadius: 18,
+  background: "linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,250,252,0.94))",
+}
+
+const sectionCardStyle: CSSProperties = {
+  ...cardStyle,
+  padding: 20,
+  borderRadius: 20,
+}
+
+const controlPanelStyle: CSSProperties = {
+  ...cardStyle,
+  padding: 20,
+  borderRadius: 20,
+  display: "grid",
+  gap: 16,
+  background: "rgba(255,255,255,0.9)",
+}
+
+const subtlePanelStyle: CSSProperties = {
+  border: "1px solid rgba(15, 23, 42, 0.08)",
+  borderRadius: 16,
+  padding: 14,
+  background: "rgba(255,255,255,0.82)",
+}
+
+const primaryButtonStyle: CSSProperties = {
+  padding: "12px 16px",
+  borderRadius: 12,
+  border: "1px solid var(--button-primary-bg)",
+  background: "var(--button-primary-bg)",
+  color: "var(--primary-contrast)",
+  fontWeight: 700,
+}
+
+const outlineButtonStyle: CSSProperties = {
+  padding: "12px 16px",
+  borderRadius: 12,
+  border: "1px solid var(--border)",
+  background: "rgba(255,255,255,0.92)",
+  color: "var(--text)",
+  fontWeight: 700,
+}
+
+const fieldLabelStyle: CSSProperties = {
+  fontSize: 12,
+  color: "var(--muted)",
+}
+
+const inlineActionLinkStyle: CSSProperties = {
+  color: "var(--text)",
+  fontWeight: 700,
+  textDecoration: "none",
+}
+
+const advancedDetailsStyle: CSSProperties = {
+  ...cardStyle,
+  padding: 16,
+  borderRadius: 18,
+  display: "grid",
+  gap: 16,
+}
+
+const advancedSummaryStyle: CSSProperties = {
+  cursor: "pointer",
+  fontWeight: 700,
+  color: "var(--text)",
+  listStyle: "none",
 }
 
 const tableCell: CSSProperties = {

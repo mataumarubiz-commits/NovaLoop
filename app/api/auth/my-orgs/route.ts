@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createUserClient, getBearerToken } from "@/lib/userClient"
+import { normalizeAppOrgRole } from "@/lib/orgRoles"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -45,7 +46,13 @@ export async function GET(req: NextRequest) {
       display_name?: string | null
       active_org_id?: string | null
     } | null
-    const memberships = (appUsersRes.data ?? []) as { org_id: string; role: string }[]
+    const memberships = ((appUsersRes.data ?? []) as { org_id: string; role: string }[])
+      .map((row) => {
+        const role = normalizeAppOrgRole(row.role)
+        if (!role) return null
+        return { org_id: row.org_id, role }
+      })
+      .filter((row): row is { org_id: string; role: "owner" | "executive_assistant" | "member" } => Boolean(row))
 
     if (memberships.length === 0) {
       return NextResponse.json({

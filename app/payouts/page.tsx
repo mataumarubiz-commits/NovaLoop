@@ -58,6 +58,9 @@ type CsvHistoryRow = {
   created_at: string
 }
 
+type PayoutStatusFilter = "all" | "draft" | "submitted" | "approved" | "rejected" | "paid"
+type BankFilter = "all" | "missing" | "ready"
+
 const cardStyle: CSSProperties = {
   border: "1px solid var(--border)",
   borderRadius: 16,
@@ -103,6 +106,9 @@ export default function PayoutsPage() {
   const [busyKey, setBusyKey] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  const [search, setSearch] = useState("")
+  const [statusFilter, setStatusFilter] = useState<PayoutStatusFilter>("all")
+  const [bankFilter, setBankFilter] = useState<BankFilter>("all")
   const [csvSettings, setCsvSettings] = useState<CsvSettings>({
     payout_csv_format: "zengin_simple",
     payout_csv_encoding: "utf8_bom",
@@ -168,9 +174,43 @@ export default function PayoutsPage() {
     const values = [...new Set(rows.map((row) => row.pay_date.slice(0, 7)).filter(Boolean))]
     return values.length > 0 ? values.sort().reverse() : [currentMonth()]
   }, [rows])
-  const filteredRows = useMemo(() => rows.filter((row) => row.pay_date.slice(0, 7) === month), [rows, month])
+  const monthRows = useMemo(() => rows.filter((row) => row.pay_date.slice(0, 7) === month), [rows, month])
+  const filteredRows = useMemo(() => {
+    const query = search.trim().toLowerCase()
+    return monthRows.filter((row) => {
+      const vendor = vendorMap.get(row.vendor_id)
+      const bankMissing =
+        !vendor?.bank_name ||
+        !vendor?.bank_branch ||
+        !vendor?.bank_account_type ||
+        !vendor?.bank_account_number ||
+        !vendor?.bank_account_holder_kana
+      const haystack = [vendor?.name, vendor?.bank_name, vendor?.bank_branch].filter(Boolean).join(" ").toLowerCase()
+      const matchesQuery = !query || haystack.includes(query)
+      const matchesStatus = statusFilter === "all" || row.status === statusFilter
+      const matchesBank = bankFilter === "all" || (bankFilter === "missing" ? bankMissing : !bankMissing)
+      return matchesQuery && matchesStatus && matchesBank
+    })
+  }, [bankFilter, monthRows, search, statusFilter, vendorMap])
   const selectedRows = useMemo(() => filteredRows.filter((row) => selectedIds.includes(row.id)), [filteredRows, selectedIds])
   const selectedTotal = useMemo(() => selectedRows.reduce((sum, row) => sum + Number(row.total ?? 0), 0), [selectedRows])
+  const monthSummary = useMemo(
+    () => ({
+      missingBank: monthRows.filter((row) => {
+        const vendor = vendorMap.get(row.vendor_id)
+        return (
+          !vendor?.bank_name ||
+          !vendor?.bank_branch ||
+          !vendor?.bank_account_type ||
+          !vendor?.bank_account_number ||
+          !vendor?.bank_account_holder_kana
+        )
+      }).length,
+      pending: monthRows.filter((row) => row.status === "submitted" || row.status === "approved").length,
+      paid: monthRows.filter((row) => row.status === "paid").length,
+    }),
+    [monthRows, vendorMap]
+  )
 
   const toggleSelection = (id: string) => {
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((value) => value !== id) : [...prev, id]))
@@ -369,8 +409,8 @@ export default function PayoutsPage() {
   }
 
   if (loading) return <div style={{ padding: 32, color: "var(--muted)" }}>読み込み中...</div>
-  if (!activeOrgId) return <div style={{ padding: 32, color: "var(--muted)" }}>Workspace を選択してください。</div>
-  if (!canUse) return <div style={{ padding: 32, color: "var(--muted)" }}>owner / executive_assistant のみ利用できます。</div>
+  if (!activeOrgId) return <div style={{ padding: 32, color: "var(--muted)" }}>ワークスペースを選択してください。</div>
+  if (!canUse) return <div style={{ padding: 32, color: "var(--muted)" }}>オーナー / 経営補佐のみ利用できます。</div>
 
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg-grad)", padding: "32px 40px 60px" }}>
@@ -397,11 +437,34 @@ export default function PayoutsPage() {
           </div>
         </header>
 
-        <section style={{ ...cardStyle, display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10 }}>
+        <section style={{ ...cardStyle, display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 10 }}>
           <SummaryCard label="対象件数" value={String(filteredRows.length)} />
           <SummaryCard label="選択件数" value={String(selectedRows.length)} />
           <SummaryCard label="選択合計" value={formatCurrency(selectedTotal)} />
-          <SummaryCard label="支払済み" value={String(filteredRows.filter((row) => row.status === "paid").length)} />
+          <SummaryCard label="口座未登録" value={String(monthSummary.missingBank)} />
+          <SummaryCard label="支払済み" value={String(monthSummary.paid)} />
+        </section>
+
+        <section style={{ ...cardStyle, display: "grid", gridTemplateColumns: "minmax(220px, 1.4fr) repeat(2, minmax(180px, 0.8fr))", gap: 10 }}>
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="外注先名 / 銀行名 / 支店名で検索"
+            style={inputStyle}
+          />
+          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as PayoutStatusFilter)} style={inputStyle}>
+            <option value="all">すべての状態</option>
+            <option value="draft">未確認</option>
+            <option value="submitted">提出済み</option>
+            <option value="approved">承認済み</option>
+            <option value="rejected">差し戻し</option>
+            <option value="paid">支払済み</option>
+          </select>
+          <select value={bankFilter} onChange={(event) => setBankFilter(event.target.value as BankFilter)} style={inputStyle}>
+            <option value="all">口座状態を問わない</option>
+            <option value="missing">口座未登録のみ</option>
+            <option value="ready">口座準備済みのみ</option>
+          </select>
         </section>
 
         <section style={{ ...cardStyle, display: "grid", gap: 12 }}>
@@ -438,6 +501,7 @@ export default function PayoutsPage() {
             <span>提出済み: 外注から提出済み</span>
             <span>承認済み: payout 追加済み / 支払予定に載せる状態</span>
             <span>支払済み: 実振込後の状態</span>
+            <span>月内の承認待ち: {monthSummary.pending}件</span>
           </div>
         </section>
 
@@ -573,7 +637,11 @@ export default function PayoutsPage() {
         </section>
 
         <section style={{ display: "grid", gap: 12 }}>
-          {filteredRows.map((row) => {
+          {filteredRows.length === 0 ? (
+            <div style={{ ...cardStyle, color: "var(--muted)" }}>
+              条件に合う支払い対象はありません。月・状態・口座フィルタを見直してください。
+            </div>
+          ) : filteredRows.map((row) => {
             const vendor = vendorMap.get(row.vendor_id)
             const status = STATUS_META[row.status] ?? { label: row.status, bg: "#f8fafc", text: "#475569" }
             const selected = selectedIds.includes(row.id)

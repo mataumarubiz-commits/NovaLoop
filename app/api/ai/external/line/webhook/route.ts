@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server"
 import { EXTERNAL_CHAT_COPY } from "@/lib/ai/externalCopy"
+import { writeExternalAiAuditLog } from "@/lib/ai/externalAudit"
 import { verifyLineSignature } from "@/lib/ai/channelAdapters"
 import { answerExternalAiQuestion } from "@/lib/ai/externalGateway"
 import { confirmExternalChannelLink, getLinkedActorContext } from "@/lib/ai/externalIdentity"
+import { buildLineQuickReplyItems } from "@/lib/ai/externalUi"
 import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
 
 export const runtime = "nodejs"
@@ -17,9 +19,11 @@ type LineWebhookPayload = {
   }>
 }
 
-async function replyToLine(replyToken: string, message: string) {
+async function replyToLine(replyToken: string, message: string, quickReplyTexts: readonly string[] = []) {
   const accessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN
   if (!accessToken) return
+
+  const quickReplyItems = buildLineQuickReplyItems(quickReplyTexts)
   await fetch("https://api.line.me/v2/bot/message/reply", {
     method: "POST",
     headers: {
@@ -28,7 +32,13 @@ async function replyToLine(replyToken: string, message: string) {
     },
     body: JSON.stringify({
       replyToken,
-      messages: [{ type: "text", text: message }],
+      messages: [
+        {
+          type: "text",
+          text: message,
+          ...(quickReplyItems.length > 0 ? { quickReply: { items: quickReplyItems } } : {}),
+        },
+      ],
     }),
   }).catch(() => null)
 }
@@ -69,12 +79,26 @@ export async function POST(req: NextRequest) {
         linkCode: code,
         externalUserId,
       })
-      await replyToLine(event.replyToken, result.ok ? linkedSuccessMessage() : unlinkedMessage())
+      await replyToLine(
+        event.replyToken,
+        result.ok ? linkedSuccessMessage() : unlinkedMessage(),
+        result.ok ? EXTERNAL_CHAT_COPY.line.linkedExamples : []
+      )
       continue
     }
 
     const actor = await getLinkedActorContext({ channelType: "line", externalUserId })
     if (!actor) {
+      await writeExternalAiAuditLog({
+        channelType: "line",
+        externalUserId,
+        actor: null,
+        userMessage: text,
+        selectedTools: [],
+        toolResultSummary: {},
+        aiResponse: unlinkedMessage(),
+        status: "unlinked",
+      })
       await replyToLine(event.replyToken, unlinkedMessage())
       continue
     }
@@ -86,6 +110,17 @@ export async function POST(req: NextRequest) {
       .maybeSingle()
 
     if ((channelSettings as { line_enabled?: boolean } | null)?.line_enabled !== true) {
+      await writeExternalAiAuditLog({
+        channelType: "line",
+        externalUserId,
+        actor,
+        userMessage: text,
+        selectedTools: [],
+        toolResultSummary: {},
+        aiResponse: EXTERNAL_CHAT_COPY.common.temporaryError,
+        status: "error",
+        errorMessage: "LINE AI channel disabled",
+      })
       await replyToLine(
         event.replyToken,
         `${EXTERNAL_CHAT_COPY.common.temporaryError}\n${EXTERNAL_CHAT_COPY.common.temporaryErrorFollow}`
@@ -93,13 +128,29 @@ export async function POST(req: NextRequest) {
       continue
     }
 
-    const result = await answerExternalAiQuestion({ actor, channelType: "line", message: text }).catch(() => null)
+    let result = null
+    try {
+      result = await answerExternalAiQuestion({ actor, channelType: "line", message: text })
+    } catch (error) {
+      await writeExternalAiAuditLog({
+        channelType: "line",
+        externalUserId,
+        actor,
+        userMessage: text,
+        selectedTools: [],
+        toolResultSummary: {},
+        aiResponse: null,
+        status: "error",
+        errorMessage: error instanceof Error ? error.message : "Unknown LINE AI error",
+      })
+    }
+
     await replyToLine(
       event.replyToken,
-      result?.response ?? `${EXTERNAL_CHAT_COPY.common.temporaryError}\n${EXTERNAL_CHAT_COPY.common.temporaryErrorFollow}`
+      result?.response ?? `${EXTERNAL_CHAT_COPY.common.temporaryError}\n${EXTERNAL_CHAT_COPY.common.temporaryErrorFollow}`,
+      result?.followups ?? []
     )
   }
 
   return NextResponse.json({ ok: true })
 }
-

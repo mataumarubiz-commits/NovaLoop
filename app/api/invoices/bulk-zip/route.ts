@@ -4,6 +4,7 @@ import chromium from "@sparticuz/chromium"
 import fs from "fs"
 import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
 import { getOrgRole, getUserIdFromToken, isOrgAdmin } from "@/lib/apiAuth"
+import { buildInvoicePdfBaseName, resolveInvoiceRecipientName, safeInvoicePdfFileName } from "@/lib/invoiceNaming"
 import { createZip } from "@/lib/zip"
 import { renderInvoiceHtml } from "@/lib/pdf/renderInvoiceHtml"
 
@@ -44,14 +45,6 @@ async function getChromeExecutablePath(): Promise<string> {
   return chromium.executablePath()
 }
 
-function safeFileName(value: string): string {
-  return (value || "invoice")
-    .replace(/[/\\:*?"<>|\s]+/g, "_")
-    .replace(/_+/g, "_")
-    .replace(/^_|_$/g, "")
-    .slice(0, 100) || "invoice"
-}
-
 async function buildPdfBuffer(admin: ReturnType<typeof createSupabaseAdmin>, orgId: string, invoiceId: string) {
   const { data: invoice, error: invoiceError } = await admin
     .from("invoices")
@@ -62,18 +55,31 @@ async function buildPdfBuffer(admin: ReturnType<typeof createSupabaseAdmin>, org
   if (invoiceError || !invoice) throw new Error("請求書が見つかりません。")
 
   const clientId = (invoice as { client_id?: string | null }).client_id
-  if (!clientId) throw new Error("請求先情報が設定されていません。")
-
-  const [{ data: client, error: clientError }, { data: lines, error: linesError }] = await Promise.all([
-    admin.from("clients").select("name").eq("id", clientId).maybeSingle(),
+  const [clientRes, linesRes] = await Promise.all([
+    clientId ? admin.from("clients").select("name").eq("id", clientId).maybeSingle() : Promise.resolve({ data: null, error: null }),
     admin.from("invoice_lines").select("*").eq("invoice_id", invoiceId).order("sort_order", { ascending: true }),
   ])
-  if (clientError || !client) throw new Error("請求先の取得に失敗しました。")
+
+  const client = clientRes.data
+  const clientError = clientRes.error
+  const { data: lines, error: linesError } = linesRes
+  if (clientId && (clientError || !client)) throw new Error("請求先の取得に失敗しました。")
   if (linesError) throw new Error("請求明細の取得に失敗しました。")
+
+  const resolvedClientName = (client as { name?: string } | null)?.name?.trim() ?? ""
+  const recipientName = resolveInvoiceRecipientName({
+    clientName: resolvedClientName,
+    guestCompanyName: typeof (invoice as { guest_company_name?: unknown }).guest_company_name === "string"
+      ? String((invoice as { guest_company_name: string }).guest_company_name)
+      : null,
+    guestClientName: typeof (invoice as { guest_client_name?: unknown }).guest_client_name === "string"
+      ? String((invoice as { guest_client_name: string }).guest_client_name)
+      : null,
+  })
 
   const html = renderInvoiceHtml({
     invoice: invoice as Parameters<typeof renderInvoiceHtml>[0]["invoice"],
-    client: client as { name: string },
+    client: { name: recipientName },
     org: null,
     lines: (lines ?? []) as Parameters<typeof renderInvoiceHtml>[0]["lines"],
   })
@@ -94,7 +100,22 @@ async function buildPdfBuffer(admin: ReturnType<typeof createSupabaseAdmin>, org
     })
     return {
       pdfBuffer: new Uint8Array(pdfBuffer),
-      fileName: `${safeFileName(`請求書_${String((invoice as { invoice_month?: string }).invoice_month ?? "")}_${(client as { name: string }).name}_${String((invoice as { invoice_title?: string }).invoice_title ?? "請求書")}`)}.pdf`,
+      fileName: `${safeInvoicePdfFileName(
+        buildInvoicePdfBaseName({
+          invoiceMonth: String((invoice as { invoice_month?: string }).invoice_month ?? ""),
+          clientName: resolvedClientName,
+          guestCompanyName: typeof (invoice as { guest_company_name?: unknown }).guest_company_name === "string"
+            ? String((invoice as { guest_company_name: string }).guest_company_name)
+            : null,
+          guestClientName: typeof (invoice as { guest_client_name?: unknown }).guest_client_name === "string"
+            ? String((invoice as { guest_client_name: string }).guest_client_name)
+            : null,
+          invoiceTitle: String((invoice as { invoice_title?: string }).invoice_title ?? ""),
+          invoiceName: typeof (invoice as { invoice_name?: unknown }).invoice_name === "string"
+            ? String((invoice as { invoice_name: string }).invoice_name)
+            : null,
+        })
+      )}.pdf`,
     }
   } finally {
     await browser.close().catch(() => {})
@@ -155,7 +176,7 @@ export async function POST(req: NextRequest) {
         const { data: fileData, error: downloadError } = await admin.storage.from(BUCKET).download(pdfPath)
         if (!downloadError && fileData) {
           const arrayBuffer = await fileData.arrayBuffer()
-          const name = `${safeFileName(String(pdfPath.split("/").slice(-1)[0] ?? `invoice_${invoiceId}.pdf`))}`
+          const name = `${safeInvoicePdfFileName(String(pdfPath.split("/").slice(-1)[0] ?? `invoice_${invoiceId}.pdf`))}`
           files.push({ name, data: new Uint8Array(arrayBuffer) })
           continue
         }

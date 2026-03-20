@@ -197,7 +197,7 @@ export function notificationTitle(n: NotificationLike): string {
         : `外注請求を差し戻しました${category ? ` (${category})` : ""}`
     }
     case "vendor_portal.invited":
-      return "Nova loop に招待されました。ログインしてプロフィールと口座情報を登録してください"
+      return "NovaLoop に招待されました。ログインしてプロフィールと口座情報を登録してください"
     default:
       return n.type
   }
@@ -227,7 +227,7 @@ export function notificationActionHref(n: NotificationLike): string {
     case "vendor_invoice.requested":
     case "vendor_invoice.request_due_soon":
     case "vendor_invoice.request_overdue":
-      return "/vendor/invoices/current"
+      return month ? `/vendor/invoices/current?month=${encodeURIComponent(month)}` : "/vendor/invoices/current"
     case "vendor_portal.invited":
       return "/vendor"
     case "vendor_invoice.submitted":

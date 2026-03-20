@@ -1,4 +1,4 @@
-# Project Memory: SNS Ops SaaS (Novaloop)
+# Project Memory: SNS Ops SaaS (NovaLoop)
 
 ## Project Overview
 - SNS運用代行向け業務OS (Next.js + Supabase)

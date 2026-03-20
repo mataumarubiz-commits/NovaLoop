@@ -1,0 +1,1180 @@
+競合案件管理シート吸収 実装設計書 完全版 v1
+0. この設計書の目的
+
+この設計書は、競合の案件管理シート/案件管理シートProで見えている機能と運用価値を、既存の業務OSに漏れなく追加実装するためのもの。
+
+今回のスコープ
+
+競合の案件管理シートで見える機能を全部吸収
+
+既存 /contents を中核に載せる
+
+ゴールは
+「案件管理が仕組みによって漏れなく把握でき、エラーが仕組みによって起きず、経理まで自動に近づき、人間は創造的な仕事だけやる」
+
+ただし今回はSaaS全体の話を広げない
+
+既存の請求/外注/通知/ページは、競合吸収に必要な範囲でだけ接続する
+
+1. 競合から吸収する対象一覧
+
+画像・投稿文面から、今回必須で吸収する対象は以下。
+
+競合が明示している/示唆しているもの
+
+進捗管理
+
+予定管理
+
+納期調整
+
+仕様変更管理
+
+利益/経費算出
+
+案件検索
+
+案件カレンダー
+
+ガントチャート
+
+Chatwork連携
+
+Googleカレンダー連携
+
+Discord / Slack連携
+
+進捗の自動更新
+
+シートへの自動記入
+
+案件ごとの単価DB化
+
+素材管理
+
+修正稿管理
+
+負担の見える化
+
+チーム品質を上げるためのロジック化
+
+競合の実物UIから読み取れるもの
+
+案件一覧シート
+
+年/四半期/月っぽい損益・管理ビュー
+
+レポート/検索画面
+
+マスタ/DBっぽい設定画面
+
+スプシ上の複数タブ運用
+
+フィルタ済み一覧
+
+集計用の補助枠
+
+経費・利益率を見る前提の構造
+
+2. 今回の設計方針
+
+既存の業務OSでは、contents が1行=1コンテンツで、due_client_at / due_editor_at / unit_price / billable_flag / delivery_month / links_json が核になっている。
+この中核は壊さない。
+
+方針
+
+競合の「案件管理シート」を、既存 /contents の上に案件レイヤーとして追加する
+
+競合の「案件カレンダー」「ガント」「利益率計算」「素材/修正稿管理」を、案件単位の補助機能ではなく正式機能にする
+
+競合の強みである「シート的な一括管理感」は /contents 側に残す
+
+競合の弱いはずの部分である
+
+エラー予防
+
+請求/外注への接続
+
+監査
+
+権限
+
+自動処理
+で上位互換にする
+
+3. 追加するドメインの範囲
+
+今回は競合吸収に必要なものだけ追加する。
+
+3.1 追加するもの
+
+Project
+
+RateCard
+
+ProjectTask
+
+ScheduleEvent
+
+MaterialAsset
+
+ChangeRequest
+
+Expense
+
+ProjectHealth / Exception
+
+3.2 追加しないもの
+
+認証や組織周りの全面再設計
+
+ページ機能の再設計
+
+Billing/Payouts全体の再設計
+
+全社ERP化
+
+CRM化
+
+4. 既存との接続位置
+
+既存ルートは /home /contents /billing /invoices /vendors /payouts /pages /settings /notifications がある。
+
+今回追加するのはこの範囲。
+
+新規/追加ルート
+
+/projects
+
+/projects/[id]
+
+/timeline
+
+/calendar
+
+/materials
+
+/changes
+
+/finance-lite
+
+/exceptions
+
+位置づけ
+
+/contents
+今まで通り最速の制作進行シート
+
+/projects
+競合の案件管理シートの正式吸収先
+
+/timeline
+競合のガント吸収先
+
+/calendar
+競合の案件カレンダー吸収先
+
+/materials
+競合の素材/修正稿管理吸収先
+
+/changes
+競合の仕様変更・納期調整吸収先
+
+/finance-lite
+競合の利益/経費/利益率吸収先
+
+/exceptions
+競合には薄いが、こちらが勝つための「漏れ/エラー検知」画面
+
+5. 競合吸収の中核コンセプト
+
+競合の案件管理シートは、実質こういう思想で動いている。
+
+案件をまとめて見る
+
+コンテンツを並べて進める
+
+納期と予定をずらせる
+
+仕様変更の影響を見る
+
+利益率を月単位で把握する
+
+素材と修正稿を迷子にしない
+
+検索できる
+
+チャットやカレンダーとつながる
+
+これをSaaSに移すと、正式には以下の責務になる。
+
+Project
+
+案件の箱
+
+Content
+
+1本ごとの制作明細
+
+Task
+
+工程
+
+ScheduleEvent
+
+予定
+
+ChangeRequest
+
+仕様変更
+
+MaterialAsset
+
+素材/修正稿/納品物
+
+Expense + RateCard
+
+利益率算出
+
+Exception
+
+漏れ/停滞/事故予防
+
+6. 画面仕様
+6.1 /projects
+
+競合の案件管理シートそのものを吸収する一覧画面。
+
+表示列
+
+案件名
+
+クライアント
+
+ステータス
+
+契約種別
+
+主担当
+
+開始日
+
+終了日
+
+今月本数
+
+今月売上見込
+
+今月外注費見込
+
+今月経費
+
+今月粗利
+
+利益率
+
+遅延件数
+
+修正過多件数
+
+停滞件数
+
+Chatwork連携
+
+Googleカレンダー連携
+
+Slack/Discord連携
+
+Driveリンク
+
+フィルタ
+
+クライアント
+
+主担当
+
+稼働中/停止/完了
+
+赤字/低利益率
+
+遅延あり
+
+修正過多
+
+素材未回収
+
+例外あり
+
+連携済み/未設定
+
+保存ビュー
+
+今週危険案件
+
+利益率低下案件
+
+修正過多案件
+
+連携未設定案件
+
+納期詰まり案件
+
+6.2 /projects/[id]
+
+競合の案件単位管理を吸収する詳細画面。
+
+タブ
+
+概要
+
+コンテンツ
+
+工程
+
+カレンダー
+
+素材
+
+変更
+
+収支
+
+連携
+
+ログ
+
+概要
+
+案件名
+
+クライアント
+
+ステータス
+
+契約期間
+
+主担当/編集担当
+
+基本単価ルール
+
+Chatwork room
+
+Google Calendar
+
+Slack/Discord channel
+
+Drive folder
+
+運用メモ
+
+コンテンツ
+
+当案件の contents
+
+月次一括生成
+
+一括担当割当
+
+一括納期シフト
+
+一括ステータス変更
+
+一括請求対象切替
+
+工程
+
+各コンテンツのタスク一覧
+
+工程テンプレ適用
+
+工程遅延表示
+
+ボトルネック表示
+
+カレンダー
+
+編集締切
+
+先方提出
+
+公開日
+
+MTG
+
+支払日
+
+請求日
+
+素材
+
+raw
+
+script
+
+draft
+
+revision
+
+final
+
+thumbnail
+
+reference
+
+proof
+
+変更
+
+納期変更
+
+仕様変更
+
+修正追加
+
+追加請求候補
+
+追加原価
+
+誰がいつ依頼したか
+
+収支
+
+売上
+
+外注費
+
+経費
+
+粗利
+
+利益率
+
+月別推移
+
+コンテンツ別採算
+
+6.3 /contents
+
+既存の核画面は維持。ただし競合吸収に必要な列と制御を足す。既存では 1行=1コンテンツ、先方提出日/編集者提出日/単価/請求対象/リンク集約が核。
+
+追加列
+
+project_id
+
+sequence_no
+
+publish_at
+
+assignee_editor_user_id
+
+assignee_checker_user_id
+
+revision_count
+
+workload_points
+
+estimated_cost
+
+next_action
+
+blocked_reason
+
+material_status
+
+draft_status
+
+final_status
+
+health_score
+
+UX追加
+
+複数セル貼り付け
+
+行複製
+
+一括日付シフト
+
+一括担当変更
+
+一括ステータス変更
+
+一括請求対象更新
+
+条件付き色分け
+
+保存済みビュー
+
+高度検索
+
+エラーセル表示
+
+競合を超える制御
+
+due_editor_at > due_client_at は保存不可
+
+単価未設定で請求対象は不可
+
+素材未回収で編集開始不可
+
+担当未設定で進行不可
+
+必須リンクなしで提出完了不可
+
+6.4 /timeline
+
+競合のガント吸収。
+
+表示単位
+
+Project
+
+Content
+
+Task
+
+Assignee
+
+バー種別
+
+素材待ち
+
+台本
+
+編集
+
+内部確認
+
+先方確認
+
+修正
+
+投稿設定
+
+公開
+
+操作
+
+ドラッグで開始/終了変更
+
+まとめてシフト
+
+依存タスク追従
+
+遅延強調
+
+今日ライン
+
+Day / Week / Month
+
+6.5 /calendar
+
+競合の案件カレンダー吸収。
+
+イベント
+
+編集締切
+
+先方提出
+
+公開
+
+会議
+
+支払
+
+請求発行
+
+リマインド
+
+機能
+
+月/週/日
+
+担当者別
+
+案件別
+
+クライアント別
+
+Googleカレンダー同期
+
+ICS export
+
+6.6 /materials
+
+競合の素材/修正稿管理吸収。
+
+管理対象
+
+素材
+
+台本
+
+修正稿
+
+完成稿
+
+サムネ
+
+参考資料
+
+証憑
+
+機能
+
+URL登録
+
+ファイルアップロード
+
+Driveリンク
+
+バージョン管理
+
+コメント
+
+採用/却下
+
+修正履歴
+
+6.7 /changes
+
+競合の仕様変更/納期調整吸収。
+
+種別
+
+deadline_change
+
+spec_change
+
+revision_additional
+
+asset_replace
+
+publish_reschedule
+
+extra_deliverable
+
+表示項目
+
+内容
+
+発生日
+
+依頼者
+
+対象案件/コンテンツ
+
+影響度
+
+納期シフト日数
+
+追加売上
+
+追加原価
+
+承認状態
+
+反映状態
+
+6.8 /finance-lite
+
+今回は競合吸収の範囲だけに絞る。
+
+表示
+
+月次売上
+
+月次外注費
+
+月次経費
+
+粗利
+
+利益率
+
+案件別利益率
+
+赤字案件
+
+修正過多案件
+
+原価超過案件
+
+既存接続
+
+既存の請求・外注支払いの構造に接続する。既存は invoices / invoice_lines / vendor_invoices / vendor_invoice_lines / payouts を持っている。
+
+6.9 /exceptions
+
+これは競合より強くするための勝ち筋。
+
+表示対象
+
+担当未設定
+
+素材未回収
+
+納期逆転
+
+停滞
+
+修正過多
+
+単価未設定
+
+原価異常
+
+連携未設定
+
+請求漏れ候補
+
+支払漏れ候補
+
+7. データモデル追加
+7.1 projects
+create table public.projects (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references public.organizations(id) on delete cascade,
+  client_id uuid not null references public.clients(id) on delete restrict,
+  name text not null,
+  code text,
+  status text not null default 'active',
+  contract_type text not null default 'per_content',
+  start_date date,
+  end_date date,
+  owner_user_id uuid,
+  chatwork_room_id text,
+  google_calendar_id text,
+  slack_channel_id text,
+  discord_channel_id text,
+  drive_folder_url text,
+  notes text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+7.2 rate_cards
+
+案件ごとの単価DB化を吸収。
+
+create table public.rate_cards (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references public.organizations(id) on delete cascade,
+  project_id uuid references public.projects(id) on delete cascade,
+  client_id uuid references public.clients(id) on delete cascade,
+  item_type text not null,
+  unit_label text not null default '本',
+  sales_unit_price integer not null default 0,
+  standard_cost integer not null default 0,
+  effective_from date not null,
+  effective_to date,
+  created_at timestamptz not null default now()
+);
+
+7.3 project_tasks
+
+進捗管理/予定管理/ガント吸収。
+
+create table public.project_tasks (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references public.organizations(id) on delete cascade,
+  project_id uuid not null references public.projects(id) on delete cascade,
+  content_id uuid references public.contents(id) on delete cascade,
+  task_type text not null,
+  title text not null,
+  assignee_user_id uuid,
+  planned_start_date date,
+  planned_end_date date,
+  actual_start_at timestamptz,
+  actual_end_at timestamptz,
+  status text not null default 'not_started',
+  dependency_task_id uuid references public.project_tasks(id) on delete set null,
+  workload_points integer not null default 1,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+7.4 schedule_events
+
+案件カレンダー吸収。
+
+create table public.schedule_events (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references public.organizations(id) on delete cascade,
+  project_id uuid references public.projects(id) on delete cascade,
+  content_id uuid references public.contents(id) on delete cascade,
+  event_type text not null,
+  title text not null,
+  start_at timestamptz not null,
+  end_at timestamptz,
+  all_day boolean not null default true,
+  external_source text,
+  external_event_id text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+7.5 material_assets
+
+素材/修正稿管理吸収。
+
+create table public.material_assets (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references public.organizations(id) on delete cascade,
+  project_id uuid not null references public.projects(id) on delete cascade,
+  content_id uuid references public.contents(id) on delete cascade,
+  asset_type text not null,
+  title text not null,
+  storage_path text,
+  external_url text,
+  version_no integer not null default 1,
+  review_status text not null default 'active',
+  uploaded_by_user_id uuid,
+  note text,
+  created_at timestamptz not null default now()
+);
+
+7.6 change_requests
+
+仕様変更/納期調整吸収。
+
+create table public.change_requests (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references public.organizations(id) on delete cascade,
+  project_id uuid not null references public.projects(id) on delete cascade,
+  content_id uuid references public.contents(id) on delete set null,
+  request_type text not null,
+  summary text not null,
+  requested_by text,
+  impact_level text not null default 'medium',
+  due_shift_days integer not null default 0,
+  extra_sales_amount integer not null default 0,
+  extra_cost_amount integer not null default 0,
+  status text not null default 'open',
+  approved_by_user_id uuid,
+  approved_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+7.7 expenses
+
+利益/経費算出吸収。
+
+create table public.expenses (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references public.organizations(id) on delete cascade,
+  project_id uuid references public.projects(id) on delete set null,
+  content_id uuid references public.contents(id) on delete set null,
+  category text not null,
+  description text not null default '',
+  amount integer not null default 0,
+  occurred_on date not null,
+  receipt_path text,
+  created_by_user_id uuid,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+7.8 exceptions
+
+漏れ・エラー予防。
+
+create table public.exceptions (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references public.organizations(id) on delete cascade,
+  project_id uuid references public.projects(id) on delete cascade,
+  content_id uuid references public.contents(id) on delete cascade,
+  source_type text not null,
+  exception_type text not null,
+  severity text not null default 'medium',
+  title text not null,
+  description text,
+  status text not null default 'open',
+  detected_at timestamptz not null default now(),
+  resolved_at timestamptz,
+  resolved_by_user_id uuid
+);
+
+8. 既存 contents への追加
+
+既存 contents は競合吸収の土台としてそのまま使う。
+
+alter table public.contents add column if not exists project_id uuid references public.projects(id) on delete set null;
+alter table public.contents add column if not exists sequence_no integer;
+alter table public.contents add column if not exists publish_at timestamptz;
+alter table public.contents add column if not exists assignee_editor_user_id uuid;
+alter table public.contents add column if not exists assignee_checker_user_id uuid;
+alter table public.contents add column if not exists revision_count integer not null default 0;
+alter table public.contents add column if not exists workload_points integer not null default 1;
+alter table public.contents add column if not exists estimated_cost integer not null default 0;
+alter table public.contents add column if not exists next_action text;
+alter table public.contents add column if not exists blocked_reason text;
+alter table public.contents add column if not exists material_status text not null default 'not_ready';
+alter table public.contents add column if not exists draft_status text not null default 'not_started';
+alter table public.contents add column if not exists final_status text not null default 'not_started';
+alter table public.contents add column if not exists health_score integer not null default 100;
+
+9. 自動化ロジック
+9.1 納期調整
+
+競合の「納期調整」を正式ロジック化。
+
+操作
+
+単体シフト
+
+複数コンテンツ一括シフト
+
+公開日起点で再計算
+
+翌営業日へ寄せる
+
+反映先
+
+contents.due_client_at
+
+contents.due_editor_at
+
+project_tasks.planned_*
+
+schedule_events
+
+change_requests
+
+exceptions
+
+9.2 仕様変更
+
+競合の「仕様変更」を採算連動にする。
+
+反映
+
+revision_count 増加
+
+estimated_cost 増加
+
+必要なら unit_price 加算
+
+納期シフト
+
+追加請求候補生成
+
+9.3 進捗自動更新
+
+競合で示唆されていた Slack/Discord/Chatwork連携の本命。
+
+例
+
+Slackリアクションで提出済み
+
+Discordコマンドで素材受領
+
+Chatworkテンプレ送信で先方提出
+
+Driveへのアップロードで素材受領化
+
+9.4 利益率算出
+
+競合の利益率計算を、既存請求/外注データと接続して精度を上げる。
+
+ルール
+
+売上 = contents.unit_price または invoice_lines.amount
+
+外注費 = vendor_invoice_lines.amount
+
+経費 = expenses.amount
+
+粗利 = 売上 - 外注費 - 経費
+
+利益率 = 粗利 / 売上
+
+9.5 健全性スコア
+
+競合の「案件負担のロジック化」を吸収しつつ、こちら側の勝ち筋にする。
+
+減点条件
+
+担当未設定
+
+素材未回収
+
+期限超過
+
+次アクションなし
+
+修正過多
+
+単価未設定
+
+原価超過
+
+連携未設定
+
+10. 連携設計
+10.1 Chatwork
+
+競合が明示しているので必須。
+
+MVP
+
+room_id保存
+
+ルームを開く
+
+遅延通知テンプレ
+
+提出通知テンプレ
+
+v2
+
+API投稿
+
+案件ごとの自動通知
+
+仕様変更通知
+
+公開前リマインド
+
+10.2 Googleカレンダー
+
+競合明示。
+
+MVP
+
+イベント書き出し
+
+外部カレンダー紐付け
+
+v2
+
+OAuth
+
+双方向同期
+
+external_event_id 管理
+
+10.3 Slack / Discord
+
+競合投稿で示唆。
+
+目的
+
+更新入力点にする
+
+表を開かなくても進捗を更新できる
+
+リマインドを飛ばす
+
+例外をエスカレーションする
+
+11. 競合を超えるための制約
+
+ここが重要。
+競合機能の吸収だけだと模倣で終わるので、以下で上位互換にする。
+
+構造的に防ぐこと
+
+納期逆転
+
+単価未設定請求
+
+素材未回収進行
+
+担当未設定着手
+
+修正追加の請求漏れ
+
+利益率異常の見逃し
+
+停滞案件の放置
+
+画面ではなくルールで防ぐ
+
+保存時バリデーション
+
+自動例外起票
+
+連携状態チェック
+
+自動候補生成
+
+期限接近前の検知
+
+12. 実装優先順位
+
+今回は競合吸収だけに絞って順番を切る。
+
+Phase 1
+
+projects
+
+rate_cards
+
+contents 拡張
+
+/projects
+
+/projects/[id]
+
+/finance-lite
+
+Phase 2
+
+project_tasks
+
+schedule_events
+
+/timeline
+
+/calendar
+
+一括納期シフト
+
+Phase 3
+
+material_assets
+
+/materials
+
+change_requests
+
+/changes
+
+Phase 4
+
+exceptions
+
+健全性スコア
+
+保存時バリデーション
+
+自動例外起票
+
+Phase 5
+
+Chatwork
+
+Google Calendar
+
+Slack / Discord
+
+進捗自動更新
+
+13. 最終判定
+
+今回の完全版は、前回みたいな「SaaS全体の広げすぎ」ではなく、競合案件管理シートの全吸収に焦点を戻した設計になっている。
+
+要するにやることはこれ。
+
+既存の /contents + 請求/外注 を壊さず、
+競合が持つ案件管理・ガント・カレンダー・利益率・素材/修正稿・仕様変更・連携・検索を、案件レイヤーとして正式実装する。
+
+これなら、
+
+このスレッドの目的からズレない
+
+既存北極星からも降りる
+
+競合の内容をほぼ丸ごと吸収できる

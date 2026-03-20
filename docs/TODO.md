@@ -1,49 +1,10 @@
 ﻿# TODO
 
 ## NOW
-- Epic-12: Bill Change に負ける可能性がある点の完全解消（進行中）
-  - Invoices: 一括選択、一括発行 / Draft戻し / 無効化、一括PDF ZIP、一括送付準備を追加
-  - Invoices: ゲスト宛先の会社名対応と「複製して新規」中心の再利用導線を整備
-  - Payouts: 銀行CSV設定、プレビュー、出力履歴、文字コード注意、CSV出力導線を追加
-  - Payouts: 既存の外注請求一括承認 / 差し戻し / 支払済み導線を運用品質へ整理
-  - Reminder: 請求依頼 / 外注請求依頼の期限接近・超過リマインドログと通知を追加
-  - Settings: Workspace に銀行CSV設定、Members に会計運用向けロール説明を追加
-  - Docs: Bill Change 比較で見つかった弱点、一括操作方針、CSV方針、リマインド方針を decision-log へ追記
-  - Reminders: `/api/invoice-requests/reminders` に cron 向け自動実行入口を追加し、Payouts 画面表示時の副作用実行を撤去
-  - Reminders: cron 実行時は `INVOICE_REMINDER_CRON_SECRET` で org 指定実行できるようにし、管理者ログイン依存を除去
-- Epic-1: Notifications center + /home KPI + 遅延検知の実運用化（進行中）
-  - `/api/notifications/digest` を通知センター標準typeへ更新（membership/contents/billing/payouts）
-  - 通知一覧を再構成（未読/既読切替、個別既読、一括既読、優先度順、経過時間、実務導線）
-  - Home / Sidebar(Menu) を共通優先度ルールへ統一し、未読表示を新typeへ整合
-  - 通知取得・既読処理を `/api/notifications/list|mark-read|mark-all-read` 経由に統一（orgガード）
-  - 既存通知typeの整合migration追加（`042_notifications_type_alignment.sql`）
-- Epic-7: Menu / Home / Pages の運用最適化（進行中）
-  - Sidebar: 通知導線の上部固定、Pages 行操作（複製/アーカイブ）、+CTA を3アクション化
-  - Sidebar: 通知センターに未読バッジを表示
-  - Sidebar: 下段レイアウトを Pages / CTA / Settings に固定
-  - Sidebar: ログアウト導線を下段で視認しやすいセカンダリCTAに再調整
-  - Sidebar: 未読通知ドロップダウンから直接「対応する」導線を追加
-  - Home: KPI 7種 + 行動導線 + 通知サマリ + 締め状況を司令塔として統合
-  - Home: owner / executive_assistant / member(閲覧主体) で優先アクション導線を最適化
-  - Home: クライアント別の危険案件（納期遅れ/外注遅延）を上位表示して即対応導線を追加
-  - Home: 優先度付き「今すぐ動くタスク」を追加し、危険案件を件数ベースで即遷移可能に整理
-  - Home: 通知サマリに危険度ラベル/経過時間を追加し、締め状況に進捗バーを追加
-  - Pages詳細: 文字化け文言を解消し、コメント/履歴/目次/ツールバー文言を運用品質へ統一
-  - Pages詳細: タイトル文脈に応じた実務CTA（請求/支払い/運用）を自動切替し、関連ページリンクを常設
-  - Pages詳細: コメント/履歴パネルに検索を追加し、長文運用時の探索性を改善
-  - Pages詳細: 関連ページをキーワード近傍優先で表示し、ナレッジ間導線を強化
-  - Sidebar: 未読通知を重要度順（deadline/vendor_delay/payout）で表示し、導線優先度を固定
-  - Sidebar: 未読通知の先頭を最優先表示し、Pages件数表示とNEW CTA補助文で地図性を強化
-  - Help Center: `/help` を追加（左カテゴリナビ / 検索 / おすすめ読み順 / カテゴリ別カード / モバイル折りたたみ）
-  - Help Center: `/help/[slug]` プレースホルダ記事ルートを追加（将来DB化前提の href/slug 構造）
-  - Help Center: 一覧/詳細のUIと文言を再整理し、実運用で読める品質まで引き上げる
-  - 安定化: `app/contents` の文字化け由来の構文崩れを修正し lint エラーを解消
-  - 安定化: `app/invoices/[id]` を安全な詳細表示実装へ再構成し、請求詳細の閲覧/PDF導線/権限制御を維持
-  - Contents連携: `/contents?newClient=1` でクライアント作成フォームを即時オープン
+- なし
 
 ## NEXT
-- Epic-4: Vendors / Payouts 完成（250件/月を安全運用）
-- Billing / Vendors に請求依頼一覧の専用UIを追加し、通常請求依頼の運用画面を完成させる
+- なし
 
 ## LATER
 - Epic-2: /contents テンプレ一括運用の高度化
@@ -51,6 +12,18 @@
 - freee 同期の本格運用
 
 ## DONE
+- Epic-1: Notifications center + /home KPI + 遅延検知の実運用化
+  - `/api/notifications/digest` を通知センター標準typeへ更新（membership/contents/billing/payouts）
+  - 通知一覧を未読/既読切替、個別既読、一括既読、優先度順、経過時間、実務導線つきで再構成
+  - Home / Sidebar(Menu) を共通優先度ルールへ統一し、未読表示と通知取得 API を `/api/notifications/list|mark-read|mark-all-read` に集約
+  - 既存通知typeの整合migration（`042_notifications_type_alignment.sql`）を追加
+- Epic-7: Menu / Home / Pages の運用最適化（第1弾）
+  - Sidebar の通知固定、未読バッジ、Pages 行操作（複製/アーカイブ）、+CTA 3アクション化、下段レイアウト固定、ログアウト導線再調整、未読通知ドロップダウン直対応を実装
+  - Home に KPI 7種、優先タスク、通知サマリ、締め状況、クライアント別危険案件、ロール別優先アクションを統合
+  - Pages 詳細にコメント/履歴検索と関連ページのキーワード近傍表示を追加
+  - Pages 詳細にタイトル/本文文脈ベースの実務CTA（請求/支払い/通知/運用）自動切替と、空状態つき関連ページリンク常設を追加
+  - Help Center の一覧/詳細、カテゴリナビ、検索、おすすめ導線、プレースホルダ記事ルートを追加
+  - `app/contents` と `app/invoices/[id]` の安定化、および `/contents?newClient=1` の即時オープン導線を追加
 - Epic-3: Billing / Invoices 月次ワンボタン請求
   - Billing に月次請求プレビュー、クライアント絞り込み、重複時の扱い選択を追加
   - `delivery_month + billable_flag + invoice_id is null` を基準にクライアント別集計を実装
@@ -72,7 +45,19 @@
   - 請求依頼に期限表示、手動リマインド記録、履歴表示、請求書化導線を追加
   - `/invoices/new?requestId=...` で請求依頼からの下書き作成を追加
   - `invoice-requests` API を期限 / リマインド情報付きで再整理
+  - Invoices に一括選択、一括発行 / Draft戻し / 無効化、一括PDF ZIP、一括送付準備を追加
+  - Invoices のゲスト宛先会社名を一覧 / 詳細 / PDF / ZIP まで通し、「複製して新規」中心の再利用導線を固定
+  - Payouts に銀行CSV設定、プレビュー、出力履歴、文字コード注意、一括承認 / 差し戻し / 支払済み導線を追加
+  - Workspace に銀行CSV設定、Members に会計運用向けロール説明を追加
+  - `/api/invoice-requests/reminders` に cron 実行入口を追加し、`INVOICE_REMINDER_CRON_SECRET` による org 指定実行へ対応
+  - Bill Change 比較で見つかった一括操作 / CSV / リマインド方針を decision-log に反映
   - `Vendors / Vendor detail / Notifications / Invite` の文字化け画面を UTF-8 正常化し、既存 API 導線を維持したまま運用品質へ修正
+- Epic-4: Vendors / Payouts 完成（250件/月を安全運用）
+  - Vendors に検索つき外注一覧、当月請求依頼台帳、期限/状態フィルタ、手動フォロー記録、口座準備状態の表示を追加
+  - Payouts に検索 / 状態 / 口座状態フィルタ、件数サマリ、空状態つき一覧を追加し、一括操作対象を安全に絞り込めるようにした
+- Billing / Vendors に請求依頼一覧の専用UIを追加し、通常請求依頼の運用画面を完成
+  - Billing 請求依頼一覧に client名つき検索、請求書化状況フィルタ、期限状態フィルタを追加
+  - Vendors に月次の外注請求依頼を追える専用台帳を追加
 - Epic-13: 外部チャットAIと横断 read-only オペレーター基盤
   - `053_external_ai_channels.sql` で `external_channel_links` / `ai_channel_settings` / `ai_chat_audit_logs` を追加
   - `lib/ai/*` に権限付き internal tool layer / identity link / gateway / audit を追加

@@ -2,11 +2,13 @@ import { NextRequest, NextResponse } from "next/server"
 import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
 import { getUserIdFromToken, getOrgRole, isOrgAdmin } from "@/lib/apiAuth"
 import { writeAuditLog } from "@/lib/auditLog"
+import { updateJoinRequestDecision } from "@/lib/joinRequests"
+import { type AppOrgRole, upsertOrgMembership } from "@/lib/orgRoles"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
-const ALLOWED_ROLES = ["owner", "executive_assistant", "member"] as const
+const ALLOWED_ROLES = ["owner", "executive_assistant", "member"] as const satisfies readonly AppOrgRole[]
 
 export async function POST(req: NextRequest) {
   try {
@@ -15,10 +17,10 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json().catch(() => ({}))
     const requestId = typeof body?.requestId === "string" ? body.requestId.trim() : null
-    const roleKey =
-    typeof body?.roleKey === "string" && (ALLOWED_ROLES as readonly string[]).includes(body.roleKey)
-      ? body.roleKey
-      : "member"
+    const roleKey: AppOrgRole =
+      typeof body?.roleKey === "string" && (ALLOWED_ROLES as readonly string[]).includes(body.roleKey)
+        ? (body.roleKey as AppOrgRole)
+        : "member"
     if (!requestId) return NextResponse.json({ error: "requestId is required" }, { status: 400 })
 
     const admin = createSupabaseAdmin()
@@ -42,43 +44,56 @@ export async function POST(req: NextRequest) {
     const requesterUserId = row.requester_user_id as string
     const displayName = row.requested_display_name?.trim() || null
 
-    const { error: upsertErr } = await admin.from("app_users").upsert(
-      {
-        user_id: requesterUserId,
-        org_id: orgId,
-        role: roleKey,
-        status: "active",
-        display_name: displayName,
-      },
-      { onConflict: "user_id,org_id" }
-    )
-    if (upsertErr) {
+    const membershipWrite = await upsertOrgMembership(admin, {
+      userId: requesterUserId,
+      orgId,
+      role: roleKey,
+      status: "active",
+      displayName,
+    })
+    if (membershipWrite.error) {
       return NextResponse.json(
-        { error: upsertErr.message ?? "Failed to add member" },
+        { error: membershipWrite.error.message ?? "Failed to add member" },
         { status: 500 }
       )
     }
 
     const now = new Date().toISOString()
-    await admin
+    const { error: profileUpdateErr } = await admin
       .from("user_profiles")
       .update({ active_org_id: orgId, updated_at: now })
       .eq("user_id", requesterUserId)
+    if (profileUpdateErr) {
+      console.error("[api/org/requests/approve] failed to update active org", profileUpdateErr)
+    }
 
-    await admin
-      .from("join_requests")
-      .update({ status: "approved", decided_at: now, decided_by: approverId })
-      .eq("id", requestId)
+    const decisionUpdate = await updateJoinRequestDecision(admin, requestId, {
+      status: "approved",
+      decidedAt: now,
+      decidedBy: approverId,
+    })
+    if (decisionUpdate.error) {
+      return NextResponse.json(
+        { error: decisionUpdate.error.message ?? "Failed to update join request" },
+        { status: 500 }
+      )
+    }
+    if (!decisionUpdate.updated) {
+      return NextResponse.json({ error: "Request not found or already decided" }, { status: 409 })
+    }
 
     const { data: org } = await admin.from("organizations").select("name").eq("id", orgId).maybeSingle()
     const orgName = (org as { name?: string } | null)?.name ?? ""
 
-    await admin.from("notifications").insert({
+    const { error: notificationErr } = await admin.from("notifications").insert({
       org_id: orgId,
       recipient_user_id: requesterUserId,
       type: "membership.approved",
       payload: { org_id: orgId, org_name: orgName, role: roleKey },
     })
+    if (notificationErr) {
+      console.error("[api/org/requests/approve] failed to notify requester", notificationErr)
+    }
 
     const ownerUserId = row.owner_user_id
     if (ownerUserId) {
@@ -92,7 +107,13 @@ export async function POST(req: NextRequest) {
       )
       if (toUpdate?.id) {
         const payload = { ...(toUpdate.payload as object), resolved: true }
-        await admin.from("notifications").update({ read_at: now, payload }).eq("id", toUpdate.id)
+        const { error: ownerNotificationErr } = await admin
+          .from("notifications")
+          .update({ read_at: now, payload })
+          .eq("id", toUpdate.id)
+        if (ownerNotificationErr) {
+          console.error("[api/org/requests/approve] failed to resolve owner notification", ownerNotificationErr)
+        }
       }
     }
 
@@ -105,6 +126,7 @@ export async function POST(req: NextRequest) {
       meta: {
         requester_user_id: requesterUserId,
         role: roleKey,
+        stored_role: membershipWrite.storedRole,
       },
     })
 

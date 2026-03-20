@@ -54,8 +54,8 @@ export async function GET(req: NextRequest) {
       org_id: auth.orgId,
       discord_enabled: false,
       line_enabled: false,
-      discord_bot_label: "Nova loop AI",
-      line_bot_label: "Nova loop AI",
+      discord_bot_label: "NovaLoop AI",
+      line_bot_label: "NovaLoop AI",
       open_app_url: process.env.NEXT_PUBLIC_APP_URL ?? "",
     },
     links: links ?? [],
@@ -74,8 +74,8 @@ export async function PATCH(req: NextRequest) {
     org_id: auth.orgId,
     discord_enabled: body.discord_enabled === true,
     line_enabled: body.line_enabled === true,
-    discord_bot_label: typeof body.discord_bot_label === "string" ? body.discord_bot_label.trim() : "Nova loop AI",
-    line_bot_label: typeof body.line_bot_label === "string" ? body.line_bot_label.trim() : "Nova loop AI",
+    discord_bot_label: typeof body.discord_bot_label === "string" ? body.discord_bot_label.trim() : "NovaLoop AI",
+    line_bot_label: typeof body.line_bot_label === "string" ? body.line_bot_label.trim() : "NovaLoop AI",
     open_app_url:
       typeof body.open_app_url === "string" && body.open_app_url.trim().length > 0
         ? body.open_app_url.trim()

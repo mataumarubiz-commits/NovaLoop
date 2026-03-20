@@ -9,6 +9,8 @@ import {
   loadVendorProfileAndBank,
   normalizeVendorBillingMonth,
   requireVendorActor,
+  resolveVendorPortalMonth,
+  upsertVendorDraftInvoice,
   validateVendorBank,
   validateVendorProfile,
 } from "@/lib/vendorPortal"
@@ -27,6 +29,7 @@ async function loadHistory(orgId: string, vendorId: string) {
     .eq("vendor_id", vendorId)
     .order("billing_month", { ascending: false })
     .limit(12)
+
   return data ?? []
 }
 
@@ -39,6 +42,7 @@ async function nextVendorInvoiceNumber(orgId: string, billingMonth: string) {
     .maybeSingle()
 
   if (settingsError) throw new Error(settingsError.message)
+
   const nextSeq = Number((settings as { invoice_seq?: number } | null)?.invoice_seq ?? 1)
   const invoiceNumber = `VINV-${billingMonth.slice(0, 4)}-${String(nextSeq).padStart(7, "0")}`
 
@@ -50,22 +54,45 @@ async function nextVendorInvoiceNumber(orgId: string, billingMonth: string) {
   return invoiceNumber
 }
 
+function parseRequestedMonth(value: string | null) {
+  if (value == null || value.trim() === "") return null
+  return normalizeVendorBillingMonth(value)
+}
+
 export async function GET(req: NextRequest) {
   try {
     const actor = await requireVendorActor(req)
-    const month = normalizeVendorBillingMonth(req.nextUrl.searchParams.get("month"))
-    if (!month) {
-      return NextResponse.json({ ok: false, error: "対象月が不正です。" }, { status: 400 })
+    const rawMonth = req.nextUrl.searchParams.get("month")
+    const requestedMonth = parseRequestedMonth(rawMonth)
+
+    if (rawMonth && !requestedMonth) {
+      return NextResponse.json({ ok: false, error: "month は YYYY-MM 形式で指定してください。" }, { status: 400 })
     }
 
-    const [{ profile, bank }, preview, history] = await Promise.all([
+    const resolved = await resolveVendorPortalMonth(actor, requestedMonth)
+    let preview = resolved.preview
+    let autoPrepared = false
+
+    if (!preview.editableInvoice && !preview.lockedInvoice && preview.lines.length > 0) {
+      await upsertVendorDraftInvoice({
+        actor,
+        month: resolved.month,
+      })
+      preview = await buildVendorInvoicePreview(actor, resolved.month)
+      autoPrepared = true
+    }
+
+    const [{ profile, bank }, history] = await Promise.all([
       loadVendorProfileAndBank(actor),
-      buildVendorInvoicePreview(actor, month),
       loadHistory(actor.orgId, actor.vendorId),
     ])
 
     return NextResponse.json({
       ok: true,
+      month: resolved.month,
+      requestedMonth,
+      resolvedFrom: resolved.source,
+      autoPrepared,
       vendor: {
         name: actor.vendorName,
         email: actor.vendorEmail,
@@ -77,7 +104,7 @@ export async function GET(req: NextRequest) {
     })
   } catch (error) {
     return NextResponse.json(
-      { ok: false, error: error instanceof Error ? error.message : "今月の請求確認に失敗しました。" },
+      { ok: false, error: error instanceof Error ? error.message : "今月の請求を読み込めませんでした。" },
       { status: 400 }
     )
   }
@@ -86,27 +113,39 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const actor = await requireVendorActor(req)
-    const body = (await req.json().catch(() => null)) as { month?: string } | null
-    const month = normalizeVendorBillingMonth(body?.month ?? null)
-    if (!month) {
-      return NextResponse.json({ ok: false, error: "対象月が不正です。" }, { status: 400 })
+    const body = (await req.json().catch(() => null)) as { month?: string | null } | null
+    const rawMonth = typeof body?.month === "string" ? body.month : null
+    const requestedMonth = parseRequestedMonth(rawMonth)
+
+    if (rawMonth && !requestedMonth) {
+      return NextResponse.json({ ok: false, error: "month は YYYY-MM 形式で指定してください。" }, { status: 400 })
     }
 
+    const resolved = requestedMonth
+      ? {
+          month: requestedMonth,
+          preview: await buildVendorInvoicePreview(actor, requestedMonth),
+          source: "query" as const,
+        }
+      : await resolveVendorPortalMonth(actor, null)
+
+    const month = resolved.month
+    const preview = resolved.preview
+
     const admin = createSupabaseAdmin()
-    const [{ profile, bank }, recipient, preview] = await Promise.all([
+    const [{ profile, bank }, recipient] = await Promise.all([
       loadVendorProfileAndBank(actor),
       loadRecipientSnapshot(actor.orgId),
-      buildVendorInvoicePreview(actor, month),
     ])
 
     if (!validateVendorProfile(profile)) {
       return NextResponse.json({ ok: false, error: "プロフィール情報を先に登録してください。" }, { status: 400 })
     }
     if (!validateVendorBank(bank)) {
-      return NextResponse.json({ ok: false, error: "口座情報を先に登録してください。" }, { status: 400 })
+      return NextResponse.json({ ok: false, error: "振込先口座を先に登録してください。" }, { status: 400 })
     }
     if (preview.lines.length === 0) {
-      return NextResponse.json({ ok: false, error: "この月の請求対象案件がありません。" }, { status: 400 })
+      return NextResponse.json({ ok: false, error: "この月に請求対象の案件がありません。" }, { status: 400 })
     }
     if (preview.lockedInvoice) {
       return NextResponse.json(
@@ -150,8 +189,13 @@ export async function POST(req: NextRequest) {
     }
 
     if (existing?.id) {
-      const { error } = await admin.from("vendor_invoices").update(invoicePayload).eq("id", existing.id).eq("org_id", actor.orgId)
+      const { error } = await admin
+        .from("vendor_invoices")
+        .update(invoicePayload)
+        .eq("id", existing.id)
+        .eq("org_id", actor.orgId)
       if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+
       await admin.from("vendor_invoice_lines").delete().eq("vendor_invoice_id", existing.id)
     } else {
       const { error } = await admin.from("vendor_invoices").insert({ ...invoicePayload, created_at: now })
@@ -225,7 +269,7 @@ export async function POST(req: NextRequest) {
     })
   } catch (error) {
     return NextResponse.json(
-      { ok: false, error: error instanceof Error ? error.message : "請求の確定に失敗しました。" },
+      { ok: false, error: error instanceof Error ? error.message : "請求を提出できませんでした。" },
       { status: 400 }
     )
   }

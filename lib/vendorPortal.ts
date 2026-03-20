@@ -125,6 +125,12 @@ export type UpsertVendorDraftResult =
       reason: string
     }
 
+export type ResolvedVendorPortalMonth = {
+  month: string
+  preview: VendorInvoicePreview
+  source: "query" | "editable" | "preview" | "locked" | "fallback"
+}
+
 function createAnonClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -134,6 +140,22 @@ function createAnonClient() {
 
 export function normalizeVendorBillingMonth(value: unknown) {
   return typeof value === "string" && /^\d{4}-\d{2}$/.test(value) ? value : null
+}
+
+function currentBillingMonth() {
+  const today = new Date()
+  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`
+}
+
+function previousBillingMonth(month: string) {
+  const [year, mon] = month.split("-").map(Number)
+  const date = new Date(Date.UTC(year, mon - 2, 1))
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`
+}
+
+function compareBillingMonthDesc(a: string, b: string) {
+  if (a === b) return 0
+  return a > b ? -1 : 1
 }
 
 export async function getUserIdFromRequest(req: NextRequest): Promise<string | null> {
@@ -467,6 +489,124 @@ export async function buildVendorInvoicePreview(actor: VendorActor, month: strin
     extraEditableInvoices,
     dates,
     memo: buildMonthlyMemo(month, lines.length),
+  }
+}
+
+async function listVendorCandidateBillingMonths(actor: VendorActor) {
+  const admin = createSupabaseAdmin()
+
+  const { data: assignmentRows, error: assignmentError } = await admin
+    .from("content_vendor_assignments")
+    .select("content_id")
+    .eq("org_id", actor.orgId)
+    .eq("vendor_id", actor.vendorId)
+
+  if (assignmentError) {
+    throw new Error(assignmentError.message)
+  }
+
+  const contentIds = ((assignmentRows ?? []) as Array<{ content_id?: string | null }>)
+    .map((row) => String(row.content_id ?? ""))
+    .filter(Boolean)
+
+  const months = new Set<string>([currentBillingMonth()])
+
+  if (contentIds.length > 0) {
+    const { data: contentRows, error: contentError } = await admin
+      .from("contents")
+      .select("delivery_month, status, billable_flag")
+      .eq("org_id", actor.orgId)
+      .in("id", contentIds)
+      .not("delivery_month", "is", null)
+
+    if (contentError) {
+      throw new Error(contentError.message)
+    }
+
+    for (const row of (contentRows ?? []) as Array<{ delivery_month?: string | null; status?: string | null; billable_flag?: boolean | null }>) {
+      const month = normalizeVendorBillingMonth(row.delivery_month)
+      if (!month) continue
+      if (!BILLABLE_VENDOR_CONTENT_STATUSES.has(String(row.status ?? ""))) continue
+      if (row.billable_flag !== true) continue
+      months.add(month)
+    }
+  }
+
+  const { data: invoiceRows, error: invoiceError } = await admin
+    .from("vendor_invoices")
+    .select("billing_month")
+    .eq("org_id", actor.orgId)
+    .eq("vendor_id", actor.vendorId)
+    .order("billing_month", { ascending: false })
+    .limit(12)
+
+  if (invoiceError) {
+    throw new Error(invoiceError.message)
+  }
+
+  for (const row of (invoiceRows ?? []) as Array<{ billing_month?: string | null }>) {
+    const month = normalizeVendorBillingMonth(row.billing_month)
+    if (month) months.add(month)
+  }
+
+  const currentMonth = currentBillingMonth()
+  months.add(previousBillingMonth(currentMonth))
+
+  return Array.from(months).sort(compareBillingMonthDesc).slice(0, 12)
+}
+
+export async function resolveVendorPortalMonth(
+  actor: VendorActor,
+  requestedMonth: string | null
+): Promise<ResolvedVendorPortalMonth> {
+  if (requestedMonth) {
+    return {
+      month: requestedMonth,
+      preview: await buildVendorInvoicePreview(actor, requestedMonth),
+      source: "query",
+    }
+  }
+
+  const candidateMonths = await listVendorCandidateBillingMonths(actor)
+  let latestPreviewMonth: ResolvedVendorPortalMonth | null = null
+  let latestLockedMonth: ResolvedVendorPortalMonth | null = null
+
+  for (const month of candidateMonths) {
+    const preview = await buildVendorInvoicePreview(actor, month)
+
+    if (preview.editableInvoice) {
+      return {
+        month,
+        preview,
+        source: "editable",
+      }
+    }
+
+    if (!latestPreviewMonth && preview.lines.length > 0) {
+      latestPreviewMonth = {
+        month,
+        preview,
+        source: "preview",
+      }
+    }
+
+    if (!latestLockedMonth && preview.lockedInvoice) {
+      latestLockedMonth = {
+        month,
+        preview,
+        source: "locked",
+      }
+    }
+  }
+
+  if (latestPreviewMonth) return latestPreviewMonth
+  if (latestLockedMonth) return latestLockedMonth
+
+  const fallbackMonth = currentBillingMonth()
+  return {
+    month: fallbackMonth,
+    preview: await buildVendorInvoicePreview(actor, fallbackMonth),
+    source: "fallback",
   }
 }
 

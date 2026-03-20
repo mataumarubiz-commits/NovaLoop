@@ -1,6 +1,6 @@
 ﻿"use client"
 
-import { useState, useCallback, useEffect, useMemo } from "react"
+import { useState, useCallback, useEffect, useMemo, useRef } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import {
@@ -22,11 +22,12 @@ import { notificationActionHref, notificationPriority, notificationTitle } from 
 const SIDEBAR_NAV_ORDER_KEY = "sidebar_nav_order"
 
 const SIDEBAR_WIDTH = 260
-const PRIMARY_NAV_HREFS = ["/home", "/contents", "/billing", "/invoices", "/vendors", "/payouts"] as const
+const PRIMARY_NAV_HREFS = ["/home", "/contents", "/projects", "/billing", "/invoices", "/vendors", "/payouts"] as const
 const NAV_ITEMS: { href: string; label: string; locked?: boolean }[] = [
   { href: "/home", label: "ホーム" },
   { href: "/members", label: "メンバー" },
   { href: "/contents", label: "コンテンツ" },
+  { href: "/projects", label: "案件" },
   { href: "/billing", label: "請求", locked: true },
   { href: "/invoices", label: "請求書" },
   { href: "/vendors", label: "外注", locked: true },
@@ -46,6 +47,61 @@ type UnreadNotification = {
   payload: Record<string, unknown> | null
   org_id: string | null
   created_at: string
+}
+
+type SidebarNavBadge = {
+  text: string
+  tone: "danger" | "warn" | "info"
+}
+
+const EMPTY_STATUS_SNAPSHOT = {
+  todaySubmitCount: 0,
+  overdueCount: 0,
+  unissuedCount: 0,
+  vendorReviewCount: 0,
+  payoutPendingCount: 0,
+}
+
+const SIDEBAR_FETCH_TTL_MS = 15_000
+
+const COMPLETED_CONTENT_STATUSES = new Set(["delivered", "published", "canceled", "cancelled"])
+const BILLABLE_DONE_STATUSES = new Set(["delivered", "published"])
+
+function toYmd(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, "0")
+  const day = String(date.getDate()).padStart(2, "0")
+  return `${year}-${month}-${day}`
+}
+
+function toYm(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, "0")
+  return `${year}-${month}`
+}
+
+function badgeStyle(tone: SidebarNavBadge["tone"]): React.CSSProperties {
+  if (tone === "danger") {
+    return {
+      background: "#fff1f2",
+      border: "1px solid #fecdd3",
+      color: "#be123c",
+    }
+  }
+
+  if (tone === "warn") {
+    return {
+      background: "#fff7ed",
+      border: "1px solid #fed7aa",
+      color: "#9a3412",
+    }
+  }
+
+  return {
+    background: "#eef2ff",
+    border: "1px solid #c7d2fe",
+    color: "#4338ca",
+  }
 }
 
 export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
@@ -73,6 +129,12 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
   const [notificationMenuOpen, setNotificationMenuOpen] = useState(false)
   const [mainFlowOpen, setMainFlowOpen] = useState(true)
   const [knowledgeOpen, setKnowledgeOpen] = useState(true)
+  const [statusSnapshot, setStatusSnapshot] = useState(EMPTY_STATUS_SNAPSHOT)
+  const unreadCacheRef = useRef<{ orgId: string; loadedAt: number; notifications: UnreadNotification[] } | null>(null)
+  const statusCacheRef = useRef<{ orgId: string; month: string; loadedAt: number; snapshot: typeof EMPTY_STATUS_SNAPSHOT } | null>(null)
+
+  const todayYmd = useMemo(() => toYmd(new Date()), [])
+  const thisMonth = useMemo(() => toYm(new Date()), [])
 
   const defaultNavOrder = useMemo(() => NAV_ITEMS.map((i) => i.href), [])
   const [navOrder, setNavOrder] = useState<string[]>(defaultNavOrder)
@@ -164,6 +226,18 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
       setUnreadNotifications([])
       return
     }
+
+    const cached = unreadCacheRef.current
+    if (
+      cached &&
+      cached.orgId === activeOrgId &&
+      Date.now() - cached.loadedAt < SIDEBAR_FETCH_TTL_MS
+    ) {
+      setUnreadNotifications(cached.notifications)
+      setUnreadNotificationCount(cached.notifications.length)
+      return
+    }
+
     let active = true
     const loadUnread = async () => {
       const { data: sessionData } = await supabase.auth.getSession()
@@ -182,12 +256,114 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
       })
       setUnreadNotifications(sorted)
       setUnreadNotificationCount(list.length)
+      unreadCacheRef.current = {
+        orgId: activeOrgId,
+        loadedAt: Date.now(),
+        notifications: sorted,
+      }
     }
     void loadUnread()
     return () => {
       active = false
     }
   }, [activeOrgId, pathname])
+
+  useEffect(() => {
+    if (!activeOrgId) {
+      setStatusSnapshot(EMPTY_STATUS_SNAPSHOT)
+      return
+    }
+
+    const cached = statusCacheRef.current
+    if (
+      cached &&
+      cached.orgId === activeOrgId &&
+      cached.month === thisMonth &&
+      Date.now() - cached.loadedAt < SIDEBAR_FETCH_TTL_MS
+    ) {
+      setStatusSnapshot(cached.snapshot)
+      return
+    }
+
+    let active = true
+    const loadStatusSnapshot = async () => {
+      const contentsPromise = supabase
+        .from("contents")
+        .select("due_client_at, due_editor_at, status, editor_submitted_at, billable_flag, delivery_month, invoice_id")
+        .eq("org_id", activeOrgId)
+
+      const invoicesPromise = canAccessBilling
+        ? supabase.from("invoices").select("id").eq("org_id", activeOrgId).eq("invoice_month", thisMonth)
+        : Promise.resolve({ data: [], error: null })
+
+      const vendorInvoicesPromise = canAccessBilling
+        ? supabase.from("vendor_invoices").select("status").eq("org_id", activeOrgId).eq("billing_month", thisMonth)
+        : Promise.resolve({ data: [], error: null })
+
+      const [contentsRes, invoicesRes, vendorInvoicesRes] = await Promise.all([
+        contentsPromise,
+        invoicesPromise,
+        vendorInvoicesPromise,
+      ])
+
+      if (!active) return
+
+      const contentRows =
+        (contentsRes.data as Array<{
+          due_client_at: string
+          due_editor_at: string
+          status: string
+          editor_submitted_at: string | null
+          billable_flag: boolean
+          delivery_month: string | null
+          invoice_id: string | null
+        }> | null) ?? []
+
+      const openRows = contentRows.filter((row) => !COMPLETED_CONTENT_STATUSES.has(String(row.status ?? "")))
+      const invoiceTargets = contentRows.filter(
+        (row) =>
+          row.delivery_month === thisMonth &&
+          Boolean(row.billable_flag) &&
+          BILLABLE_DONE_STATUSES.has(String(row.status ?? ""))
+      )
+      const vendorRows =
+        (vendorInvoicesRes.data as Array<{ status: string | null }> | null) ?? []
+
+      const nextSnapshot = {
+        todaySubmitCount: openRows.filter((row) => row.due_client_at === todayYmd).length,
+        overdueCount: openRows.filter(
+          (row) =>
+            row.due_client_at < todayYmd || (row.due_editor_at < todayYmd && !row.editor_submitted_at)
+        ).length,
+        unissuedCount: invoiceTargets.filter((row) => !row.invoice_id).length,
+        vendorReviewCount: vendorRows.filter((row) => row.status === "draft" || row.status === "rejected").length,
+        payoutPendingCount: vendorRows.filter((row) => row.status === "submitted" || row.status === "approved").length,
+      }
+
+      setStatusSnapshot(nextSnapshot)
+      statusCacheRef.current = {
+        orgId: activeOrgId,
+        month: thisMonth,
+        loadedAt: Date.now(),
+        snapshot: nextSnapshot,
+      }
+
+      if (contentsRes.error || invoicesRes.error || vendorInvoicesRes.error) {
+        if (process.env.NODE_ENV === "development") {
+          console.error("[Sidebar] status snapshot load error", {
+            contents: contentsRes.error?.message,
+            invoices: invoicesRes.error?.message,
+            vendorInvoices: vendorInvoicesRes.error?.message,
+          })
+        }
+      }
+    }
+
+    void loadStatusSnapshot()
+    return () => {
+      active = false
+    }
+  }, [activeOrgId, canAccessBilling, thisMonth, todayYmd, pathname])
 
   useEffect(() => {
     if (!notificationMenuOpen) return
@@ -201,6 +377,30 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
     const t = setTimeout(() => setToastMessage(null), 4000)
     return () => clearTimeout(t)
   }, [toastMessage])
+
+  const navBadges = useMemo<Record<string, SidebarNavBadge | undefined>>(() => {
+    const badges: Record<string, SidebarNavBadge | undefined> = {}
+
+    if (statusSnapshot.overdueCount > 0) {
+      badges["/contents"] = { text: `遅れ ${statusSnapshot.overdueCount}`, tone: "danger" }
+    } else if (statusSnapshot.todaySubmitCount > 0) {
+      badges["/contents"] = { text: `今日 ${statusSnapshot.todaySubmitCount}`, tone: "info" }
+    }
+
+    if (canAccessBilling && statusSnapshot.unissuedCount > 0) {
+      badges["/billing"] = { text: `未発行 ${statusSnapshot.unissuedCount}`, tone: "danger" }
+    }
+
+    if (canAccessBilling && statusSnapshot.vendorReviewCount > 0) {
+      badges["/vendors"] = { text: `確認待ち ${statusSnapshot.vendorReviewCount}`, tone: "warn" }
+    }
+
+    if (canAccessBilling && statusSnapshot.payoutPendingCount > 0) {
+      badges["/payouts"] = { text: `未処理 ${statusSnapshot.payoutPendingCount}`, tone: "warn" }
+    }
+
+    return badges
+  }, [canAccessBilling, statusSnapshot])
 
   const createPageWithTemplate = useCallback(
     async (template: PageTemplateKey | "blank") => {
@@ -670,6 +870,7 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
                 <SortableNavItem
                   key={item.href}
                   item={item}
+                  badge={navBadges[item.href]}
                   pathname={pathname}
                   linkBase={linkBase}
                   pagesMenuOpen={pagesMenuOpen}
@@ -697,6 +898,7 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
             const label = showLock ? `${item.label}（権限限定）` : item.label
             const isPages = item.href === "/pages"
             const isActive = pathname === item.href
+            const badge = navBadges[item.href]
             return (
               <div key={item.href}>
                 <div style={{ display: "flex", alignItems: "stretch", minHeight: 44 }}>
@@ -747,7 +949,28 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
                           background: isActive ? "var(--surface-2)" : undefined,
                         }}
                       >
-                        {label}
+                        <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
+                          {badge ? (
+                            <span
+                              style={{
+                                ...badgeStyle(badge.tone),
+                                display: "inline-flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                minHeight: 22,
+                                padding: "0 8px",
+                                borderRadius: 999,
+                                fontSize: 10,
+                                fontWeight: 700,
+                                whiteSpace: "nowrap",
+                                flexShrink: 0,
+                              }}
+                            >
+                              {badge.text}
+                            </span>
+                          ) : null}
+                        </span>
                       </Link>
                     )}
                   </div>
@@ -1208,6 +1431,7 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
 
 function SortableNavItem({
   item,
+  badge,
   pathname,
   linkBase,
   pagesMenuOpen,
@@ -1226,6 +1450,7 @@ function SortableNavItem({
   pageActionLoadingId,
 }: {
   item: (typeof NAV_ITEMS)[0]
+  badge?: SidebarNavBadge
   pathname: string | null
   linkBase: React.CSSProperties
   pagesMenuOpen: boolean
@@ -1395,7 +1620,28 @@ function SortableNavItem({
                 background: isActive ? "var(--surface-2)" : undefined,
               }}
             >
-              {label}
+              <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
+                {badge ? (
+                  <span
+                    style={{
+                      ...badgeStyle(badge.tone),
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      minHeight: 22,
+                      padding: "0 8px",
+                      borderRadius: 999,
+                      fontSize: 10,
+                      fontWeight: 700,
+                      whiteSpace: "nowrap",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {badge.text}
+                  </span>
+                ) : null}
+              </span>
             </Link>
           )}
         </div>

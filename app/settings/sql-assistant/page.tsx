@@ -2,6 +2,8 @@
 
 import { useState } from "react"
 import { useAuthOrg } from "@/hooks/useAuthOrg"
+import type { AiApiSuccessPayload } from "@/lib/aiClientEvents"
+import { supabase } from "@/lib/supabase"
 
 export default function SqlAssistantPage() {
   const { activeOrgId, role, loading, needsOnboarding } = useAuthOrg({ redirectToOnboarding: true })
@@ -23,9 +25,14 @@ export default function SqlAssistantPage() {
     setResult("")
     setLoadingAi(true)
     try {
+      const { data } = await supabase.auth.getSession()
+      const token = data.session?.access_token
       const res = await fetch("/api/ai", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ mode: "sql_draft", text: input, context }),
       })
       const json = await res.json().catch(() => null)
@@ -33,7 +40,7 @@ export default function SqlAssistantPage() {
         setError(json?.error ?? "AI 呼び出しに失敗しました。")
         return
       }
-      setResult(json?.result ?? "")
+      setResult((json as AiApiSuccessPayload | null)?.result?.text ?? "")
     } catch (e) {
       setError(e instanceof Error ? e.message : "AI 呼び出しに失敗しました。")
     } finally {

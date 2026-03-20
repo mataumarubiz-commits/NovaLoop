@@ -1,4 +1,4 @@
-﻿"use client"
+"use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
@@ -22,6 +22,7 @@ import {
 import { CSS } from "@dnd-kit/utilities"
 import { supabase } from "@/lib/supabase"
 import { useAuthOrg } from "@/hooks/useAuthOrg"
+import ChecklistReturnButton from "@/components/home/ChecklistReturnButton"
 import { PAGE_TEMPLATES, PAGE_TEMPLATE_KEYS, type PageTemplateKey } from "@/lib/pageTemplates"
 
 type PageRow = {
@@ -391,6 +392,9 @@ export default function PagesListPage() {
 
   return (
     <div style={{ padding: "28px 24px 44px", minHeight: "100vh", background: "var(--bg-grad)" }}>
+      <div style={{ marginBottom: 16 }}>
+        <ChecklistReturnButton />
+      </div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
@@ -399,7 +403,12 @@ export default function PagesListPage() {
             <span style={{ color: "var(--muted)", fontSize: 13 }}>Pages</span>
           </div>
           <h1 style={{ fontSize: 26, margin: 0, color: "var(--text)" }}>Pages</h1>
-          <p style={{ margin: "6px 0 0", fontSize: 13, color: "var(--muted)" }}>社内マニュアルと実務ナレッジを運用する中枢</p>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginTop: 6 }}>
+            <p style={{ margin: 0, fontSize: 13, color: "var(--muted)" }}>社内マニュアルと実務ナレッジを運用する中枢</p>
+            <Link href="/help/pages-manual" style={{ color: "var(--muted)", fontSize: 12, fontWeight: 600, textDecoration: "none" }}>
+              使い方を見る
+            </Link>
+          </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <Link href="/settings" title="設定" style={{ display: "inline-flex", width: 40, height: 40, alignItems: "center", justifyContent: "center", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface)", color: "var(--muted)" }}>
@@ -411,14 +420,6 @@ export default function PagesListPage() {
             </button>
           )}
         </div>
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10, marginBottom: 14 }}>
-        <Link href="/contents" style={{ textDecoration: "none", border: "1px solid var(--border)", borderRadius: 10, background: "var(--surface)", padding: 12, color: "var(--text)", fontSize: 13 }}>クライアント運用へ</Link>
-        <Link href="/billing" style={{ textDecoration: "none", border: "1px solid var(--border)", borderRadius: 10, background: "var(--surface)", padding: 12, color: "var(--text)", fontSize: 13 }}>請求運用へ</Link>
-        <Link href="/payouts" style={{ textDecoration: "none", border: "1px solid var(--border)", borderRadius: 10, background: "var(--surface)", padding: 12, color: "var(--text)", fontSize: 13 }}>外注支払いへ</Link>
-        <Link href="/help/pages-manual" style={{ textDecoration: "none", border: "1px solid var(--border)", borderRadius: 10, background: "var(--surface)", padding: 12, color: "var(--text)", fontSize: 13 }}>使い方を見る</Link>
-        <Link href="/settings/dashboard?context=/pages&type=feedback" style={{ textDecoration: "none", border: "1px solid var(--border)", borderRadius: 10, background: "var(--surface)", padding: 12, color: "var(--text)", fontSize: 13 }}>改善要望を送る</Link>
       </div>
 
       <div style={{ border: "1px solid var(--border)", borderRadius: 16, background: "var(--surface)", padding: 16, marginBottom: 14 }}>

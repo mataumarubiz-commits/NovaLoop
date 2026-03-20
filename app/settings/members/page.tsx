@@ -307,10 +307,10 @@ export default function MembersSettingsPage() {
         <section style={{ ...cardStyle, display: "grid", gap: 8 }}>
           <div style={{ fontWeight: 700, color: "var(--text)" }}>請求・会計運用の役割目安</div>
           <div style={{ fontSize: 13, color: "var(--muted)", display: "grid", gap: 4 }}>
-            <div>`owner`: 請求、外注、支払い、招待、Workspace 設定まで含めた全管理。</div>
-            <div>`executive_assistant`: owner と同様に請求 / 支払い実務を進める担当。</div>
-            <div>`member`: Home / Contents / Pages などの閲覧主体。請求系の更新操作はできません。</div>
-            <div>税理士・会計確認者は、更新まで必要なら `executive_assistant`、閲覧中心なら `member` + PDF共有で運用してください。</div>
+            <div>オーナー（owner）: 請求、外注、支払い、招待、ワークスペース設定まで含めた全体管理。</div>
+            <div>経営補佐（executive_assistant）: オーナーと同様に請求 / 支払い実務を進める担当。</div>
+            <div>メンバー（member）: Home / Contents / Pages などの閲覧主体。請求系の更新操作はできません。</div>
+            <div>税理士・会計確認者は、更新まで必要なら経営補佐、閲覧中心ならメンバー + PDF共有で運用してください。</div>
           </div>
         </section>
 

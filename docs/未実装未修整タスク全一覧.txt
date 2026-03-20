@@ -1,0 +1,228 @@
+未実装未修整タスク全一覧
+作成日: 2026-03-15
+作成基準:
+- docs/TODO.md の NOW / NEXT / LATER
+- docs/decision-log.md の「Scope intentionally not added」「未実施」「未確定」
+- 直近の実装ターンで明示した残件
+- 現在の repo 上で確認できる未適用 SQL / 未実施運用作業
+
+前提:
+- この一覧は「現在の repo と decision-log から識別できる未実装 / 未修整 / 未実施の全件」を残したもの。
+- 潜在バグや、まだ観測されていない欠陥は含まない。
+- 「意図的未実装」はスコープ外として先送りされている項目も含む。
+- 「要再確認」は docs/TODO.md で open のままだが、今回コード再棚卸しまではしていない項目。
+
+==================================================
+1. 最優先の未実施・運用ブロッカー
+==================================================
+
+[運用未実施]
+- supabase/sql/054_ai_logs_history.sql を実 DB へ適用していない。
+  影響:
+  - 新しい AI 履歴保存
+  - /api/ai/history
+  - ai_logs 履歴系の本番動作
+
+==================================================
+2. 仕様未確定のため未実装
+==================================================
+
+[要仕様確定]
+- Contents の「説明文整形」対象フィールドが未定。
+  現行 schema / UI に保存先 field がないため未実装。
+
+[要仕様確定]
+- Contents AI の `status_summary` / `delay_summary` / `task_rewrite` は local draft apply で止めている。
+  DB 保存先 field を新設するか、copy-only を正式仕様として固定するかの判断が未了。
+
+==================================================
+3. AI 基盤・AI 機能の残件
+==================================================
+
+[未実装]
+- internal `/api/ai` の結果はまだ text 中心。
+  配列候補、見出し構造、JSON fields 抽出までは未実装。
+
+[未実装]
+- external AI の typed result contract 統一が未完。
+  internal typed contract と external chat contract はまだ別系統。
+
+[未実装]
+- external AI の proactive push 通知。
+
+[未実装]
+- external AI の定期要約。
+
+[未実装]
+- external AI の画像 / 添付 / 音声入力対応。
+
+[未実装]
+- write-capable AI。
+  現在は read-only / local-draft apply のみ。
+
+[未実装]
+- public unauthenticated AI surface。
+
+[未実装]
+- direct public OAuth onboarding flow for external AI。
+
+[未実装]
+- palette apply / Discord / LINE handler を含む route-level 回帰テスト。
+  現在は helper 層の `node:test` が中心。
+
+[未実装]
+- automated browser E2E。
+
+[意図的未実装]
+- autonomous AI writes。
+
+==================================================
+4. Billing / Invoices / Payouts の残件
+==================================================
+
+[未実装]
+- 請求書 / 請求依頼の external email 自動送信。
+  現在は PDF 生成のみ。
+
+[未実装]
+- bank-specific encoding の本格対応。
+  現在は UTF-8 BOM / CRLF 前提のローカル運用。
+
+[未実装]
+- bank API 直接連携。
+
+[未実装]
+- freee payout API 直接連携。
+
+[未実装]
+- 受領請求書の独立したプロダクト領域。
+
+[未実装]
+- reminder automation の built-in scheduler UI。
+
+[未実装]
+- reminder automation / 月次処理の background worker manager。
+
+==================================================
+5. Vendors / Vendor Portal の残件
+==================================================
+
+[未実装]
+- vendor の multi-bank UI。
+
+[未実装]
+- vendor の free-form line item editing。
+  現在は confirm-only。
+
+[未実装]
+- public vendor-sharing mode。
+
+[未実装]
+- vendor 向け自動メール送信。
+
+[意図的未実装]
+- vendor portal の separate vendor-only brand / IA 再設計。
+  現在は既存 IA の延長で運用。
+
+==================================================
+6. Pages / Help / 公開導線の残件
+==================================================
+
+[未実装]
+- Pages の unauthenticated public sharing。
+
+[未実装]
+- Pages の auto-publishing。
+
+[未実装]
+- third-party X-Frame-Options / CSP 制限の回避。
+  現在は制限対象サイトは埋め込めない。
+
+[未実装]
+- DB-backed help CMS。
+
+[未実装]
+- advanced page publishing workflow。
+
+[未実装]
+- public external help pages。
+
+[要再確認]
+- PAGES_NOTION_LEVEL_STATUS.md に残る未到達項目の再棚卸し。
+  例:
+  - block anchor 表示の本格運用
+  - Figma / Miro / Vimeo / CodePen など embed 対応の追加
+  - diff UI / 版比較 UI の強化
+  - Pages 一覧の高度な並び替え / フィルタ強化
+  - block-level URL copy の常設化
+  - checklist / table / richer blocks の強化
+  - permission / audit の拡張確認
+
+==================================================
+7. Home / Notifications / Sidebar / Pages UX の残件
+==================================================
+
+- 現時点で今回棚卸し対象の残件なし。
+
+==================================================
+8. QA / 運用監査 / 監視の残件
+==================================================
+
+[未実装]
+- external monitoring / APM。
+
+[未実装]
+- deep BI。
+
+[未実装]
+- automated onboarding emails。
+
+[未実装]
+- heavy empty-state redesigns across all legacy screens。
+
+[未実装]
+- palette / webhook / billing flow / vendor flow をまたぐ実ブラウザ E2E。
+
+[要再確認]
+- `/settings/e2e` は手動リリースチェック中心。
+  自動回帰テストへの昇格は未完。
+
+==================================================
+9. freee / 会計周辺の残件
+==================================================
+
+[未実装]
+- freee 同期の本格運用。
+  docs/TODO.md の LATER に残存。
+
+[未実装]
+- freee payout direct submission。
+
+==================================================
+10. 既存 TODO に open のまま残っている中長期バックログ
+==================================================
+
+[要再確認]
+- Epic-4: Vendors / Payouts 完成（250件/月を安全運用）
+
+[要再確認]
+- Epic-2: `/contents` テンプレ一括運用の高度化
+
+[要再確認]
+- Epic-6: AI 導入準備（運用ログ・権限・安全策を先に固める）
+  注記:
+  - 一部は着手済みだが docs/TODO.md では open のまま
+
+==================================================
+11. 今回の棚卸しで「未完了扱いにしなかったもの」
+==================================================
+
+以下は今回の実装・検証で完了扱いにしているため、この一覧には未完としては入れていない:
+- lint
+- typecheck
+- helper レベルの AI テスト
+- production build
+- NovaLoop 表記統一
+- LP / onboarding / vendor portal / help の直近修正
+- Vendors / Payouts の検索・状態フィルタ・請求依頼台帳の運用品質改善
+- Billing / Vendors の請求依頼専用 UI

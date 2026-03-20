@@ -9,24 +9,26 @@ type PrimaryButtonProps = {
   variant?: "default" | "onboarding"
 }
 
-export default function PrimaryButton({ children, disabled, loading, onClick, hint, variant = "default" }: PrimaryButtonProps) {
+export default function PrimaryButton({
+  children,
+  disabled,
+  loading,
+  onClick,
+  hint,
+  variant = "default",
+}: PrimaryButtonProps) {
   const isDisabled = disabled || loading
-  const useOnboardingStyle = variant === "onboarding"
+  const label = loading ? "処理中..." : children
 
-  if (useOnboardingStyle) {
+  if (variant === "onboarding") {
     return (
       <div style={{ width: "100%" }}>
-        <button
-          type="button"
-          onClick={onClick}
-          disabled={isDisabled}
-          className="onboarding-cta"
-        >
-          {loading ? "処理中…" : children}
+        <button type="button" onClick={onClick} disabled={isDisabled} className="onboarding-cta">
+          {label}
         </button>
-        {isDisabled && hint && (
+        {isDisabled && hint ? (
           <p style={{ marginTop: 10, fontSize: 13, color: "var(--muted)", textAlign: "center" }}>{hint}</p>
-        )}
+        ) : null}
       </div>
     )
   }
@@ -52,11 +54,11 @@ export default function PrimaryButton({ children, disabled, loading, onClick, hi
           transition: "opacity 0.15s, box-shadow 0.15s",
         }}
       >
-        {loading ? "処理中…" : children}
+        {label}
       </button>
-      {isDisabled && hint && (
+      {isDisabled && hint ? (
         <p style={{ marginTop: 8, fontSize: 12, color: "var(--muted)", textAlign: "center" }}>{hint}</p>
-      )}
+      ) : null}
     </div>
   )
 }

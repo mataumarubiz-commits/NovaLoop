@@ -9,6 +9,7 @@ import {
   loadBillingPreview,
   nextMonthEndFromBillingMonth,
 } from "@/lib/monthlyBilling"
+import { normalizeInvoiceSourceTypeForWrite } from "@/lib/invoiceSourceType"
 import { writeAuditLog } from "@/lib/auditLog"
 import { trackServerEvent } from "@/lib/analytics"
 
@@ -117,6 +118,7 @@ export async function POST(req: NextRequest) {
 
     const generated: Array<{ client_id: string; client_name: string; invoice_id: string; invoice_no: string; content_count: number }> = []
     const skipped: Array<{ client_id: string; client_name: string; reason: string }> = []
+    const monthlyInvoiceSourceType = normalizeInvoiceSourceTypeForWrite("billing_monthly")
     let seq = initialSeq
 
     for (const client of targetClients) {
@@ -180,7 +182,7 @@ export async function POST(req: NextRequest) {
         tax_amount: 0,
         withholding_enabled: false,
         withholding_amount: 0,
-        source_type: "billing_monthly",
+        source_type: monthlyInvoiceSourceType,
         issuer_snapshot: issuerSnapshot,
         bank_snapshot: defaultBank ?? {},
         created_at: now,
@@ -242,7 +244,7 @@ export async function POST(req: NextRequest) {
         generated_content_count: rows.length,
         total_amount: subtotal,
         duplicate_mode: duplicateMode,
-        source_type: "billing_monthly",
+        source_type: monthlyInvoiceSourceType,
         created_by: userId,
       })
       if (logError) {

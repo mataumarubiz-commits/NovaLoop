@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { supabase } from "@/lib/supabase"
 import { useAuthOrg } from "@/hooks/useAuthOrg"
 import GuideEmptyState from "@/components/shared/GuideEmptyState"
+import { resolveInvoiceRecipientLabel } from "@/lib/invoiceNaming"
 
 type InvoiceRow = {
   id: string
@@ -614,7 +615,11 @@ export default function InvoicesPage() {
           ) : (
             filteredRows.map((row) => {
               const client = row.client_id ? clients[row.client_id] : null
-              const recipientName = client?.billing_name || client?.name || row.guest_client_name || "宛先未設定"
+              const recipientName = resolveInvoiceRecipientLabel({
+                clientName: client?.billing_name || client?.name,
+                guestCompanyName: row.guest_company_name,
+                guestClientName: row.guest_client_name,
+              })
               const status = STATUS_META[row.status] ?? { label: row.status, bg: "#f8fafc", text: "#475569" }
               const isSelected = selectedIds.includes(row.id)
               const isExpanded = expandedId === row.id
@@ -630,7 +635,7 @@ export default function InvoicesPage() {
                           {row.invoice_title || "請求書"}
                         </Link>
                         <span style={{ ...badgeBase, background: status.bg, color: status.text }}>{status.label}</span>
-                        {row.guest_client_name ? (
+                        {(row.guest_company_name || row.guest_client_name) ? (
                           <span style={{ ...badgeBase, background: "#eef2ff", color: "#3730a3" }}>ゲスト宛先</span>
                         ) : null}
                         {row.send_prepared_at ? (

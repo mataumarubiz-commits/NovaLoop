@@ -1,35 +1,8 @@
+import { getHelpAnswerCandidates as getRealHelpAnswerCandidates } from "@/lib/helpCenter"
 import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
 import type { ExternalActorContext, ExternalActorRole, InternalToolName, ToolExecutionResult } from "./externalTypes"
 
-const HELP_FALLBACKS: Array<{ topic: string; title: string; steps: string[] }> = [
-  {
-    topic: "請求",
-    title: "請求の進め方",
-    steps: [
-      "Billing で対象月を選び、請求対象の preview を確認します。",
-      "Invoices で draft を確認し、必要なら複製やゲスト宛先を調整します。",
-      "PDF を生成し、送付準備済みとして管理します。",
-    ],
-  },
-  {
-    topic: "外注請求",
-    title: "外注請求の確認フロー",
-    steps: [
-      "Vendors で請求依頼を送ります。",
-      "submitted を確認して approved または差し戻しへ進めます。",
-      "Payouts で支払い予定と CSV を確認します。",
-    ],
-  },
-  {
-    topic: "Pages",
-    title: "Pages の使い方",
-    steps: [
-      "Pages で運用マニュアルや手順書を作成します。",
-      "必要なルールはテンプレートから起票し、更新履歴を残します。",
-      "AI パレットで文章要約や手順化を補助できます。",
-    ],
-  },
-]
+type JsonRow = Record<string, unknown>
 
 function monthKey(date = new Date()) {
   return date.toISOString().slice(0, 7)
@@ -39,11 +12,15 @@ function todayYmd(date = new Date()) {
   return date.toISOString().slice(0, 10)
 }
 
+function extractTopic(input: string) {
+  return input.replace(/[?？!！。、]/g, "").trim()
+}
+
 function canUseTool(role: ExternalActorRole, tool: InternalToolName) {
   if (role === "vendor") {
     return [
-      "get_user_role_context",
       "get_org_context",
+      "get_user_role_context",
       "get_notifications_summary",
       "get_vendor_invoice_summary",
       "get_vendor_invoice_detail",
@@ -80,14 +57,14 @@ function canUseTool(role: ExternalActorRole, tool: InternalToolName) {
 function denied(tool: InternalToolName): ToolExecutionResult {
   return {
     tool,
-    summary: "この権限では参照できません。",
+    summary: "この情報にはアクセスできません。",
     references: [],
     data: { denied: true },
   }
 }
 
-function extractTopic(input: string) {
-  return input.replace(/[?？]/g, "").trim()
+function sumAmount(rows: Array<{ total?: number | null; amount?: number | null }>) {
+  return rows.reduce((sum, row) => sum + Number(row.total ?? row.amount ?? 0), 0)
 }
 
 export async function runInternalTool(params: {
@@ -109,18 +86,21 @@ export async function runInternalTool(params: {
         admin.from("organizations").select("id, name").eq("id", actor.orgId).maybeSingle(),
         admin.from("app_users").select("*", { count: "exact", head: true }).eq("org_id", actor.orgId),
       ])
+
+      const orgRow = (org as { name?: string | null } | null) ?? null
       return {
         tool,
-        summary: `${(org as { name?: string | null } | null)?.name ?? "組織"} / 権限 ${actor.role}`,
+        summary: `${orgRow?.name ?? "組織"} / 権限 ${actor.role}`,
         references: ["organizations", "app_users"],
         data: {
           org_id: actor.orgId,
-          org_name: (org as { name?: string | null } | null)?.name ?? null,
+          org_name: orgRow?.name ?? null,
           role: actor.role,
           member_count: memberCount ?? 0,
         },
       }
     }
+
     case "get_user_role_context":
       return {
         tool,
@@ -132,6 +112,7 @@ export async function runInternalTool(params: {
           vendor_id: actor.vendorId,
         },
       }
+
     case "get_notifications_summary": {
       const { data } = await admin
         .from("notifications")
@@ -140,6 +121,7 @@ export async function runInternalTool(params: {
         .eq("recipient_user_id", actor.linkedUserId)
         .order("created_at", { ascending: false })
         .limit(8)
+
       const rows = (data ?? []) as Array<{ id: string; type: string; read_at: string | null; created_at: string }>
       const unread = rows.filter((row) => !row.read_at)
       return {
@@ -149,6 +131,7 @@ export async function runInternalTool(params: {
         data: { total: rows.length, unread_count: unread.length, items: rows },
       }
     }
+
     case "get_org_dashboard_summary": {
       const { data } = await admin
         .from("contents")
@@ -156,17 +139,20 @@ export async function runInternalTool(params: {
         .eq("org_id", actor.orgId)
         .neq("status", "published")
         .neq("status", "canceled")
+
       const rows = (data ?? []) as Array<{ due_client_at: string | null; due_editor_at: string | null; status: string }>
       const todayCount = rows.filter((row) => row.due_client_at === today).length
       const delayed = rows.filter((row) => row.due_client_at && row.due_client_at < today && row.status !== "delivered").length
       const editorDelayed = rows.filter((row) => row.due_editor_at && row.due_editor_at < today && row.status !== "delivered").length
+
       return {
         tool,
-        summary: `本日納期 ${todayCount} 件 / 遅延 ${delayed} 件 / 外注遅延 ${editorDelayed} 件`,
+        summary: `本日納期 ${todayCount} 件 / 遅延 ${delayed} 件 / 編集遅延 ${editorDelayed} 件`,
         references: ["contents"],
         data: { today_due_count: todayCount, overdue_count: delayed, editor_overdue_count: editorDelayed },
       }
     }
+
     case "get_overdue_items":
     case "get_delayed_contents": {
       let contentQuery = admin
@@ -185,22 +171,29 @@ export async function runInternalTool(params: {
           .select("content_id")
           .eq("org_id", actor.orgId)
           .eq("vendor_id", actor.vendorId)
+
         const contentIds = ((assignments ?? []) as Array<{ content_id: string }>).map((row) => row.content_id)
         if (contentIds.length === 0) {
-          return { tool, summary: "遅延中の案件はありません。", references: ["content_vendor_assignments"], data: { items: [] } }
+          return {
+            tool,
+            summary: "遅延中の案件はありません。",
+            references: ["content_vendor_assignments"],
+            data: { items: [] },
+          }
         }
         contentQuery = contentQuery.in("id", contentIds)
       }
 
       const { data } = await contentQuery
-      const rows = (data ?? []) as Array<Record<string, unknown>>
+      const rows = (data ?? []) as JsonRow[]
       return {
         tool,
-        summary: rows.length > 0 ? `遅延案件は ${rows.length} 件あります。` : "遅延案件はありません。",
+        summary: rows.length > 0 ? `遅延案件は ${rows.length} 件です。` : "遅延案件はありません。",
         references: ["contents"],
         data: { items: rows },
       }
     }
+
     case "get_recent_activity_summary": {
       const { data } = await admin
         .from("audit_logs")
@@ -208,13 +201,15 @@ export async function runInternalTool(params: {
         .eq("org_id", actor.orgId)
         .order("created_at", { ascending: false })
         .limit(8)
+
       return {
         tool,
-        summary: (data ?? []).length > 0 ? `直近の更新は ${(data ?? []).length} 件あります。` : "直近の監査ログはありません。",
+        summary: (data ?? []).length > 0 ? `直近アクティビティは ${(data ?? []).length} 件です。` : "直近アクティビティはありません。",
         references: ["audit_logs"],
         data: { items: data ?? [] },
       }
     }
+
     case "get_contents_summary": {
       const { data } = await admin
         .from("contents")
@@ -222,13 +217,15 @@ export async function runInternalTool(params: {
         .eq("org_id", actor.orgId)
         .order("updated_at", { ascending: false })
         .limit(20)
+
       return {
         tool,
-        summary: `直近の案件 ${(data ?? []).length} 件を確認しました。`,
+        summary: `直近の案件は ${(data ?? []).length} 件です。`,
         references: ["contents"],
         data: { items: data ?? [] },
       }
     }
+
     case "get_contents_by_client": {
       const clientKeyword = extractTopic(query)
       const [{ data: clients }, { data: rows }] = await Promise.all([
@@ -240,39 +237,54 @@ export async function runInternalTool(params: {
           .order("due_client_at", { ascending: true })
           .limit(30),
       ])
+
       const clientIds = new Set(((clients ?? []) as Array<{ id: string }>).map((row) => row.id))
-      const matched = ((rows ?? []) as Array<Record<string, unknown>>).filter((row) => clientIds.has(String(row.client_id ?? "")))
+      const matched = ((rows ?? []) as JsonRow[]).filter((row) => clientIds.has(String(row.client_id ?? "")))
+
       return {
         tool,
-        summary: matched.length > 0 ? `${clientKeyword} に紐づく案件は ${matched.length} 件です。` : `${clientKeyword} に一致する案件は見つかりませんでした。`,
+        summary:
+          matched.length > 0
+            ? `${clientKeyword || "指定クライアント"} に紐づく案件は ${matched.length} 件です。`
+            : `${clientKeyword || "指定クライアント"} に紐づく案件は見つかりませんでした。`,
         references: ["clients", "contents"],
         data: { client_keyword: clientKeyword, items: matched.slice(0, 10) },
       }
     }
+
     case "get_content_detail": {
       const keyword = entityId ?? extractTopic(query)
-      let detailQuery = admin.from("contents").select("id, project_name, title, due_client_at, due_editor_at, status, delivery_month, unit_price").eq("org_id", actor.orgId)
+      let detailQuery = admin
+        .from("contents")
+        .select("id, project_name, title, due_client_at, due_editor_at, status, delivery_month, unit_price")
+        .eq("org_id", actor.orgId)
+
       if (entityId) detailQuery = detailQuery.eq("id", entityId)
       else detailQuery = detailQuery.or(`project_name.ilike.%${keyword}%,title.ilike.%${keyword}%`)
+
       const { data } = await detailQuery.limit(1).maybeSingle()
-      const row = (data as Record<string, unknown> | null) ?? null
+      const row = (data as JsonRow | null) ?? null
+
       return {
         tool,
-        summary: row ? `${String(row.project_name ?? row.title ?? "案件")} の詳細を確認しました。` : "該当案件は見つかりませんでした。",
+        summary: row ? `${String(row.project_name ?? row.title ?? "案件")} の詳細です。` : "該当する案件は見つかりませんでした。",
         references: ["contents"],
         data: { item: row },
       }
     }
+
     case "get_billing_summary": {
       const { data } = await admin
         .from("invoices")
         .select("id, status, total, invoice_month, due_date")
         .eq("org_id", actor.orgId)
         .eq("invoice_month", currentMonth)
+
       const rows = (data ?? []) as Array<{ total?: number | null; status: string }>
-      const total = rows.reduce((sum, row) => sum + Number(row.total ?? 0), 0)
+      const total = sumAmount(rows)
       const issued = rows.filter((row) => row.status === "issued").length
       const draft = rows.filter((row) => row.status === "draft").length
+
       return {
         tool,
         summary: `${currentMonth} の請求は ${rows.length} 件、発行済み ${issued} 件、draft ${draft} 件です。`,
@@ -280,6 +292,7 @@ export async function runInternalTool(params: {
         data: { month: currentMonth, total_count: rows.length, issued_count: issued, draft_count: draft, total_amount: total },
       }
     }
+
     case "get_invoices_summary": {
       const { data } = await admin
         .from("invoices")
@@ -287,38 +300,45 @@ export async function runInternalTool(params: {
         .eq("org_id", actor.orgId)
         .order("created_at", { ascending: false })
         .limit(12)
+
       return {
         tool,
-        summary: `請求一覧から ${(data ?? []).length} 件を参照しました。`,
+        summary: `請求一覧から ${(data ?? []).length} 件を確認しました。`,
         references: ["invoices"],
         data: { items: data ?? [] },
       }
     }
+
     case "get_invoice_detail": {
       const keyword = entityId ?? extractTopic(query)
       let detailQuery = admin
         .from("invoices")
         .select("id, invoice_no, invoice_title, status, total, subtotal, due_date, issue_date, invoice_month, client_id")
         .eq("org_id", actor.orgId)
+
       if (entityId) detailQuery = detailQuery.eq("id", entityId)
       else detailQuery = detailQuery.or(`invoice_no.ilike.%${keyword}%,invoice_title.ilike.%${keyword}%`)
+
       const { data: invoice } = await detailQuery.limit(1).maybeSingle()
-      const row = (invoice as Record<string, unknown> | null) ?? null
+      const row = (invoice as JsonRow | null) ?? null
       if (!row?.id) {
-        return { tool, summary: "該当する請求書は見つかりませんでした。", references: ["invoices"], data: { item: null } }
+        return { tool, summary: "該当する請求は見つかりませんでした。", references: ["invoices"], data: { item: null } }
       }
+
       const { data: lines } = await admin
         .from("invoice_lines")
         .select("description, quantity, unit_price, amount")
         .eq("invoice_id", String(row.id))
         .order("sort_order", { ascending: true })
+
       return {
         tool,
-        summary: `${String(row.invoice_no ?? row.invoice_title ?? "請求書")} の詳細です。`,
+        summary: `${String(row.invoice_no ?? row.invoice_title ?? "請求")} の詳細です。`,
         references: ["invoices", "invoice_lines"],
         data: { item: row, lines: lines ?? [] },
       }
     }
+
     case "get_unpaid_invoices": {
       const { data } = await admin
         .from("invoices")
@@ -327,28 +347,32 @@ export async function runInternalTool(params: {
         .eq("status", "issued")
         .order("due_date", { ascending: true })
         .limit(20)
+
       return {
         tool,
-        summary: (data ?? []).length > 0 ? `未入金候補の発行済み請求は ${(data ?? []).length} 件です。` : "未入金候補の発行済み請求はありません。",
+        summary: (data ?? []).length > 0 ? `未入金の発行済み請求は ${(data ?? []).length} 件です。` : "未入金の発行済み請求はありません。",
         references: ["invoices"],
         data: { items: data ?? [] },
       }
     }
+
     case "get_pending_invoice_requests": {
       const { data } = await admin
         .from("invoice_requests")
         .select("id, requested_title, recipient_email, request_deadline, due_date, status, request_type, reminder_count")
         .eq("org_id", actor.orgId)
-        .in("status", ["requested", "submitted", "returned"])
+        .in("status", ["sent", "viewed"])
         .order("created_at", { ascending: false })
         .limit(20)
+
       return {
         tool,
-        summary: (data ?? []).length > 0 ? `対応中の請求依頼は ${(data ?? []).length} 件あります。` : "対応中の請求依頼はありません。",
+        summary: (data ?? []).length > 0 ? `対応待ちの請求依頼は ${(data ?? []).length} 件です。` : "対応待ちの請求依頼はありません。",
         references: ["invoice_requests"],
         data: { items: data ?? [] },
       }
     }
+
     case "get_vendor_summary": {
       const [{ count: vendorCount }, { count: activeRequestCount }] = await Promise.all([
         admin.from("vendors").select("*", { count: "exact", head: true }).eq("org_id", actor.orgId),
@@ -358,13 +382,15 @@ export async function runInternalTool(params: {
           .eq("org_id", actor.orgId)
           .in("status", ["draft", "submitted", "approved"]),
       ])
+
       return {
         tool,
-        summary: `取引先外注は ${vendorCount ?? 0} 件、進行中の外注請求は ${activeRequestCount ?? 0} 件です。`,
+        summary: `外注は ${vendorCount ?? 0} 件、進行中の外注請求は ${activeRequestCount ?? 0} 件です。`,
         references: ["vendors", "vendor_invoices"],
         data: { vendor_count: vendorCount ?? 0, active_invoice_count: activeRequestCount ?? 0 },
       }
     }
+
     case "get_vendor_invoice_summary": {
       let queryBuilder = admin
         .from("vendor_invoices")
@@ -372,33 +398,40 @@ export async function runInternalTool(params: {
         .eq("org_id", actor.orgId)
         .order("created_at", { ascending: false })
         .limit(20)
+
       if (actor.role === "vendor" && actor.vendorId) queryBuilder = queryBuilder.eq("vendor_id", actor.vendorId)
       const { data } = await queryBuilder
+
       return {
         tool,
-        summary: `外注請求は ${(data ?? []).length} 件参照しました。`,
+        summary: `外注請求は ${(data ?? []).length} 件です。`,
         references: ["vendor_invoices"],
         data: { items: data ?? [] },
       }
     }
+
     case "get_vendor_invoice_detail": {
       const keyword = entityId ?? extractTopic(query)
       let queryBuilder = admin
         .from("vendor_invoices")
         .select("id, vendor_id, billing_month, status, submit_deadline, pay_date, total, memo, invoice_number")
         .eq("org_id", actor.orgId)
+
       if (actor.role === "vendor" && actor.vendorId) queryBuilder = queryBuilder.eq("vendor_id", actor.vendorId)
       if (entityId) queryBuilder = queryBuilder.eq("id", entityId)
       else queryBuilder = queryBuilder.or(`invoice_number.ilike.%${keyword}%,billing_month.ilike.%${keyword}%`)
+
       const { data: invoice } = await queryBuilder.limit(1).maybeSingle()
-      const row = (invoice as Record<string, unknown> | null) ?? null
+      const row = (invoice as JsonRow | null) ?? null
       if (!row?.id) {
         return { tool, summary: "該当する外注請求は見つかりませんでした。", references: ["vendor_invoices"], data: { item: null } }
       }
+
       const { data: lines } = await admin
         .from("vendor_invoice_lines")
         .select("description, qty, unit_price, amount, work_type")
         .eq("vendor_invoice_id", String(row.id))
+
       return {
         tool,
         summary: `${String(row.invoice_number ?? row.billing_month ?? "外注請求")} の詳細です。`,
@@ -406,6 +439,7 @@ export async function runInternalTool(params: {
         data: { item: row, lines: lines ?? [] },
       }
     }
+
     case "get_unsubmitted_vendor_invoices": {
       let queryBuilder = admin
         .from("vendor_invoices")
@@ -414,8 +448,10 @@ export async function runInternalTool(params: {
         .eq("status", "draft")
         .order("submit_deadline", { ascending: true })
         .limit(20)
+
       if (actor.role === "vendor" && actor.vendorId) queryBuilder = queryBuilder.eq("vendor_id", actor.vendorId)
       const { data } = await queryBuilder
+
       return {
         tool,
         summary: (data ?? []).length > 0 ? `未提出の外注請求は ${(data ?? []).length} 件です。` : "未提出の外注請求はありません。",
@@ -423,6 +459,7 @@ export async function runInternalTool(params: {
         data: { items: data ?? [] },
       }
     }
+
     case "get_returned_vendor_invoices": {
       let queryBuilder = admin
         .from("vendor_invoices")
@@ -431,8 +468,10 @@ export async function runInternalTool(params: {
         .eq("status", "rejected")
         .order("updated_at", { ascending: false })
         .limit(20)
+
       if (actor.role === "vendor" && actor.vendorId) queryBuilder = queryBuilder.eq("vendor_id", actor.vendorId)
       const { data } = await queryBuilder
+
       return {
         tool,
         summary: (data ?? []).length > 0 ? `差し戻し中の外注請求は ${(data ?? []).length} 件です。` : "差し戻し中の外注請求はありません。",
@@ -440,6 +479,7 @@ export async function runInternalTool(params: {
         data: { items: data ?? [] },
       }
     }
+
     case "get_payout_summary": {
       let queryBuilder = admin
         .from("payouts")
@@ -447,10 +487,12 @@ export async function runInternalTool(params: {
         .eq("org_id", actor.orgId)
         .order("pay_date", { ascending: true })
         .limit(20)
+
       if (actor.role === "vendor" && actor.vendorId) queryBuilder = queryBuilder.eq("vendor_id", actor.vendorId)
       const { data } = await queryBuilder
       const rows = (data ?? []) as Array<{ amount?: number | null }>
-      const total = rows.reduce((sum, row) => sum + Number(row.amount ?? 0), 0)
+      const total = sumAmount(rows)
+
       return {
         tool,
         summary: `支払い予定は ${rows.length} 件、合計 ${total.toLocaleString("ja-JP")} 円です。`,
@@ -458,10 +500,12 @@ export async function runInternalTool(params: {
         data: { total_count: rows.length, total_amount: total, items: data ?? [] },
       }
     }
+
     case "get_upcoming_payouts": {
       const limitDate = new Date()
       limitDate.setDate(limitDate.getDate() + 7)
       const end = limitDate.toISOString().slice(0, 10)
+
       let queryBuilder = admin
         .from("payouts")
         .select("id, vendor_id, amount, status, pay_date")
@@ -469,15 +513,18 @@ export async function runInternalTool(params: {
         .lte("pay_date", end)
         .order("pay_date", { ascending: true })
         .limit(20)
+
       if (actor.role === "vendor" && actor.vendorId) queryBuilder = queryBuilder.eq("vendor_id", actor.vendorId)
       const { data } = await queryBuilder
+
       return {
         tool,
-        summary: (data ?? []).length > 0 ? `今週の支払い予定は ${(data ?? []).length} 件です。` : "今週の支払い予定はありません。",
+        summary: (data ?? []).length > 0 ? `7日以内の支払い予定は ${(data ?? []).length} 件です。` : "7日以内の支払い予定はありません。",
         references: ["payouts"],
         data: { items: data ?? [] },
       }
     }
+
     case "search_pages_manuals":
     case "search_pages": {
       const keyword = extractTopic(query)
@@ -489,29 +536,39 @@ export async function runInternalTool(params: {
         .or(`title.ilike.%${keyword}%,body_text.ilike.%${keyword}%`)
         .order("updated_at", { ascending: false })
         .limit(8)
-      const rows = ((data ?? []) as Array<Record<string, unknown>>).map((row) => ({
+
+      const rows = ((data ?? []) as JsonRow[]).map((row) => ({
         id: row.id,
         title: row.title,
         excerpt: String(row.body_text ?? "").slice(0, 180),
         updated_at: row.updated_at,
       }))
+
       return {
         tool,
-        summary: rows.length > 0 ? `Pages から ${rows.length} 件見つかりました。` : "Pages では該当ページが見つかりませんでした。",
+        summary: rows.length > 0 ? `Pages から ${rows.length} 件見つかりました。` : "Pages で該当データは見つかりませんでした。",
         references: ["pages"],
         data: { items: rows },
       }
     }
+
     case "get_page_summary": {
       const keyword = entityId ?? extractTopic(query)
-      let pageQuery = admin.from("pages").select("id, title, body_text, updated_at").eq("org_id", actor.orgId).eq("is_archived", false)
+      let pageQuery = admin
+        .from("pages")
+        .select("id, title, body_text, updated_at")
+        .eq("org_id", actor.orgId)
+        .eq("is_archived", false)
+
       if (entityId) pageQuery = pageQuery.eq("id", entityId)
       else pageQuery = pageQuery.or(`title.ilike.%${keyword}%,body_text.ilike.%${keyword}%`)
+
       const { data } = await pageQuery.limit(1).maybeSingle()
-      const row = (data as Record<string, unknown> | null) ?? null
+      const row = (data as JsonRow | null) ?? null
+
       return {
         tool,
-        summary: row ? `${String(row.title ?? "ページ")} の概要です。` : "該当ページは見つかりませんでした。",
+        summary: row ? `${String(row.title ?? "ページ")} の要点です。` : "該当するページは見つかりませんでした。",
         references: ["pages"],
         data: {
           item: row
@@ -525,15 +582,24 @@ export async function runInternalTool(params: {
         },
       }
     }
+
     case "get_help_answer_candidates":
     case "get_manual_steps_for_topic": {
       const topic = extractTopic(query)
-      const helpMatches = HELP_FALLBACKS.filter((item) => topic.includes(item.topic) || item.topic.includes(topic))
+      const candidates = getRealHelpAnswerCandidates(topic, 5)
+      const items =
+        tool === "get_manual_steps_for_topic"
+          ? candidates.map((item) => ({
+              ...item,
+              steps: item.steps.slice(0, 6),
+            }))
+          : candidates
+
       return {
         tool,
-        summary: helpMatches.length > 0 ? `${helpMatches.length} 件の手順候補があります。` : "固定ヘルプ候補は見つかりませんでした。",
-        references: ["help_fallbacks"],
-        data: { topic, items: helpMatches },
+        summary: items.length > 0 ? `${items.length} 件のヘルプ候補が見つかりました。` : "ヘルプ候補は見つかりませんでした。",
+        references: ["help_articles"],
+        data: { topic, items },
       }
     }
   }

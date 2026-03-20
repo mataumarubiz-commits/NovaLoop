@@ -23,6 +23,7 @@ type RequestPayload = {
 type InvoiceRequestRow = {
   id: string
   client_id: string | null
+  client_name?: string | null
   guest_name: string | null
   guest_company_name: string | null
   recipient_email: string | null
@@ -120,6 +121,16 @@ export async function GET(req: NextRequest) {
 
   const requests = (data ?? []) as InvoiceRequestRow[]
   const requestIds = requests.map((row) => row.id)
+  const clientIds = Array.from(new Set(requests.map((row) => row.client_id).filter((value): value is string => Boolean(value))))
+
+  const { data: clientRows, error: clientError } =
+    clientIds.length > 0
+      ? await supabase.from("clients").select("id, name").eq("org_id", orgId).in("id", clientIds)
+      : { data: [], error: null }
+
+  if (clientError) {
+    return NextResponse.json({ ok: false, message: clientError.message }, { status: 500 })
+  }
 
   const { data: logs, error: logsError } =
     requestIds.length > 0
@@ -144,8 +155,13 @@ export async function GET(req: NextRequest) {
     logsByRequest.set(log.invoice_request_id, list)
   }
 
+  const clientNameById = new Map(
+    ((clientRows ?? []) as Array<{ id: string; name: string | null }>).map((row) => [row.id, row.name ?? null])
+  )
+
   const enriched = requests.map((row) => ({
     ...row,
+    client_name: row.client_id ? clientNameById.get(row.client_id) ?? null : null,
     reminder_logs: (logsByRequest.get(row.id) ?? []).slice(0, 5),
   }))
 

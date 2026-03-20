@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { supabase } from "@/lib/supabase"
 import { useAuthOrg } from "@/hooks/useAuthOrg"
+import type { ApplyAiResultDetail } from "@/lib/aiClientEvents"
 
 const cardStyle: CSSProperties = {
   border: "1px solid var(--border)",
@@ -80,6 +81,7 @@ export default function NewInvoicePage() {
   const [withholdingEnabled, setWithholdingEnabled] = useState(false)
   const [bankAccountId, setBankAccountId] = useState("")
   const [notes, setNotes] = useState("")
+  const [sendDraft, setSendDraft] = useState("")
   const [lines, setLines] = useState<LineItem[]>([{ id: crypto.randomUUID(), description: "", quantity: 1, unit_price: 0 }])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -153,6 +155,19 @@ export default function NewInvoicePage() {
   }, [activeOrgId, canAccess, requestId])
 
   useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<ApplyAiResultDetail>).detail
+      if (detail?.source !== "billing" || !detail.result?.text) return
+      if (detail.applyTarget === "invoice_new_title") setInvoiceTitle(detail.result.text)
+      if (detail.applyTarget === "invoice_new_notes") setNotes(detail.result.text)
+      if (detail.applyTarget === "invoice_new_send_draft") setSendDraft(detail.result.text)
+    }
+
+    window.addEventListener("apply-ai-result", handler as EventListener)
+    return () => window.removeEventListener("apply-ai-result", handler as EventListener)
+  }, [])
+
+  useEffect(() => {
     const client = clients.find((row) => row.id === clientId)
     if (!client) return
     setGuestName(client.billing_name?.trim() || client.name)
@@ -172,6 +187,29 @@ export default function NewInvoicePage() {
     const withholding = withholdingEnabled ? yenFloor(subtotal * 0.1021) : 0
     return { subtotal, tax, withholding, total: subtotal + tax - withholding }
   }, [lines, taxMode, taxRate, withholdingEnabled])
+
+  const selectedClient = useMemo(() => clients.find((row) => row.id === clientId) ?? null, [clientId, clients])
+
+  const invoiceAiContext = useMemo(() => {
+    const lineSummary =
+      lines
+        .filter((line) => line.description.trim())
+        .map((line) => `${line.description} / 数量 ${line.quantity} / 単価 ${formatCurrency(line.unit_price)}`)
+        .join("\n") || "-"
+
+    return [
+      `請求先: ${(selectedClient?.name ?? guestCompanyName) || guestName || "-"}`,
+      `請求タイトル: ${invoiceTitle || "-"}`,
+      `対象月: ${invoiceMonth}`,
+      `発行日: ${issueDate}`,
+      `支払期限: ${dueDate}`,
+      `税区分: ${taxMode}`,
+      `備考: ${notes || "-"}`,
+      `送付前文: ${sendDraft || "-"}`,
+      `明細:\n${lineSummary}`,
+      `合計: ${formatCurrency(totals.total)}`,
+    ].join("\n")
+  }, [dueDate, guestCompanyName, guestName, invoiceMonth, invoiceTitle, issueDate, lines, notes, selectedClient, sendDraft, taxMode, totals.total])
 
   const updateLine = (id: string, patch: Partial<LineItem>) => {
     setLines((prev) => prev.map((line) => (line.id === id ? { ...line, ...patch } : line)))
@@ -358,7 +396,72 @@ export default function NewInvoicePage() {
           </div>
           <label style={{ display: "grid", gap: 6, marginTop: 12 }}>
             <span>備考</span>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <span>メモ / notes</span>
+              <button
+                type="button"
+                onClick={() =>
+                  window.dispatchEvent(
+                    new CustomEvent("open-ai-palette", {
+                      detail: {
+                        source: "billing" as const,
+                        mode: "rewrite" as const,
+                        modes: ["rewrite", "format", "request_message"],
+                        text: notes,
+                        compareText: notes,
+                        context: invoiceAiContext,
+                        title: "Billing AI",
+                        applyLabel: "notes に反映",
+                        applyTarget: "invoice_new_notes",
+                        meta: {
+                          sourceObject: "invoice_draft",
+                          recordId: requestId || "new-invoice",
+                          recordLabel: invoiceTitle || "新規請求書",
+                        },
+                      },
+                    })
+                  )
+                }
+                style={{ padding: "4px 8px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", cursor: "pointer", fontSize: 12, fontWeight: 700 }}
+              >
+                AIメモ整形
+              </button>
+            </div>
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--input-bg)", resize: "vertical" }} />
+          </label>
+          <label style={{ display: "grid", gap: 6, marginTop: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <span>送付前文ドラフト</span>
+              <button
+                type="button"
+                onClick={() =>
+                  window.dispatchEvent(
+                    new CustomEvent("open-ai-palette", {
+                      detail: {
+                        source: "billing" as const,
+                        mode: "send_message" as const,
+                        text: sendDraft,
+                        compareText: sendDraft,
+                        context: invoiceAiContext,
+                        title: "Billing AI",
+                        applyLabel: "送付前文に反映",
+                        applyTarget: "invoice_new_send_draft",
+                        meta: {
+                          sourceObject: "invoice_draft",
+                          recordId: requestId || "new-invoice",
+                          recordLabel: invoiceTitle || "新規請求書",
+                        },
+                      },
+                    })
+                  )
+                }
+                style={{ padding: "4px 8px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", cursor: "pointer", fontSize: 12, fontWeight: 700 }}
+              >
+                AI送付文生成
+              </button>
+            </div>
+            <textarea value={sendDraft} onChange={(e) => setSendDraft(e.target.value)} rows={3} style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--input-bg)", resize: "vertical" }} />
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>この欄は作成前の下書きです。請求書データには保存されません。</div>
           </label>
         </section>
 

@@ -1,7 +1,8 @@
 "use client"
 
 import Link from "next/link"
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
+import ChecklistReturnButton from "@/components/home/ChecklistReturnButton"
 import GuideEmptyState from "@/components/shared/GuideEmptyState"
 import { useAuthOrg } from "@/hooks/useAuthOrg"
 import { trackClientEvent } from "@/lib/analytics"
@@ -51,6 +52,8 @@ export default function NotificationsPage() {
   const [error, setError] = useState<string | null>(null)
   const [selectedRole, setSelectedRole] = useState<Record<string, "member" | "executive_assistant">>({})
   const canManageMembership = role === "owner" || role === "executive_assistant"
+  const viewTrackedRef = useRef(false)
+  const checklistSyncedRef = useRef(false)
 
   const withToken = useCallback(async () => {
     const { data } = await supabase.auth.getSession()
@@ -102,6 +105,29 @@ export default function NotificationsPage() {
     }, 0)
     return () => window.clearTimeout(id)
   }, [authLoading, fetchNotifications])
+
+  useEffect(() => {
+    if (authLoading || !activeOrgId || !user || viewTrackedRef.current) return
+    viewTrackedRef.current = true
+    void trackClientEvent("notification.center_viewed", {
+      source: "notifications.page",
+      metadata: { org_id: activeOrgId },
+    })
+  }, [activeOrgId, authLoading, user])
+
+  useEffect(() => {
+    if (authLoading || !activeOrgId || !user || !canManageMembership || checklistSyncedRef.current) return
+    checklistSyncedRef.current = true
+    void (async () => {
+      const token = await withToken()
+      if (!token) return
+      await fetch("/api/onboarding/progress", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ completed_keys: ["notifications_checked"] }),
+      }).catch(() => null)
+    })()
+  }, [activeOrgId, authLoading, canManageMembership, user, withToken])
 
   const markRead = useCallback(
     async (notificationId: string) => {
@@ -218,7 +244,8 @@ export default function NotificationsPage() {
 
   return (
     <div style={{ padding: "24px 20px 40px", minHeight: "100vh", background: "var(--bg-grad)" }}>
-      <div style={{ marginBottom: 16 }}>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", marginBottom: 16 }}>
+        <ChecklistReturnButton />
         <Link href="/home" style={{ fontSize: 14, color: "var(--primary)", fontWeight: 600 }}>
           Home
         </Link>
@@ -374,8 +401,8 @@ export default function NotificationsPage() {
                           }
                           style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "8px 10px", background: "var(--surface)" }}
                         >
-                          <option value="member">member</option>
-                          <option value="executive_assistant">executive_assistant</option>
+                          <option value="member">メンバー</option>
+                          <option value="executive_assistant">経営補佐</option>
                         </select>
                       </label>
                     </div>

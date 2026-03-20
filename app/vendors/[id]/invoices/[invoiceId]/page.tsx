@@ -5,12 +5,13 @@ import Link from "next/link"
 import { useParams } from "next/navigation"
 import { supabase } from "@/lib/supabase"
 import { useAuthOrg } from "@/hooks/useAuthOrg"
+import type { ApplyAiResultDetail } from "@/lib/aiClientEvents"
 
 const RETURN_CATEGORIES = [
-  ["profile_missing", "プロフィール情報の不足"],
+  ["profile_missing", "プロフィール不足"],
   ["bank_invalid", "口座情報の不備"],
   ["memo_required", "備考追記が必要"],
-  ["content_review", "対象案件の確認が必要"],
+  ["content_review", "案件内容の確認が必要"],
   ["other", "その他"],
 ] as const
 
@@ -62,6 +63,7 @@ const inputStyle: CSSProperties = {
   borderRadius: 10,
   border: "1px solid var(--border)",
   background: "var(--input-bg)",
+  boxSizing: "border-box",
 }
 
 function yen(value: number) {
@@ -81,6 +83,8 @@ export default function VendorInvoiceDetailPage() {
   const vendorId = typeof params?.id === "string" ? params.id : null
   const invoiceId = typeof params?.invoiceId === "string" ? params.invoiceId : null
   const { activeOrgId, role, loading: authLoading } = useAuthOrg({ redirectToOnboarding: true })
+
+  const canAccess = role === "owner" || role === "executive_assistant"
   const [loading, setLoading] = useState(true)
   const [invoice, setInvoice] = useState<InvoiceRow | null>(null)
   const [vendor, setVendor] = useState<VendorRow | null>(null)
@@ -89,20 +93,26 @@ export default function VendorInvoiceDetailPage() {
   const [busy, setBusy] = useState(false)
   const [rejectCategory, setRejectCategory] = useState("profile_missing")
   const [rejectReason, setRejectReason] = useState("")
-
-  const canAccess = role === "owner" || role === "executive_assistant"
+  const [memoDraft, setMemoDraft] = useState("")
 
   const load = useCallback(async () => {
     if (!activeOrgId || !canAccess || !invoiceId || !vendorId) return
     setLoading(true)
     const [invoiceRes, vendorRes, linesRes] = await Promise.all([
-      supabase.from("vendor_invoices").select("id, billing_month, status, submit_deadline, pay_date, total, pdf_path, memo, item_count, rejected_category, rejected_reason, submitted_at, first_submitted_at, resubmitted_at, confirmed_at, returned_at, return_count, return_history, vendor_profile_snapshot, vendor_bank_snapshot").eq("id", invoiceId).eq("org_id", activeOrgId).maybeSingle(),
+      supabase
+        .from("vendor_invoices")
+        .select(
+          "id, billing_month, status, submit_deadline, pay_date, total, pdf_path, memo, item_count, rejected_category, rejected_reason, submitted_at, first_submitted_at, resubmitted_at, confirmed_at, returned_at, return_count, return_history, vendor_profile_snapshot, vendor_bank_snapshot"
+        )
+        .eq("id", invoiceId)
+        .eq("org_id", activeOrgId)
+        .maybeSingle(),
       supabase.from("vendors").select("id, name, email").eq("id", vendorId).eq("org_id", activeOrgId).maybeSingle(),
       supabase.from("vendor_invoice_lines").select("id, content_id, work_type, description, qty, unit_price, amount").eq("vendor_invoice_id", invoiceId),
     ])
 
     if (invoiceRes.error || !invoiceRes.data) {
-      setError("外注請求の読み込みに失敗しました。")
+      setError("外注請求詳細の取得に失敗しました。")
       setLoading(false)
       return
     }
@@ -113,6 +123,7 @@ export default function VendorInvoiceDetailPage() {
     setLines((linesRes.data ?? []) as LineRow[])
     setRejectCategory(nextInvoice.rejected_category ?? "profile_missing")
     setRejectReason(nextInvoice.rejected_reason ?? "")
+    setMemoDraft(nextInvoice.memo ?? "")
     setLoading(false)
   }, [activeOrgId, canAccess, invoiceId, vendorId])
 
@@ -120,15 +131,54 @@ export default function VendorInvoiceDetailPage() {
     void load()
   }, [load])
 
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<ApplyAiResultDetail>).detail
+      if (detail?.source !== "vendor" || !detail.result?.text) return
+      if (detail.applyTarget === "vendor_invoice_reject_reason") setRejectReason(detail.result.text)
+      if (detail.applyTarget === "vendor_invoice_memo_draft") setMemoDraft(detail.result.text)
+    }
+
+    window.addEventListener("apply-ai-result", handler as EventListener)
+    return () => window.removeEventListener("apply-ai-result", handler as EventListener)
+  }, [])
+
   const total = useMemo(() => lines.reduce((sum, line) => sum + Number(line.amount), 0), [lines])
   const profileSnapshot = invoice?.vendor_profile_snapshot ?? {}
   const bankSnapshot = invoice?.vendor_bank_snapshot ?? {}
+
+  const rejectAiContext = useMemo(() => {
+    return [
+      `ベンダー: ${vendor?.name ?? "-"}`,
+      `対象月: ${invoice?.billing_month ?? "-"}`,
+      `ステータス: ${invoice?.status ?? "-"}`,
+      `合計: ${invoice ? yen(invoice.total) : "-"}`,
+      `差し戻し回数: ${invoice?.return_count ?? 0}`,
+      `差し戻しカテゴリ: ${categoryLabel(rejectCategory)}`,
+      `現在の理由: ${rejectReason || invoice?.rejected_reason || "-"}`,
+    ].join("\n")
+  }, [invoice, rejectCategory, rejectReason, vendor?.name])
+
+  const memoAiContext = useMemo(() => {
+    const lineSummary =
+      lines.map((line) => `${line.description || line.work_type || "-"} / 数量 ${line.qty} / 金額 ${yen(line.amount)}`).join("\n") || "-"
+
+    return [
+      `ベンダー: ${vendor?.name ?? "-"}`,
+      `対象月: ${invoice?.billing_month ?? "-"}`,
+      `ステータス: ${invoice?.status ?? "-"}`,
+      `提出期限: ${invoice?.submit_deadline ?? "-"}`,
+      `合計: ${invoice ? yen(invoice.total) : "-"}`,
+      `既存memo: ${invoice?.memo || "-"}`,
+      `明細:\n${lineSummary}`,
+    ].join("\n")
+  }, [invoice, lines, vendor?.name])
 
   const openPdf = async () => {
     if (!invoiceId) return
     const token = (await supabase.auth.getSession()).data.session?.access_token
     if (!token) {
-      setError("ログインし直してください。")
+      setError("ログイン状態を確認してください。")
       return
     }
     const res = await fetch(`/api/vendor-invoices/${invoiceId}/pdf`, {
@@ -136,7 +186,7 @@ export default function VendorInvoiceDetailPage() {
     })
     const json = (await res.json().catch(() => null)) as { signed_url?: string; error?: string } | null
     if (!res.ok || !json?.signed_url) {
-      setError(json?.error ?? "PDFを開けませんでした。")
+      setError(json?.error ?? "PDF を開けませんでした。")
       return
     }
     window.open(json.signed_url, "_blank", "noopener,noreferrer")
@@ -148,7 +198,7 @@ export default function VendorInvoiceDetailPage() {
     setError(null)
     try {
       const token = (await supabase.auth.getSession()).data.session?.access_token
-      if (!token) throw new Error("ログインし直してください。")
+      if (!token) throw new Error("ログイン状態を確認してください。")
       const res = await fetch(`/api/vendor-invoices/${invoiceId}/review`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -161,6 +211,15 @@ export default function VendorInvoiceDetailPage() {
       setError(e instanceof Error ? e.message : "レビュー更新に失敗しました。")
     } finally {
       setBusy(false)
+    }
+  }
+
+  const copyMemoDraft = async () => {
+    if (!memoDraft.trim()) return
+    try {
+      await navigator.clipboard.writeText(memoDraft)
+    } catch {
+      setError("memo 下書きのコピーに失敗しました。")
     }
   }
 
@@ -178,20 +237,20 @@ export default function VendorInvoiceDetailPage() {
             </Link>
             <h1 style={{ fontSize: 28, margin: "12px 0 8px", color: "var(--text)" }}>外注請求 {invoice.billing_month}</h1>
             <p style={{ margin: 0, fontSize: 14, color: "var(--muted)" }}>
-              状態: {STATUS_LABELS[invoice.status] ?? invoice.status} / 初回提出 {fmt(invoice.first_submitted_at || invoice.submitted_at)} / 最終再提出 {fmt(invoice.resubmitted_at)}
+              状況: {STATUS_LABELS[invoice.status] ?? invoice.status} / 初回提出: {fmt(invoice.first_submitted_at || invoice.submitted_at)} / 最新再提出: {fmt(invoice.resubmitted_at)}
             </p>
           </div>
           <button type="button" onClick={() => void openPdf()} style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface-2)" }}>
-            PDFを開く
+            PDF を開く
           </button>
         </header>
 
         {error ? <section style={{ ...cardStyle, borderColor: "#fecaca", background: "#fff1f2", color: "#b91c1c" }}>{error}</section> : null}
 
         <section style={{ ...cardStyle, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
-          <Info title="外注名" value={vendor.name} sub={vendor.email || "メール未登録"} />
-          <Info title="請求合計" value={yen(total)} sub={`${invoice.item_count ?? lines.length}件`} />
-          <Info title="差し戻し回数" value={String(invoice.return_count ?? 0)} sub={`差し戻し日 ${fmt(invoice.returned_at)}`} />
+          <Info title="ベンダー" value={vendor.name} sub={vendor.email || "メール未登録"} />
+          <Info title="請求総額" value={yen(total)} sub={`${invoice.item_count ?? lines.length}件`} />
+          <Info title="差し戻し回数" value={String(invoice.return_count ?? 0)} sub={`最終差し戻し ${fmt(invoice.returned_at)}`} />
           <Info title="承認日 / 支払日" value={fmt(invoice.confirmed_at)} sub={`支払予定 ${invoice.pay_date || "-"}`} />
         </section>
 
@@ -207,10 +266,10 @@ export default function VendorInvoiceDetailPage() {
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 16 }}>
           <section style={cardStyle}>
-            <h2 style={{ margin: 0, fontSize: 18, color: "var(--text)" }}>請求者情報 snapshot</h2>
+            <h2 style={{ margin: 0, fontSize: 18, color: "var(--text)" }}>請求元 snapshot</h2>
             <div style={{ marginTop: 14, display: "grid", gap: 8, fontSize: 14, color: "var(--text)" }}>
               <div>表示名: {String(profileSnapshot.display_name ?? "-")}</div>
-              <div>請求者情報: {String(profileSnapshot.billing_name ?? "-")}</div>
+              <div>請求名義: {String(profileSnapshot.billing_name ?? "-")}</div>
               <div>メール: {String(profileSnapshot.email ?? "-")}</div>
               <div>住所: {String(profileSnapshot.address ?? "-")}</div>
             </div>
@@ -236,7 +295,7 @@ export default function VendorInvoiceDetailPage() {
                   <th style={thStyle}>作業内容</th>
                   <th style={thRight}>数量</th>
                   <th style={thRight}>単価</th>
-                  <th style={thRight}>小計</th>
+                  <th style={thRight}>金額</th>
                 </tr>
               </thead>
               <tbody>
@@ -263,9 +322,60 @@ export default function VendorInvoiceDetailPage() {
         </section>
 
         <section style={cardStyle}>
-          <h2 style={{ margin: 0, fontSize: 18, color: "var(--text)" }}>会社側レビュー</h2>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <h2 style={{ margin: 0, fontSize: 18, color: "var(--text)" }}>memo 下書き</h2>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                onClick={() =>
+                  window.dispatchEvent(
+                    new CustomEvent("open-ai-palette", {
+                      detail: {
+                        source: "vendor" as const,
+                        mode: "rewrite" as const,
+                        modes: ["rewrite", "format"],
+                        text: memoDraft,
+                        compareText: memoDraft,
+                        context: memoAiContext,
+                        title: "Vendor Billing AI",
+                        applyLabel: "memo 下書きに反映",
+                        applyTarget: "vendor_invoice_memo_draft",
+                        meta: {
+                          sourceObject: "vendor_invoice",
+                          recordId: invoice.id,
+                          recordLabel: `${vendor.name} ${invoice.billing_month}`,
+                        },
+                      },
+                    })
+                  )
+                }
+                style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", cursor: "pointer", fontWeight: 700 }}
+              >
+                AI memo 整形
+              </button>
+              <button
+                type="button"
+                onClick={() => void copyMemoDraft()}
+                disabled={!memoDraft.trim()}
+                style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", cursor: memoDraft.trim() ? "pointer" : "not-allowed", fontWeight: 700 }}
+              >
+                コピー
+              </button>
+            </div>
+          </div>
+          <textarea
+            value={memoDraft}
+            onChange={(event) => setMemoDraft(event.target.value)}
+            rows={5}
+            style={{ ...inputStyle, marginTop: 14, resize: "vertical" }}
+          />
+          <div style={{ marginTop: 6, fontSize: 12, color: "var(--muted)" }}>この欄はローカル下書きです。vendor invoice の元データは更新しません。</div>
+        </section>
+
+        <section style={cardStyle}>
+          <h2 style={{ margin: 0, fontSize: 18, color: "var(--text)" }}>運用レビュー</h2>
           <p style={{ margin: "8px 0 0", fontSize: 13, color: "var(--muted)" }}>
-            差し戻し時はカテゴリと理由を入力してください。修正再提出でも請求IDは変わりません。
+            差し戻し時はカテゴリと理由を入力してください。承認は PDF と明細を確認したうえで実行します。
           </p>
           <div style={{ display: "grid", gap: 12, marginTop: 14 }}>
             <label style={{ display: "grid", gap: 6 }}>
@@ -279,7 +389,36 @@ export default function VendorInvoiceDetailPage() {
               </select>
             </label>
             <label style={{ display: "grid", gap: 6 }}>
-              <span style={{ fontSize: 12, color: "var(--muted)" }}>差し戻し理由</span>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <span style={{ fontSize: 12, color: "var(--muted)" }}>差し戻し理由</span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    window.dispatchEvent(
+                      new CustomEvent("open-ai-palette", {
+                        detail: {
+                          source: "vendor" as const,
+                          mode: "reject_reason" as const,
+                          text: rejectReason,
+                          compareText: rejectReason,
+                          context: rejectAiContext,
+                          title: "Vendor Billing AI",
+                          applyLabel: "差し戻し理由に反映",
+                          applyTarget: "vendor_invoice_reject_reason",
+                          meta: {
+                            sourceObject: "vendor_invoice",
+                            recordId: invoice.id,
+                            recordLabel: `${vendor.name} ${invoice.billing_month}`,
+                          },
+                        },
+                      })
+                    )
+                  }
+                  style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", cursor: "pointer", fontWeight: 700 }}
+                >
+                  AI理由整形
+                </button>
+              </div>
               <textarea value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} rows={4} style={{ ...inputStyle, resize: "vertical" }} />
             </label>
           </div>
@@ -287,7 +426,7 @@ export default function VendorInvoiceDetailPage() {
             <button type="button" onClick={() => void review("approve")} disabled={busy || invoice.status === "approved" || invoice.status === "paid"} style={{ padding: "9px 14px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface-2)" }}>
               承認する
             </button>
-            <button type="button" onClick={() => void review("reject")} disabled={busy} style={{ padding: "9px 14px", borderRadius: 10, border: "1px solid #fdba74", background: "#fff7ed", color: "#9a3412" }}>
+            <button type="button" onClick={() => void review("reject")} disabled={busy || !rejectReason.trim()} style={{ padding: "9px 14px", borderRadius: 10, border: "1px solid #fdba74", background: "#fff7ed", color: "#9a3412" }}>
               差し戻す
             </button>
           </div>

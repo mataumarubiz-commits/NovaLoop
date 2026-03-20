@@ -7,6 +7,8 @@ type Props = {
   description: string
   primaryHref: string
   primaryLabel: string
+  hidePrimaryAction?: boolean
+  onPrimaryClick?: () => void
   helpHref?: string
   helpLabel?: string
 }
@@ -16,6 +18,8 @@ export default function GuideEmptyState({
   description,
   primaryHref,
   primaryLabel,
+  hidePrimaryAction = false,
+  onPrimaryClick,
   helpHref,
   helpLabel = "使い方を見る",
 }: Props) {
@@ -35,20 +39,41 @@ export default function GuideEmptyState({
         <p style={{ margin: "6px 0 0", fontSize: 13, color: "var(--muted)", lineHeight: 1.7 }}>{description}</p>
       </div>
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-        <Link
-          href={primaryHref}
-          style={{
-            textDecoration: "none",
-            padding: "10px 14px",
-            borderRadius: 12,
-            background: "var(--button-primary-bg)",
-            color: "var(--primary-contrast)",
-            fontWeight: 700,
-            fontSize: 13,
-          }}
-        >
-          {primaryLabel}
-        </Link>
+        {!hidePrimaryAction ? (
+          onPrimaryClick ? (
+            <button
+              type="button"
+              onClick={onPrimaryClick}
+              style={{
+                padding: "10px 14px",
+                borderRadius: 12,
+                border: "none",
+                background: "var(--button-primary-bg)",
+                color: "var(--primary-contrast)",
+                fontWeight: 700,
+                fontSize: 13,
+                cursor: "pointer",
+              }}
+            >
+              {primaryLabel}
+            </button>
+          ) : (
+            <Link
+              href={primaryHref}
+              style={{
+                textDecoration: "none",
+                padding: "10px 14px",
+                borderRadius: 12,
+                background: "var(--button-primary-bg)",
+                color: "var(--primary-contrast)",
+                fontWeight: 700,
+                fontSize: 13,
+              }}
+            >
+              {primaryLabel}
+            </Link>
+          )
+        ) : null}
         {helpHref ? (
           <Link
             href={helpHref}

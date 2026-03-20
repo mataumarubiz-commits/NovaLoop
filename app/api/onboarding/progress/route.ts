@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
 import { getOrgRole, getUserIdFromToken, isOrgAdmin } from "@/lib/apiAuth"
-import { ONBOARDING_ITEMS, type OnboardingItemKey, completionRate } from "@/lib/onboarding"
+import { ONBOARDING_ITEMS, type OnboardingItemKey, completionRate, filterOnboardingKeys } from "@/lib/onboarding"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -9,8 +9,6 @@ export const dynamic = "force-dynamic"
 type SyncBody = {
   completed_keys?: string[]
 }
-
-const AI_EVENT_PREFIX = "ai."
 
 async function countExact(admin: ReturnType<typeof createSupabaseAdmin>, table: string, orgId: string) {
   const { count } = await admin.from(table).select("id", { head: true, count: "exact" }).eq("org_id", orgId)
@@ -47,7 +45,7 @@ async function computeCompletedKeys(admin: ReturnType<typeof createSupabaseAdmin
     invoicesCount,
     vendorsCount,
     notificationClick,
-    aiUse,
+    notificationCenterView,
   ] = await Promise.all([
     admin
       .from("org_settings")
@@ -61,7 +59,7 @@ async function computeCompletedKeys(admin: ReturnType<typeof createSupabaseAdmin
     countExact(admin, "invoices", orgId),
     countExact(admin, "vendors", orgId),
     hasAnalyticsEvent(admin, orgId, userId, { eventName: "notification.clicked" }),
-    hasAnalyticsEvent(admin, orgId, userId, { prefix: AI_EVENT_PREFIX }),
+    hasAnalyticsEvent(admin, orgId, userId, { eventName: "notification.center_viewed" }),
   ])
 
   const completed = new Set<OnboardingItemKey>()
@@ -74,8 +72,7 @@ async function computeCompletedKeys(admin: ReturnType<typeof createSupabaseAdmin
   if (contentsCount > 0) completed.add("first_content")
   if (invoicesCount > 0) completed.add("first_invoice")
   if (vendorsCount > 0) completed.add("vendor_flow")
-  if (notificationClick) completed.add("notifications_checked")
-  if (aiUse) completed.add("ai_first_use")
+  if (notificationClick || notificationCenterView) completed.add("notifications_checked")
 
   return Array.from(completed)
 }
@@ -97,12 +94,12 @@ export async function GET(req: NextRequest) {
     const role = await getOrgRole(admin, userId, orgId)
     if (!isOrgAdmin(role)) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 })
 
-    const completedKeys = await computeCompletedKeys(admin, orgId, userId)
-    const completedSet = new Set(completedKeys)
+    const computedKeys = await computeCompletedKeys(admin, orgId, userId)
+    const completedSet = new Set(computedKeys)
     const now = new Date().toISOString()
 
-    if (completedKeys.length > 0) {
-      const payload = completedKeys.map((key) => ({
+    if (computedKeys.length > 0) {
+      const payload = computedKeys.map((key) => ({
         org_id: orgId,
         user_id: userId,
         item_key: key,
@@ -121,6 +118,11 @@ export async function GET(req: NextRequest) {
     const progressMap = new Map(
       ((progressRows ?? []) as Array<{ item_key: string; completed_at: string }>).map((row) => [row.item_key, row.completed_at])
     )
+    if (progressMap.has("notifications_checked")) {
+      completedSet.add("notifications_checked")
+    }
+
+    const completedKeys = filterOnboardingKeys(Array.from(completedSet))
 
     const items = ONBOARDING_ITEMS.map((item) => ({
       ...item,
@@ -161,10 +163,7 @@ export async function POST(req: NextRequest) {
     if (!isOrgAdmin(role)) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 })
 
     const body = (await req.json().catch(() => null)) as SyncBody | null
-    const allowed = new Set(ONBOARDING_ITEMS.map((item) => item.key))
-    const completedKeys = (body?.completed_keys ?? []).filter(
-      (key): key is OnboardingItemKey => typeof key === "string" && allowed.has(key as OnboardingItemKey)
-    )
+    const completedKeys = filterOnboardingKeys(body?.completed_keys ?? [])
     const now = new Date().toISOString()
 
     if (completedKeys.length > 0) {

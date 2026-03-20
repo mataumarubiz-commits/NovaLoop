@@ -13,6 +13,7 @@ import HorizontalRule from "@tiptap/extension-horizontal-rule"
 import TaskList from "@tiptap/extension-task-list"
 import TaskItem from "@tiptap/extension-task-item"
 import * as Diff from "diff"
+import type { ApplyAiResultDetail } from "@/lib/aiClientEvents"
 import { Embed } from "@/lib/embedExtension"
 import { CommentHighlightExtension, commentHighlightPluginKey } from "@/lib/commentHighlightExtension"
 import { titleToSlug } from "@/lib/slug"
@@ -96,6 +97,126 @@ type PageRow = {
   updated_by?: string | null
 }
 
+type SlashCommand = {
+  id: string
+  token: string
+  label: string
+  description: string
+  keywords: string[]
+  run: (payload: string) => void
+}
+
+type PracticalCta = {
+  href: string
+  label: string
+  description: string
+}
+
+type PracticalGuide = {
+  key: "billing" | "payouts" | "notifications" | "operations"
+  badge: string
+  title: string
+  description: string
+  actions: PracticalCta[]
+}
+
+const PRACTICAL_GUIDE_KEYWORDS = {
+  billing: ["請求", "請求書", "請求依頼", "billing", "invoice", "締め", "入金", "売上"],
+  payouts: ["支払い", "支払", "外注", "vendor", "payout", "振込", "報酬", "口座"],
+  notifications: ["通知", "未読", "リマインド", "reminder", "alert", "line", "slack"],
+} as const
+
+function countKeywordHits(text: string, keywords: readonly string[]): number {
+  return keywords.reduce((score, keyword) => (text.includes(keyword) ? score + 1 : score), 0)
+}
+
+function buildPracticalGuide(rawText: string, canUseAccounting: boolean): PracticalGuide {
+  const text = rawText.toLowerCase()
+  const billingScore = countKeywordHits(text, PRACTICAL_GUIDE_KEYWORDS.billing)
+  const payoutsScore = countKeywordHits(text, PRACTICAL_GUIDE_KEYWORDS.payouts)
+  const notificationsScore = countKeywordHits(text, PRACTICAL_GUIDE_KEYWORDS.notifications)
+
+  if (billingScore >= payoutsScore && billingScore >= notificationsScore && billingScore > 0) {
+    if (canUseAccounting) {
+      return {
+        key: "billing",
+        badge: "請求向け",
+        title: "請求の締めと発行を先に開く",
+        description: "このページは請求手順の文脈が強いため、月次請求と請求書確認の導線を優先しています。",
+        actions: [
+          { href: "/billing", label: "月次請求を開く", description: "対象月の請求候補と請求依頼台帳を確認します。" },
+          { href: "/invoices", label: "請求書一覧へ", description: "発行済み / 下書き / PDF 出力の状況を見ます。" },
+          { href: "/help/billing-monthly", label: "請求ヘルプを見る", description: "締め手順と運用ルールをヘルプで確認します。" },
+        ],
+      }
+    }
+    return {
+      key: "billing",
+      badge: "請求手順",
+      title: "請求ルールの確認を優先する",
+      description: "会計画面は owner / executive_assistant 向けのため、閲覧ロールでは手順確認と社内導線を優先表示しています。",
+      actions: [
+        { href: "/help/billing-monthly", label: "請求ヘルプを見る", description: "締め手順と社内ルールを確認します。" },
+        { href: "/pages", label: "Pages 一覧へ", description: "関連する社内マニュアルを探します。" },
+        { href: "/home", label: "ホームへ戻る", description: "優先タスクと通知から次の作業を確認します。" },
+      ],
+    }
+  }
+
+  if (payoutsScore >= notificationsScore && payoutsScore > 0) {
+    if (canUseAccounting) {
+      return {
+        key: "payouts",
+        badge: "支払い向け",
+        title: "外注請求と支払いを先に開く",
+        description: "このページは支払い / 外注運用の文脈が強いため、外注台帳と payout 導線を優先しています。",
+        actions: [
+          { href: "/vendors", label: "外注一覧を開く", description: "外注先ごとの請求状況と口座情報を確認します。" },
+          { href: "/payouts", label: "支払い管理へ", description: "承認待ちと CSV 出力の状況を確認します。" },
+          { href: "/help/vendors-payouts", label: "支払いヘルプを見る", description: "外注請求から支払いまでの運用手順を確認します。" },
+        ],
+      }
+    }
+    return {
+      key: "payouts",
+      badge: "支払い手順",
+      title: "支払いルールの確認を優先する",
+      description: "支払い画面は owner / executive_assistant 向けのため、閲覧ロールでは手順確認と社内導線を優先表示しています。",
+      actions: [
+        { href: "/help/vendors-payouts", label: "支払いヘルプを見る", description: "外注請求から支払いまでの基本手順を確認します。" },
+        { href: "/pages", label: "Pages 一覧へ", description: "関連する社内マニュアルを探します。" },
+        { href: "/home", label: "ホームへ戻る", description: "優先タスクと通知から次の作業を確認します。" },
+      ],
+    }
+  }
+
+  if (notificationsScore > 0) {
+    return {
+      key: "notifications",
+      badge: "通知向け",
+      title: "通知確認とフォロー導線を開く",
+      description: "このページは通知 / リマインド文脈が強いため、通知センターと関連ヘルプを優先しています。",
+      actions: [
+        { href: "/notifications", label: "通知センターへ", description: "未読通知と優先対応をまとめて確認します。" },
+        { href: "/home", label: "ホームへ戻る", description: "KPI と優先タスクから今日の着地を見ます。" },
+        { href: "/help/notifications", label: "通知ヘルプを見る", description: "通知種別と見方を確認します。" },
+      ],
+    }
+  }
+
+  return {
+    key: "operations",
+    badge: "運用向け",
+    title: "日常運用の導線を開く",
+    description: "タイトルに強い請求 / 支払い / 通知文脈がないため、Pages と日次運用の導線を表示しています。",
+    actions: [
+      { href: "/contents", label: "進行管理を開く", description: "案件一覧と遅延状況を確認します。" },
+      { href: "/home", label: "ホームへ戻る", description: "全体 KPI と優先タスクを確認します。" },
+      { href: "/help/pages-manual", label: "Pages ヘルプを見る", description: "社内マニュアル運用の基本を確認します。" },
+    ],
+  }
+}
+
 export default function PageEditPage() {
   const params = useParams()
   const id = typeof params?.id === "string" ? params.id : null
@@ -126,8 +247,10 @@ export default function PageEditPage() {
   const [tocInitialized, setTocInitialized] = useState(false)
   const [tocHeadings, setTocHeadings] = useState<{ level: number; text: string }[]>([])
   const [slashMenuOpen, setSlashMenuOpen] = useState(false)
+  const [slashQuery, setSlashQuery] = useState("/")
   const slashMenuSetRef = useRef<(v: boolean) => void>(() => {})
   slashMenuSetRef.current = setSlashMenuOpen
+  const slashInputRef = useRef<HTMLInputElement>(null)
   const [rightPanelOpen, setRightPanelOpen] = useState(false)
   const [panelTab, setPanelTab] = useState<"comments" | "revisions">("comments")
   const [panelSearch, setPanelSearch] = useState("")
@@ -194,8 +317,9 @@ export default function PageEditPage() {
       attributes: { "data-placeholder": "本文を書き始める…" },
       ...(canEdit
         ? {
-            handleKeyDown(view, event) {
-              if (event.key === "/") {
+            handleKeyDown(_view, event) {
+              if (event.key === "/" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+                setSlashQuery("/")
                 slashMenuSetRef.current(true)
                 event.preventDefault()
                 return true
@@ -472,13 +596,26 @@ export default function PageEditPage() {
     if (!slashMenuOpen) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        e.preventDefault()
         setSlashMenuOpen(false)
-        editor?.commands.insertContent("/")
+        setSlashQuery("/")
       }
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [slashMenuOpen, editor])
+  }, [slashMenuOpen])
+
+  useEffect(() => {
+    if (!slashMenuOpen) return
+    const frame = window.requestAnimationFrame(() => {
+      const input = slashInputRef.current
+      if (!input) return
+      input.focus()
+      const length = input.value.length
+      input.setSelectionRange(length, length)
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [slashMenuOpen])
 
   useEffect(() => {
     if (!aiToolsOpen) return
@@ -697,6 +834,10 @@ export default function PageEditPage() {
   }
 
   const displayTitle = titleInput.trim() || page?.title?.trim() || "無題"
+  const practicalGuide = useMemo(
+    () => buildPracticalGuide(`${titleInput || page?.title || ""} ${page?.body_text || ""}`, canEdit),
+    [canEdit, page?.body_text, page?.title, titleInput]
+  )
   const isVisible = useCallback((key?: string) => key !== "__hidden__", [])
 
   const triggerFileInput = () => fileInputRef.current?.click()
@@ -837,10 +978,10 @@ export default function PageEditPage() {
   useEffect(() => {
     if (!editorInstance || !canEdit) return
     const handler = (event: Event) => {
-      const detail = (event as CustomEvent<{ mode: string; result: string }>).detail
-      if (!detail?.result) return
+      const detail = (event as CustomEvent<ApplyAiResultDetail>).detail
+      if (detail?.source !== "pages" || !detail.result?.text) return
       const mode = detail.mode
-      const content = String(detail.result).trim()
+      const content = detail.result.text.trim()
       const sel = editorInstance.state.selection
       const hasSelection = sel && !sel.empty
       const chain = editorInstance.chain().focus()
@@ -853,50 +994,11 @@ export default function PageEditPage() {
       }
       chain.run()
     }
-    window.addEventListener("apply-ai-to-pages", handler as EventListener)
+    window.addEventListener("apply-ai-result", handler as EventListener)
     return () => {
-      window.removeEventListener("apply-ai-to-pages", handler as EventListener)
+      window.removeEventListener("apply-ai-result", handler as EventListener)
     }
   }, [editorInstance, canEdit])
-
-  if (authLoading) {
-    return (
-      <div style={{ padding: "32px 40px", minHeight: "100vh", background: "var(--bg-grad)" }}>
-        <p style={{ color: "var(--muted)" }}>読み込み中…</p>
-      </div>
-    )
-  }
-  if (needsOnboarding || !activeOrgId) {
-    return (
-      <div style={{ padding: "32px 40px", minHeight: "100vh", background: "var(--bg-grad)" }}>
-        <p style={{ color: "var(--muted)" }}>ワークスペース設定後に Pages を利用できます。</p>
-        <Link href="/home" style={{ color: "var(--primary)", fontSize: 14, marginTop: 8, display: "inline-block" }}>Home へ</Link>
-      </div>
-    )
-  }
-  if (loadError || !page) {
-    return (
-      <div style={{ padding: "32px 40px", minHeight: "100vh", background: "var(--bg-grad)", maxWidth: 480, margin: "0 auto" }}>
-        <p style={{ color: "var(--text)", fontSize: 15, marginBottom: 16 }}>{loadError ?? "読み込み中…"}</p>
-        <Link
-          href="/pages"
-          style={{
-            display: "inline-block",
-            padding: "10px 18px",
-            borderRadius: 10,
-            border: "1px solid var(--border)",
-            background: "var(--surface)",
-            color: "var(--primary)",
-            fontSize: 14,
-            fontWeight: 500,
-            textDecoration: "none",
-          }}
-        >
-          ← 一覧へ戻る
-        </Link>
-      </div>
-    )
-  }
 
   const formatUpdatedAt = (s: string) => {
     try {
@@ -924,6 +1026,235 @@ export default function PageEditPage() {
     } catch {
       setToastMessage("コピーに失敗しました")
     }
+  }
+
+  const closeSlashMenu = useCallback(() => {
+    setSlashMenuOpen(false)
+    setSlashQuery("/")
+  }, [])
+
+  const insertEmbedBlock = useCallback(
+    (rawUrl: string) => {
+      const nextUrl = rawUrl.trim()
+      if (!nextUrl || !editor) return false
+      editor.chain().focus().insertContent({ type: "embed", attrs: { url: nextUrl } }).run()
+      return true
+    },
+    [editor]
+  )
+
+  const openEmbedComposer = useCallback(
+    (initialUrl = "") => {
+      closeSlashMenu()
+      setEmbedModalUrl(initialUrl)
+      setEmbedModalOpen(true)
+    },
+    [closeSlashMenu]
+  )
+
+  const submitEmbedModal = useCallback(() => {
+    if (!insertEmbedBlock(embedModalUrl)) return
+    setEmbedModalOpen(false)
+    setEmbedModalUrl("")
+  }, [embedModalUrl, insertEmbedBlock])
+
+  const slashCommandToken = useMemo(() => {
+    const trimmed = slashQuery.trim()
+    const withoutSlash = trimmed.startsWith("/") ? trimmed.slice(1) : trimmed
+    const [command = ""] = withoutSlash.split(/\s+/)
+    return command.toLowerCase()
+  }, [slashQuery])
+
+  const slashPayload = useMemo(() => {
+    const trimmed = slashQuery.trim()
+    if (!trimmed.startsWith("/")) return ""
+    return trimmed.replace(/^\/\S+\s*/, "").trim()
+  }, [slashQuery])
+
+  const slashCommands = useMemo<SlashCommand[]>(
+    () => [
+      {
+        id: "heading-1",
+        token: "h1",
+        label: "/h1 見出し1",
+        description: "LP の先頭や大きな区切り見出しを入れます。",
+        keywords: ["heading", "title", "見出し", "hero"],
+        run: () => {
+          editor?.chain().focus().toggleHeading({ level: 1 }).run()
+          closeSlashMenu()
+        },
+      },
+      {
+        id: "heading-2",
+        token: "h2",
+        label: "/h2 見出し2",
+        description: "セクション見出しを入れます。",
+        keywords: ["heading", "section", "見出し"],
+        run: () => {
+          editor?.chain().focus().toggleHeading({ level: 2 }).run()
+          closeSlashMenu()
+        },
+      },
+      {
+        id: "heading-3",
+        token: "h3",
+        label: "/h3 見出し3",
+        description: "補助見出しや小見出しを入れます。",
+        keywords: ["heading", "subheading", "見出し"],
+        run: () => {
+          editor?.chain().focus().toggleHeading({ level: 3 }).run()
+          closeSlashMenu()
+        },
+      },
+      {
+        id: "bullet-list",
+        token: "bullet",
+        label: "/bullet 箇条書き",
+        description: "特徴や要点を並べるリストを挿入します。",
+        keywords: ["list", "bullet", "箇条書き"],
+        run: () => {
+          editor?.chain().focus().toggleBulletList().run()
+          closeSlashMenu()
+        },
+      },
+      {
+        id: "ordered-list",
+        token: "number",
+        label: "/number 番号付きリスト",
+        description: "手順やフローを順番つきで並べます。",
+        keywords: ["list", "ordered", "number", "番号"],
+        run: () => {
+          editor?.chain().focus().toggleOrderedList().run()
+          closeSlashMenu()
+        },
+      },
+      {
+        id: "blockquote",
+        token: "quote",
+        label: "/quote 引用",
+        description: "レビューや抜粋コメントの見せ方に使えます。",
+        keywords: ["quote", "blockquote", "引用"],
+        run: () => {
+          editor?.chain().focus().toggleBlockquote().run()
+          closeSlashMenu()
+        },
+      },
+      {
+        id: "code-block",
+        token: "code",
+        label: "/code コードブロック",
+        description: "コードや設定例を整形して載せます。",
+        keywords: ["code", "snippet", "コード"],
+        run: () => {
+          editor?.chain().focus().toggleCodeBlock().run()
+          closeSlashMenu()
+        },
+      },
+      {
+        id: "divider",
+        token: "divider",
+        label: "/divider 区切り線",
+        description: "長い LP をセクションで区切ります。",
+        keywords: ["hr", "line", "divider", "区切り"],
+        run: () => {
+          editor?.chain().focus().setHorizontalRule().run()
+          closeSlashMenu()
+        },
+      },
+      {
+        id: "checklist",
+        token: "todo",
+        label: "/todo チェックリスト",
+        description: "確認項目や進行タスクを並べます。",
+        keywords: ["task", "check", "todo", "チェック"],
+        run: () => {
+          editor?.chain().focus().toggleTaskList().run()
+          closeSlashMenu()
+        },
+      },
+      {
+        id: "embed",
+        token: "embed",
+        label: "/embed 埋め込み",
+        description: "Pages URL や LP URL を貼って、そのまま iframe で全面表示します。",
+        keywords: ["iframe", "lp", "url", "page", "pages", "埋め込み"],
+        run: (payload) => {
+          if (payload && insertEmbedBlock(payload)) {
+            closeSlashMenu()
+            return
+          }
+          openEmbedComposer(payload)
+        },
+      },
+    ],
+    [closeSlashMenu, editor, insertEmbedBlock, openEmbedComposer]
+  )
+
+  const filteredSlashCommands = useMemo(() => {
+    if (!slashCommandToken) return slashCommands
+    return slashCommands.filter((command) =>
+      [command.token, command.label, command.description, ...command.keywords].some((value) =>
+        value.toLowerCase().includes(slashCommandToken)
+      )
+    )
+  }, [slashCommands, slashCommandToken])
+
+  const submitSlashCommand = useCallback(() => {
+    const exactMatch = slashCommands.find((command) => command.token === slashCommandToken)
+    const command = exactMatch ?? filteredSlashCommands[0]
+    if (!command) return
+    command.run(command.token === "embed" ? slashPayload : "")
+  }, [filteredSlashCommands, slashCommandToken, slashCommands, slashPayload])
+
+  if (authLoading) {
+    return (
+      <div style={{ padding: "32px 40px", minHeight: "100vh", background: "var(--bg-grad)" }}>
+        <p style={{ color: "var(--muted)" }}>読み込み中…</p>
+      </div>
+    )
+  }
+
+  if (needsOnboarding || !activeOrgId) {
+    return (
+      <div style={{ padding: "32px 40px", minHeight: "100vh", background: "var(--bg-grad)" }}>
+        <p style={{ color: "var(--muted)" }}>ワークスペース設定後に Pages を利用できます。</p>
+        <Link href="/home" style={{ color: "var(--primary)", fontSize: 14, marginTop: 8, display: "inline-block" }}>
+          Home へ
+        </Link>
+      </div>
+    )
+  }
+
+  if (loadError || !page) {
+    return (
+      <div
+        style={{
+          padding: "32px 40px",
+          minHeight: "100vh",
+          background: "var(--bg-grad)",
+          maxWidth: 480,
+          margin: "0 auto",
+        }}
+      >
+        <p style={{ color: "var(--text)", fontSize: 15, marginBottom: 16 }}>{loadError ?? "読み込み中…"}</p>
+        <Link
+          href="/pages"
+          style={{
+            display: "inline-block",
+            padding: "10px 18px",
+            borderRadius: 10,
+            border: "1px solid var(--border)",
+            background: "var(--surface)",
+            color: "var(--primary)",
+            fontSize: 14,
+            fontWeight: 500,
+            textDecoration: "none",
+          }}
+        >
+          ← 一覧へ戻る
+        </Link>
+      </div>
+    )
   }
 
   return (
@@ -966,57 +1297,97 @@ export default function PageEditPage() {
             paddingTop: 160,
             background: "transparent",
           }}
-          onClick={() => {
-            setSlashMenuOpen(false)
-            editor?.commands.insertContent("/")
-          }}
+          onClick={closeSlashMenu}
         >
           <div
             style={{
               background: "var(--surface)",
               border: "1px solid var(--border)",
-              borderRadius: 12,
-              padding: "8px 0",
-              boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
-              minWidth: 260,
-              maxHeight: 360,
+              borderRadius: 18,
+              padding: 12,
+              boxShadow: "0 24px 48px rgba(15,23,42,0.16)",
+              width: "min(560px, calc(100vw - 32px))",
+              maxHeight: "min(520px, calc(100vh - 220px))",
               overflowY: "auto",
+              display: "grid",
+              gap: 12,
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ fontSize: 11, color: "var(--muted)", padding: "6px 14px", marginBottom: 4 }}>ブロックを挿入</div>
-            {[
-              { label: "見出し1", run: () => editor?.chain().focus().toggleHeading({ level: 1 }).run() },
-              { label: "見出し2", run: () => editor?.chain().focus().toggleHeading({ level: 2 }).run() },
-              { label: "見出し3", run: () => editor?.chain().focus().toggleHeading({ level: 3 }).run() },
-              { label: "箇条書き", run: () => editor?.chain().focus().toggleBulletList().run() },
-              { label: "番号付きリスト", run: () => editor?.chain().focus().toggleOrderedList().run() },
-              { label: "引用", run: () => editor?.chain().focus().toggleBlockquote().run() },
-              { label: "コードブロック", run: () => editor?.chain().focus().toggleCodeBlock().run() },
-              { label: "区切り線", run: () => editor?.chain().focus().setHorizontalRule().run() },
-              { label: "チェックリスト", run: () => editor?.chain().focus().toggleTaskList().run() },
-              {
-                label: "埋め込み",
-                run: () => {
-                  setSlashMenuOpen(false)
-                  setEmbedModalUrl("")
-                  setEmbedModalOpen(true)
-                },
-              },
-            ].map((item) => (
+            <div style={{ display: "grid", gap: 8 }}>
+              <div style={{ fontSize: 11, color: "var(--muted)", padding: "4px 2px 0" }}>
+                `/embed https://...` のように打つと、URL までそのまま確定できます。
+              </div>
+              <input
+                ref={slashInputRef}
+                type="text"
+                value={slashQuery}
+                onChange={(e) => {
+                  const nextValue = e.target.value
+                  if (!nextValue) {
+                    setSlashQuery("/")
+                    return
+                  }
+                  setSlashQuery(nextValue.startsWith("/") ? nextValue : `/${nextValue}`)
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault()
+                    submitSlashCommand()
+                  }
+                  if (e.key === "Escape") {
+                    e.preventDefault()
+                    closeSlashMenu()
+                  }
+                  if (e.key === "Backspace" && slashQuery.trim() === "/") {
+                    e.preventDefault()
+                    closeSlashMenu()
+                  }
+                }}
+                placeholder="/embed https://example.com/lp"
+                style={{
+                  width: "100%",
+                  padding: "14px 16px",
+                  borderRadius: 14,
+                  border: "1px solid var(--border)",
+                  background: "var(--input-bg)",
+                  color: "var(--text)",
+                  fontSize: 15,
+                }}
+              />
+            </div>
+
+            <div style={{ fontSize: 11, color: "var(--muted)", padding: "0 2px" }}>ブロックを挿入</div>
+
+            {filteredSlashCommands.length === 0 ? (
+              <div
+                style={{
+                  padding: "16px 14px",
+                  borderRadius: 14,
+                  border: "1px dashed var(--border)",
+                  color: "var(--muted)",
+                  fontSize: 13,
+                }}
+              >
+                一致するコマンドがありません。`/embed`、`/h1`、`/bullet` などを試してください。
+              </div>
+            ) : null}
+
+            {filteredSlashCommands.map((command) => (
               <button
-                key={item.label}
+                key={command.id}
                 type="button"
                 onClick={() => {
-                  item.run()
-                  setSlashMenuOpen(false)
+                  command.run(command.token === "embed" ? slashPayload : "")
                 }}
                 style={{
-                  display: "block",
+                  display: "grid",
+                  gap: 4,
                   width: "100%",
-                  padding: "10px 14px",
+                  padding: "12px 14px",
                   textAlign: "left",
                   border: "none",
+                  borderRadius: 14,
                   background: "transparent",
                   color: "var(--text)",
                   fontSize: 14,
@@ -1024,10 +1395,22 @@ export default function PageEditPage() {
                 }}
                 onMouseDown={(e) => e.preventDefault()}
               >
-                {item.label}
+                <span style={{ fontWeight: 600 }}>{command.label}</span>
+                <span style={{ fontSize: 12, color: "var(--muted)", lineHeight: 1.6 }}>
+                  {command.description}
+                </span>
               </button>
             ))}
-            <div style={{ fontSize: 11, color: "var(--muted)", padding: "6px 14px", borderTop: "1px solid var(--border)", marginTop: 4 }}>Esc で閉じる</div>
+            <div
+              style={{
+                fontSize: 11,
+                color: "var(--muted)",
+                padding: "6px 2px 0",
+                borderTop: "1px solid var(--border)",
+              }}
+            >
+              Enter で実行 / Esc で閉じる
+            </div>
           </div>
         </div>
       )}
@@ -1149,41 +1532,46 @@ export default function PageEditPage() {
             justifyContent: "center",
             padding: 24,
           }}
-          onClick={() => setEmbedModalOpen(false)}
+          onClick={() => {
+            setEmbedModalOpen(false)
+            setEmbedModalUrl("")
+          }}
         >
           <div
             style={{
               background: "var(--surface)",
-              borderRadius: 12,
+              borderRadius: 18,
               padding: 24,
-              maxWidth: 400,
+              maxWidth: 520,
               width: "90%",
               boxShadow: "0 8px 32px rgba(0,0,0,0.2)",
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 style={{ fontSize: 16, fontWeight: 600, color: "var(--text)", marginBottom: 8 }}>埋め込みURL</h3>
-            <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 12 }}>YouTube / Loom / Google Drive / Docs など</p>
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: "var(--text)", marginBottom: 8 }}>埋め込み</h3>
+            <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 14, lineHeight: 1.7 }}>
+              NovaLoop Pages URL、発行した LP URL、YouTube、Loom などを貼ると、そのまま iframe で表示します。
+              Pages URL は自動で埋め込み用ルートに変換します。
+            </p>
             <input
-              type="url"
+              type="text"
               value={embedModalUrl}
               onChange={(e) => setEmbedModalUrl(e.target.value)}
-              placeholder="https://..."
+              placeholder="/pages/abc123 または https://example.com/lp"
               autoFocus
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
-                  if (embedModalUrl.trim()) {
-                    editor?.chain().focus().insertContent({ type: "embed", attrs: { url: embedModalUrl.trim() } }).run()
-                    setEmbedModalOpen(false)
-                    setEmbedModalUrl("")
-                  }
+                  submitEmbedModal()
                 }
-                if (e.key === "Escape") setEmbedModalOpen(false)
+                if (e.key === "Escape") {
+                  setEmbedModalOpen(false)
+                  setEmbedModalUrl("")
+                }
               }}
               style={{
                 width: "100%",
-                padding: "10px 12px",
-                borderRadius: 8,
+                padding: "12px 14px",
+                borderRadius: 12,
                 border: "1px solid var(--border)",
                 background: "var(--input-bg)",
                 color: "var(--text)",
@@ -1194,7 +1582,10 @@ export default function PageEditPage() {
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
               <button
                 type="button"
-                onClick={() => setEmbedModalOpen(false)}
+                onClick={() => {
+                  setEmbedModalOpen(false)
+                  setEmbedModalUrl("")
+                }}
                 style={{
                   padding: "8px 16px",
                   borderRadius: 8,
@@ -1209,12 +1600,7 @@ export default function PageEditPage() {
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  if (!embedModalUrl.trim() || !editor) return
-                  editor.chain().focus().insertContent({ type: "embed", attrs: { url: embedModalUrl.trim() } }).run()
-                  setEmbedModalOpen(false)
-                  setEmbedModalUrl("")
-                }}
+                onClick={submitEmbedModal}
                 disabled={!embedModalUrl.trim()}
                 style={{
                   padding: "8px 16px",
@@ -1399,9 +1785,80 @@ export default function PageEditPage() {
           </span>
         </div>
 
-        {relatedPages.length > 0 && (
-          <div style={{ marginBottom: 8, border: "1px solid var(--border)", borderRadius: 10, padding: "6px 8px", background: "var(--surface)" }}>
-            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>関連ページ</div>
+        <div
+          style={{
+            marginBottom: 8,
+            border: "1px solid var(--border)",
+            borderRadius: 12,
+            padding: "10px 12px",
+            background:
+              practicalGuide.key === "billing"
+                ? "linear-gradient(135deg, #fff7ed 0%, #ffffff 100%)"
+                : practicalGuide.key === "payouts"
+                  ? "linear-gradient(135deg, #ecfeff 0%, #ffffff 100%)"
+                  : practicalGuide.key === "notifications"
+                    ? "linear-gradient(135deg, #eff6ff 0%, #ffffff 100%)"
+                    : "linear-gradient(135deg, #f5f3ff 0%, #ffffff 100%)",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                padding: "4px 8px",
+                borderRadius: 999,
+                fontSize: 11,
+                fontWeight: 700,
+                letterSpacing: 0.2,
+                color:
+                  practicalGuide.key === "billing"
+                    ? "#9a3412"
+                    : practicalGuide.key === "payouts"
+                      ? "#155e75"
+                      : practicalGuide.key === "notifications"
+                        ? "#1d4ed8"
+                        : "#6d28d9",
+                background:
+                  practicalGuide.key === "billing"
+                    ? "#ffedd5"
+                    : practicalGuide.key === "payouts"
+                      ? "#cffafe"
+                      : practicalGuide.key === "notifications"
+                        ? "#dbeafe"
+                        : "#ede9fe",
+              }}
+            >
+              {practicalGuide.badge}
+            </span>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text)" }}>{practicalGuide.title}</div>
+          </div>
+          <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>{practicalGuide.description}</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8 }}>
+            {practicalGuide.actions.map((action) => (
+              <Link
+                key={action.href}
+                href={action.href}
+                style={{
+                  display: "block",
+                  border: "1px solid var(--border)",
+                  borderRadius: 10,
+                  padding: "10px 12px",
+                  textDecoration: "none",
+                  background: "rgba(255,255,255,0.82)",
+                  boxShadow: "0 8px 20px rgba(15, 23, 42, 0.06)",
+                }}
+              >
+                <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text)", marginBottom: 4 }}>{action.label}</div>
+                <div style={{ fontSize: 12, color: "var(--muted)", lineHeight: 1.5 }}>{action.description}</div>
+              </Link>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 8, border: "1px solid var(--border)", borderRadius: 10, padding: "6px 8px", background: "var(--surface)" }}>
+          <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>関連ページ</div>
+          {relatedPages.length > 0 ? (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 6 }}>
               {relatedPages.slice(0, 4).map((rp) => (
                 <Link
@@ -1413,8 +1870,18 @@ export default function PageEditPage() {
                 </Link>
               ))}
             </div>
-          </div>
-        )}
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 12, color: "var(--muted)" }}>
+              <span>近いページはまだありません。</span>
+              <Link href="/pages" style={{ color: "var(--text)", textDecoration: "none", fontWeight: 600 }}>
+                Pages 一覧を見る
+              </Link>
+              <Link href="/help/pages-manual" style={{ color: "var(--text)", textDecoration: "none", fontWeight: 600 }}>
+                Pages ヘルプを見る
+              </Link>
+            </div>
+          )}
+        </div>
 
         {saveError && (
           <div style={{ marginBottom: 8, padding: 10, borderRadius: 10, background: "#fff1f2", color: "#b91c1c", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
@@ -1683,10 +2150,7 @@ export default function PageEditPage() {
               {isVisible("embed") && (
               <button
                 type="button"
-                onClick={() => {
-                  setEmbedModalUrl("")
-                  setEmbedModalOpen(true)
-                }}
+                onClick={() => openEmbedComposer()}
                 style={{
                   padding: "4px 6px",
                   borderRadius: 6,
@@ -1784,7 +2248,13 @@ export default function PageEditPage() {
                           : doc.textBetween(0, doc.content.size, "\n")
                         window.dispatchEvent(
                           new CustomEvent("open-ai-palette", {
-                            detail: { source: "pages" as const, text: selectedText, mode: "summarize" as const },
+                            detail: {
+                              source: "pages" as const,
+                              text: selectedText,
+                              compareText: selectedText,
+                              mode: "summarize" as const,
+                              title: "Pages AI",
+                            },
                           })
                         )
                         setAiToolsOpen(false)
@@ -1814,7 +2284,13 @@ export default function PageEditPage() {
                           : doc.textBetween(0, doc.content.size, "\n")
                         window.dispatchEvent(
                           new CustomEvent("open-ai-palette", {
-                            detail: { source: "pages" as const, text: selectedText, mode: "procedure" as const },
+                            detail: {
+                              source: "pages" as const,
+                              text: selectedText,
+                              compareText: selectedText,
+                              mode: "procedure" as const,
+                              title: "Pages AI",
+                            },
                           })
                         )
                         setAiToolsOpen(false)
@@ -1831,6 +2307,42 @@ export default function PageEditPage() {
                       }}
                     >
                       AI手順化
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!editorInstance) return
+                        const sel = editorInstance.state.selection
+                        const hasSelection = sel && !sel.empty
+                        const doc = editorInstance.state.doc
+                        const selectedText = hasSelection
+                          ? doc.textBetween(sel.from, sel.to, "\n")
+                          : doc.textBetween(0, doc.content.size, "\n")
+                        window.dispatchEvent(
+                          new CustomEvent("open-ai-palette", {
+                            detail: {
+                              source: "pages" as const,
+                              text: selectedText,
+                              compareText: selectedText,
+                              mode: "checklist" as const,
+                              title: "Pages AI",
+                            },
+                          })
+                        )
+                        setAiToolsOpen(false)
+                      }}
+                      style={{
+                        padding: "6px 8px",
+                        borderRadius: 6,
+                        border: "none",
+                        background: "transparent",
+                        color: "var(--text)",
+                        fontSize: 12,
+                        textAlign: "left",
+                        cursor: "pointer",
+                      }}
+                    >
+                      AIチェックリスト化
                     </button>
                   </div>
                 )}
@@ -2079,7 +2591,13 @@ export default function PageEditPage() {
                 if (!text.trim()) return
                 window.dispatchEvent(
                   new CustomEvent("open-ai-palette", {
-                    detail: { source: "pages" as const, text, mode: "summarize" as const },
+                    detail: {
+                      source: "pages" as const,
+                      text,
+                      compareText: text,
+                      mode: "summarize" as const,
+                      title: "Pages AI",
+                    },
                   })
                 )
               }}
@@ -2104,7 +2622,13 @@ export default function PageEditPage() {
                 if (!text.trim()) return
                 window.dispatchEvent(
                   new CustomEvent("open-ai-palette", {
-                    detail: { source: "pages" as const, text, mode: "rewrite" as const },
+                    detail: {
+                      source: "pages" as const,
+                      text,
+                      compareText: text,
+                      mode: "rewrite" as const,
+                      title: "Pages AI",
+                    },
                   })
                 )
               }}
@@ -2206,12 +2730,46 @@ export default function PageEditPage() {
           word-break: break-all;
         }
         .ProseMirror-wrapper .ProseMirror .pages-embed-block {
-          margin: 0.5em 0;
-          border-radius: 8px;
-          overflow: hidden;
+          margin: 1.1em 0;
         }
         .ProseMirror-wrapper .ProseMirror .pages-embed-block iframe {
+          display: block;
+          width: 100%;
           max-width: 100%;
+          box-shadow: 0 28px 48px rgba(15, 23, 42, 0.1);
+        }
+        .ProseMirror-wrapper .ProseMirror .pages-embed-block--bleed {
+          position: relative;
+          left: 50%;
+          transform: translateX(-50%);
+          width: min(calc(100vw - 96px), calc(100% + 220px));
+          max-width: calc(100vw - 96px);
+        }
+        .ProseMirror-wrapper .ProseMirror .pages-embed-block--link {
+          display: grid;
+          gap: 8px;
+          padding: 18px 20px;
+          border-radius: 22px;
+          border: 1px solid var(--border);
+          background: linear-gradient(180deg, var(--surface-2), rgba(255, 247, 237, 0.96));
+        }
+        .ProseMirror-wrapper .ProseMirror .pages-embed-link-card__label {
+          font-size: 12px;
+          font-weight: 700;
+          letter-spacing: 0.04em;
+          color: var(--muted);
+        }
+        .ProseMirror-wrapper .ProseMirror .pages-embed-link-card__anchor {
+          word-break: break-all;
+          color: var(--text);
+          text-decoration: none;
+          font-weight: 600;
+        }
+        @media (max-width: 900px) {
+          .ProseMirror-wrapper .ProseMirror .pages-embed-block--bleed {
+            width: calc(100% + 24px);
+            max-width: calc(100vw - 32px);
+          }
         }
         .ProseMirror-wrapper .ProseMirror hr,
         .ProseMirror-wrapper .ProseMirror .pages-editor-hr {

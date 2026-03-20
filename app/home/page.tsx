@@ -1,10 +1,12 @@
-﻿"use client"
+"use client"
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react"
 import Link from "next/link"
+import { useSearchParams } from "next/navigation"
 import { supabase } from "@/lib/supabase"
 import { useAuthOrg } from "@/hooks/useAuthOrg"
 import { trackClientEvent } from "@/lib/analytics"
+import OnboardingGuide from "@/components/home/OnboardingGuide"
 import type { OnboardingItemDefinition } from "@/lib/onboarding"
 import {
   notificationActionHref,
@@ -67,6 +69,18 @@ type OnboardingResponse = {
   done: boolean
 }
 
+const onboardingProgressCache = new Map<string, OnboardingResponse>()
+
+const readCachedOnboardingProgress = (orgId: string | null) => {
+  if (!orgId) return null
+  const cached = onboardingProgressCache.get(orgId)
+  return cached ?? null
+}
+
+const writeCachedOnboardingProgress = (orgId: string, value: OnboardingResponse) => {
+  onboardingProgressCache.set(orgId, value)
+}
+
 const COMPLETED_STATUSES = new Set(["delivered", "published", "canceled", "cancelled"])
 const BILLABLE_DONE_STATUSES = new Set(["delivered", "published"])
 
@@ -103,6 +117,7 @@ const formatTimeAgo = (v: string) => {
 }
 
 export default function Home() {
+  const searchParams = useSearchParams()
   const { user, activeOrgId, role, loading: authLoading } = useAuthOrg({ redirectToOnboarding: true })
   const [rows, setRows] = useState<ContentRow[]>([])
   const [kgiText, setKgiText] = useState<string>("")
@@ -110,12 +125,16 @@ export default function Home() {
   const [vendorInvoices, setVendorInvoices] = useState<VendorInvoiceRow[]>([])
   const [unreadNotifications, setUnreadNotifications] = useState<NotificationRow[]>([])
   const [onboarding, setOnboarding] = useState<OnboardingResponse | null>(null)
+  const [onboardingLoading, setOnboardingLoading] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   const canAccessBilling = role === "owner" || role === "executive_assistant"
   const isOwner = role === "owner"
   const isExecutiveAssistant = role === "executive_assistant"
+  const showChecklistPanel = searchParams.get("panel") === "checklist"
+  const shouldShowOnboardingGuide = canAccessBilling && onboarding != null && (!onboarding.done || showChecklistPanel)
+  const shouldPrioritizeOnboardingGuide = shouldShowOnboardingGuide
   const roleLabel = isOwner
     ? "経営モード: 売上・粗利・締め管理"
     : isExecutiveAssistant
@@ -277,23 +296,46 @@ export default function Home() {
   }, [activeOrgId, authLoading, role, user?.id])
 
   useEffect(() => {
-    if (!activeOrgId || !canAccessBilling) return
+    if (!activeOrgId || !canAccessBilling) {
+      const reset = window.setTimeout(() => {
+        setOnboarding(null)
+        setOnboardingLoading(false)
+      }, 0)
+      return () => window.clearTimeout(reset)
+    }
     let active = true
+    const cached = readCachedOnboardingProgress(activeOrgId)
+    const applyCached = window.setTimeout(() => {
+      if (!active) return
+      setOnboarding(cached)
+      setOnboardingLoading(!cached)
+    }, 0)
 
     const loadOnboarding = async () => {
+      if (!cached) setOnboardingLoading(true)
       const token = (await supabase.auth.getSession()).data.session?.access_token
-      if (!token) return
+      if (!token) {
+        if (active) setOnboardingLoading(false)
+        return
+      }
       const res = await fetch("/api/onboarding/progress", {
         headers: { Authorization: `Bearer ${token}` },
       }).catch(() => null)
       const json = (await res?.json().catch(() => null)) as OnboardingResponse | null
-      if (!active || !res?.ok || !json?.ok) return
+      if (!active) return
+      if (!res?.ok || !json?.ok) {
+        setOnboardingLoading(false)
+        return
+      }
+      writeCachedOnboardingProgress(activeOrgId, json)
       setOnboarding(json)
+      setOnboardingLoading(false)
     }
 
     void loadOnboarding()
     return () => {
       active = false
+      window.clearTimeout(applyCached)
     }
   }, [activeOrgId, canAccessBilling])
 
@@ -425,27 +467,37 @@ export default function Home() {
     unprocessedInvoiceTargetCount,
   ])
 
-  if (authLoading || loading) {
+  const hasHomeBlockingLoad = authLoading || loading || (canAccessBilling && onboardingLoading && onboarding == null)
+
+  if (hasHomeBlockingLoad) {
     return <div style={{ padding: 32, color: "var(--muted)" }}>読み込み中…</div>
   }
 
   return (
-    <div style={{ padding: "28px 24px 52px", background: "var(--bg-grad)", minHeight: "100vh" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <div>
-          <p style={{ fontSize: 12, letterSpacing: "0.08em", color: "var(--muted)" }}>SNS Ops SaaS</p>
-          <h1 style={{ fontSize: 28, margin: "6px 0 8px", color: "var(--text)" }}>ホーム</h1>
-          <p style={{ fontSize: 12, color: "var(--muted)", margin: 0 }}>{roleLabel}</p>
+    <div
+      style={{
+        padding: shouldPrioritizeOnboardingGuide ? "6px 24px 52px" : "28px 24px 52px",
+        background: "var(--bg-grad)",
+        minHeight: "100vh",
+      }}
+    >
+      {!shouldPrioritizeOnboardingGuide ? (
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div>
+            <p style={{ fontSize: 12, letterSpacing: "0.08em", color: "var(--muted)" }}>SNS Ops SaaS</p>
+            <h1 style={{ fontSize: 28, margin: "6px 0 8px", color: "var(--text)" }}>ホーム</h1>
+            <p style={{ fontSize: 12, color: "var(--muted)", margin: 0 }}>{roleLabel}</p>
+          </div>
+          <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <Link href="/help/setup" style={{ fontSize: 13, color: "var(--primary)", fontWeight: 600 }}>
+              使い方を見る
+            </Link>
+            <Link href="/notifications" style={{ fontSize: 13, color: "var(--primary)", fontWeight: 600 }}>
+              通知センターへ
+            </Link>
+          </div>
         </div>
-        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-          <Link href="/help/setup" style={{ fontSize: 13, color: "var(--primary)", fontWeight: 600 }}>
-            使い方を見る
-          </Link>
-          <Link href="/notifications" style={{ fontSize: 13, color: "var(--primary)", fontWeight: 600 }}>
-            通知センターへ
-          </Link>
-        </div>
-      </div>
+      ) : null}
 
       {error && (
         <div style={{ ...cardStyle, marginTop: 12, borderColor: "#fca5a5", background: "#fef2f2", color: "#991b1b" }}>
@@ -453,89 +505,17 @@ export default function Home() {
         </div>
       )}
 
-      <header style={{ marginTop: 18, marginBottom: 20 }}>
-        <div style={{ color: "var(--text)" }}>
-          KGI:
-          <span style={{ marginLeft: 8, fontWeight: 600 }}>{kgiText || "KGI未設定（/settings で設定）"}</span>
-        </div>
-      </header>
+      {!shouldPrioritizeOnboardingGuide ? (
+        <header style={{ marginTop: 18, marginBottom: 20 }}>
+          <div style={{ color: "var(--text)" }}>
+            KGI:
+            <span style={{ marginLeft: 8, fontWeight: 600 }}>{kgiText || "KGI未設定（/settings で設定）"}</span>
+          </div>
+        </header>
+      ) : null}
 
-      {canAccessBilling && onboarding && !onboarding.done ? (
-        <section
-          style={{
-            ...cardStyle,
-            marginBottom: 14,
-            borderColor: "rgba(167, 139, 250, 0.35)",
-            background: "linear-gradient(180deg, rgba(255,255,255,0.96), rgba(248,244,255,0.96))",
-          }}
-        >
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "start" }}>
-            <div>
-              <div style={{ fontSize: 12, color: "#7c3aed", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>
-                導入チェックリスト
-              </div>
-              <h2 style={{ margin: "6px 0 8px", fontSize: 18, color: "var(--text)" }}>最初にやることをここで揃えます</h2>
-              <p style={{ margin: 0, fontSize: 13, color: "var(--muted)", lineHeight: 1.7 }}>
-                会社情報、クライアント、マニュアル、請求、外注導線までを順番に確認できます。
-              </p>
-            </div>
-            <div style={{ minWidth: 140 }}>
-              <div style={{ fontSize: 12, color: "var(--muted)" }}>完了率</div>
-              <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "var(--text)" }}>{onboarding.completion_rate}%</div>
-            </div>
-          </div>
-          <div style={{ marginTop: 14, display: "grid", gap: 8 }}>
-            {onboarding.items.map((item) => (
-              <div
-                key={item.key}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "auto 1fr auto",
-                  gap: 12,
-                  alignItems: "center",
-                  border: "1px solid var(--border)",
-                  borderRadius: 12,
-                  padding: "10px 12px",
-                  background: item.completed ? "#f0fdf4" : "var(--surface)",
-                }}
-              >
-                <span
-                  style={{
-                    width: 26,
-                    height: 26,
-                    borderRadius: 999,
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    background: item.completed ? "#16a34a" : "rgba(124,58,237,0.12)",
-                    color: item.completed ? "#fff" : "#6d28d9",
-                    fontSize: 12,
-                    fontWeight: 800,
-                  }}
-                >
-                  {item.completed ? "完" : "未"}
-                </span>
-                <div>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text)" }}>{item.title}</div>
-                  <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>{item.description}</div>
-                </div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {item.helpHref ? (
-                    <Link
-                      href={item.helpHref}
-                      style={{ fontSize: 12, color: "var(--text)", textDecoration: "none", border: "1px solid var(--border)", borderRadius: 999, padding: "6px 10px", background: "var(--surface-2)" }}
-                    >
-                      使い方
-                    </Link>
-                  ) : null}
-                  <Link href={item.href} style={{ fontSize: 12, color: "var(--primary)", fontWeight: 700, textDecoration: "none" }}>
-                    開く
-                  </Link>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
+      {shouldShowOnboardingGuide ? (
+        <OnboardingGuide items={onboarding.items} completionRate={onboarding.completion_rate} />
       ) : null}
 
       <section style={{ ...cardStyle, marginBottom: 14, borderColor: urgentCount > 0 ? "#fca5a5" : "#86efac", background: urgentCount > 0 ? "#fff7f7" : "#f0fdf4" }}>

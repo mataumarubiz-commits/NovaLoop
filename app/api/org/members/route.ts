@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
 import { getUserIdFromToken, getOrgRole } from "@/lib/apiAuth"
+import { normalizeAppOrgRole } from "@/lib/orgRoles"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -41,14 +42,20 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const members = list.map((r) => ({
-      userId: r.user_id,
-      displayName: r.display_name ?? undefined,
-      email: emails.get(r.user_id) ?? undefined,
-      role: r.role,
-      status: r.status,
-      roleId: r.role_id ?? undefined,
-    }))
+    const members = list.flatMap((r) => {
+      const role = normalizeAppOrgRole(r.role)
+      if (!role) return []
+      return [
+        {
+          userId: r.user_id,
+          displayName: r.display_name ?? undefined,
+          email: emails.get(r.user_id) ?? undefined,
+          role,
+          status: r.status,
+          roleId: r.role_id ?? undefined,
+        },
+      ]
+    })
 
     return NextResponse.json({ ok: true, members })
   } catch (e) {

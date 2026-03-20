@@ -107,9 +107,9 @@ export default function HelpCenterPage() {
               <p className="help-overline">使い方ページ / ヘルプセンター</p>
               <h1>迷ったら、ここを見れば進められます</h1>
               <p className="help-sub">
-                Nova loop の日次運用、案件進行、請求、外注支払い、マニュアル運用を横断して確認できます。
+                NovaLoop の日次運用、案件進行、請求、外注支払い、マニュアル運用を横断して確認できます。
                 <br />
-                Pages に載せる社内手順の叩き台としても、そのまま使える構成にしています。
+                Pages に載せる社内手順のたたき台としても、そのまま使える構成にしています。
               </p>
             </div>
             <div className="help-hero-panel">
@@ -136,7 +136,7 @@ export default function HelpCenterPage() {
                 <p className="help-section-kicker">導入直後に見る順番</p>
                 <h2>まず読む 3 記事</h2>
                 <p className="help-section-copy">
-                  初期設定、初週の運用、Pages のマニュアル整備から始めると、Nova loop の運用が安定します。
+                  初期設定、初週の運用、Pages のマニュアル整備から始めると、NovaLoop の運用が安定します。
                 </p>
               </div>
               <span>おすすめ 3 件</span>

@@ -1,10 +1,21 @@
-﻿"use client"
+"use client"
 
 import Link from "next/link"
-import { useEffect, useState, useMemo, type CSSProperties } from "react"
+import { useCallback, useEffect, useState, useMemo, type CSSProperties } from "react"
 import { useSearchParams } from "next/navigation"
 import { supabase } from "../../lib/supabase"
 import { useAuthOrg } from "@/hooks/useAuthOrg"
+import ChecklistReturnButton from "@/components/home/ChecklistReturnButton"
+import type { ApplyAiResultDetail } from "@/lib/aiClientEvents"
+import {
+  buildContentHealthScore,
+  DRAFT_STATUS_OPTIONS,
+  FINAL_STATUS_OPTIONS,
+  MATERIAL_STATUS_OPTIONS,
+  normalizeContentLinks,
+  validateContentRules,
+  type ContentLinks,
+} from "@/lib/contentWorkflow"
 import GuideEmptyState from "@/components/shared/GuideEmptyState"
 
 const tableStyle: CSSProperties = {
@@ -108,6 +119,19 @@ type ClientOption = {
   name: string
 }
 
+type ProjectOption = {
+  id: string
+  clientId: string
+  name: string
+}
+
+type MemberOption = {
+  userId: string
+  displayName?: string
+  email?: string
+  role: string
+}
+
 type ContentTemplate = {
   id: string
   name: string
@@ -124,10 +148,12 @@ type Row = {
   id: string
   clientId: string
   clientName: string
+  projectId: string | null
   projectName: string
   title: string
   dueClientAt: string
   dueEditorAt: string
+  publishAt: string | null
   unitPrice: number
   thumbnailDone: boolean
   billable: boolean
@@ -135,7 +161,48 @@ type Row = {
   status: string
   editorSubmittedAt: string | null
   clientSubmittedAt: string | null
+  sequenceNo: number | null
+  assigneeEditorUserId: string | null
+  assigneeCheckerUserId: string | null
+  revisionCount: number
+  workloadPoints: number
+  estimatedCost: number
+  nextAction: string
+  blockedReason: string
+  materialStatus: string
+  draftStatus: string
+  finalStatus: string
+  healthScore: number
+  links: ContentLinks
 }
+
+type DetailDraft = {
+  projectId: string
+  projectName: string
+  publishAt: string
+  assigneeEditorUserId: string
+  assigneeCheckerUserId: string
+  revisionCount: string
+  workloadPoints: string
+  estimatedCost: string
+  nextAction: string
+  blockedReason: string
+  materialStatus: string
+  draftStatus: string
+  finalStatus: string
+  sequenceNo: string
+  links: Record<string, string>
+}
+
+type SavedView = {
+  id: string
+  name: string
+  filterDue: "" | "today" | "tomorrow" | "week" | "late"
+  filterClientId: string
+  filterProjectId: string
+}
+
+const SAVED_VIEW_STORAGE_KEY = "novaloop:contents:saved-views"
 
 /** 未完了ではないステータス（納品・公開・没） */
 const COMPLETED_STATUSES = new Set(["delivered", "published", "canceled", "cancelled"])
@@ -151,6 +218,64 @@ const isEditorLate = (row: Row, todayYmd: string) =>
   isIncomplete(row.status) &&
   row.dueEditorAt < todayYmd &&
   row.editorSubmittedAt == null
+
+const buildContentProgressNote = (row: Row, todayYmd: string) => {
+  if (isClientLate(row, todayYmd)) {
+    return "先方提出日を過ぎています。最優先で対応状況を確認してください。"
+  }
+  if (isEditorLate(row, todayYmd)) {
+    return "編集者提出が遅れています。外注確認とリスケ判断が必要です。"
+  }
+  return "大きな遅延はありません。次の更新タイミングを確認してください。"
+}
+
+const buildContentNextAction = (row: Row, todayYmd: string) => {
+  if (isClientLate(row, todayYmd)) {
+    return "先方提出可否とリスケ要否を関係者に確認し、今日中の連絡方針を決めてください。"
+  }
+  if (isEditorLate(row, todayYmd)) {
+    return "編集者の提出見込みを確認し、差し替えや日程再調整の要否を整理してください。"
+  }
+  if (row.status === "submitted_to_client") {
+    return "先方確認待ちです。戻し有無と次回の確認タイミングを共有してください。"
+  }
+  if (row.status === "delivered" || row.status === "published") {
+    return "納品済みです。請求対象月と請求可否を最終確認してください。"
+  }
+  return "次の更新担当と確認タイミングを決め、必要な共有先へ連絡してください。"
+}
+
+const buildContentShareDraft = (row: Row, todayYmd: string) =>
+  [
+    `案件: ${row.clientName} / ${row.projectName}`,
+    `タイトル: ${row.title}`,
+    `状況: ${buildContentProgressNote(row, todayYmd)}`,
+    `次アクション: ${buildContentNextAction(row, todayYmd)}`,
+  ].join("\n")
+
+function buildContentAiContext(row: Row, todayYmd: string) {
+  return [
+    `クライアント: ${row.clientName}`,
+    `案件: ${row.projectName}`,
+    `タイトル: ${row.title}`,
+    `先方提出日: ${row.dueClientAt}`,
+    `編集者提出日: ${row.dueEditorAt}`,
+    `対象月: ${row.deliveryMonth || "-"}`,
+    `単価: ${row.unitPrice}`,
+    `ステータス: ${statusLabels[row.status] ?? row.status}`,
+    `請求対象: ${row.billable ? "対象" : "対象外"}`,
+    `進行メモ: ${buildContentProgressNote(row, todayYmd)}`,
+    `次の行動: ${buildContentNextAction(row, todayYmd)}`,
+  ].join("\n")
+}
+
+function buildContentAiMeta(row: Row) {
+  return {
+    sourceObject: "content",
+    recordId: row.id,
+    recordLabel: `${row.clientName} / ${row.projectName}`,
+  }
+}
 
 const statusLabels: Record<string, string> = {
   not_started: "未着手",
@@ -180,6 +305,40 @@ const addDays = (dateStr: string, days: number) => {
   return toDateInputValue(date)
 }
 
+const DETAIL_LINK_KEYS = ["draft", "final", "publish", "proof", "reference"] as const
+
+function buildDetailDraft(row: Row | null): DetailDraft {
+  const links = normalizeContentLinks(row?.links ?? {})
+  return {
+    projectId: row?.projectId ?? "",
+    projectName: row?.projectName ?? "",
+    publishAt: row?.publishAt ?? "",
+    assigneeEditorUserId: row?.assigneeEditorUserId ?? "",
+    assigneeCheckerUserId: row?.assigneeCheckerUserId ?? "",
+    revisionCount: String(row?.revisionCount ?? 0),
+    workloadPoints: String(row?.workloadPoints ?? 1),
+    estimatedCost: String(row?.estimatedCost ?? 0),
+    nextAction: row?.nextAction ?? "",
+    blockedReason: row?.blockedReason ?? "",
+    materialStatus: row?.materialStatus ?? "not_ready",
+    draftStatus: row?.draftStatus ?? "not_started",
+    finalStatus: row?.finalStatus ?? "not_started",
+    sequenceNo: row?.sequenceNo != null ? String(row.sequenceNo) : "",
+    links: Object.fromEntries(DETAIL_LINK_KEYS.map((key) => [key, links[key] ?? ""])),
+  }
+}
+
+function loadSavedViews() {
+  if (typeof window === "undefined") return []
+  try {
+    const raw = window.localStorage.getItem(SAVED_VIEW_STORAGE_KEY)
+    return raw ? (JSON.parse(raw) as SavedView[]) : []
+  } catch {
+    window.localStorage.removeItem(SAVED_VIEW_STORAGE_KEY)
+    return []
+  }
+}
+
 type OrgDebug = {
   userId: string | null
   orgId: string | null
@@ -187,10 +346,30 @@ type OrgDebug = {
   error: string | null
 }
 
+const isMissingLinksJsonError = (message?: string | null) =>
+  message?.includes("column contents.links_json does not exist") ?? false
+
+const withoutLinksJson = (payload: Record<string, unknown>) => {
+  if (!Object.prototype.hasOwnProperty.call(payload, "links_json")) return payload
+  const next = { ...payload }
+  delete next.links_json
+  return next
+}
+
+const prepareContentWritePayload = (
+  payload: Record<string, unknown> | Record<string, unknown>[],
+  supportsLinksJson: boolean | null
+) => {
+  if (supportsLinksJson !== false) return payload
+  return Array.isArray(payload) ? payload.map((item) => withoutLinksJson(item)) : withoutLinksJson(payload)
+}
+
 export default function ContentsPage() {
   const { activeOrgId: orgId, role, user, loading: authLoading, needsOnboarding } = useAuthOrg({ redirectToOnboarding: true })
   const [rows, setRows] = useState<Row[]>([])
   const [clients, setClients] = useState<ClientOption[]>([])
+  const [projects, setProjects] = useState<ProjectOption[]>([])
+  const [members, setMembers] = useState<MemberOption[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [uiError, setUiError] = useState<string | null>(null)
@@ -210,6 +389,7 @@ export default function ContentsPage() {
   })
   const [form, setForm] = useState({
     clientId: "",
+    projectId: "",
     projectName: "",
     title: "",
     dueClientAt: "",
@@ -228,13 +408,36 @@ export default function ContentsPage() {
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({})
   const [filterDue, setFilterDue] = useState<"" | "today" | "tomorrow" | "week" | "late">("")
   const [filterClientId, setFilterClientId] = useState("")
+  const [filterProjectId, setFilterProjectId] = useState("")
+  const [savedViews, setSavedViews] = useState<SavedView[]>(loadSavedViews)
   const [detailRow, setDetailRow] = useState<Row | null>(null)
+  const [detailTitleDraft, setDetailTitleDraft] = useState("")
+  const [detailShareDraft, setDetailShareDraft] = useState("")
+  const [detailDraft, setDetailDraft] = useState<DetailDraft>(() => buildDetailDraft(null))
+  const [supportsLinksJson, setSupportsLinksJson] = useState<boolean | null>(null)
   const searchParams = useSearchParams()
   const highlightId = searchParams.get("highlight")
   const openClientCreate = searchParams.get("newClient")
+  const projectIdQuery = searchParams.get("projectId")
   const isLoading = authLoading || loading
 
   const canEdit = role === "owner" || role === "executive_assistant"
+  const selectedCreateClient = useMemo(
+    () => clients.find((client) => client.id === form.clientId) ?? null,
+    [clients, form.clientId]
+  )
+  const selectedTemplateClient = useMemo(
+    () => clients.find((client) => client.id === templateClientId) ?? null,
+    [clients, templateClientId]
+  )
+  const selectedProject = useMemo(
+    () => projects.find((project) => project.id === form.projectId) ?? null,
+    [form.projectId, projects]
+  )
+  const selectedBulkTemplate = useMemo(
+    () => templates.find((template) => template.id === bulkTemplateId) ?? templates[0] ?? null,
+    [bulkTemplateId, templates]
+  )
 
   const todayYmd = useMemo(() => {
     const d = new Date()
@@ -260,6 +463,54 @@ export default function ContentsPage() {
     return d.toISOString().slice(0, 10)
   }, [weekStartYmd])
 
+  const detectLinksJsonSupport = async (currentOrgId: string) => {
+    const { error: linksError } = await supabase
+      .from("contents")
+      .select("links_json")
+      .eq("org_id", currentOrgId)
+      .limit(1)
+
+    if (linksError && isMissingLinksJsonError(linksError.message)) {
+      setSupportsLinksJson(false)
+      return false
+    }
+
+    setSupportsLinksJson(true)
+    return true
+  }
+
+  const insertContentsRows = async (payload: Record<string, unknown> | Record<string, unknown>[]) => {
+    let result = await supabase.from("contents").insert(prepareContentWritePayload(payload, supportsLinksJson))
+    if (result.error && isMissingLinksJsonError(result.error.message)) {
+      setSupportsLinksJson(false)
+      result = await supabase.from("contents").insert(prepareContentWritePayload(payload, false))
+    }
+    return result
+  }
+
+  const updateContentRow = async (rowId: string, payload: Record<string, unknown>) => {
+    if (!orgId) {
+      return { error: { message: "所属情報が取得できませんでした" } }
+    }
+
+    let result = await supabase
+      .from("contents")
+      .update(prepareContentWritePayload(payload, supportsLinksJson))
+      .eq("id", rowId)
+      .eq("org_id", orgId)
+
+    if (result.error && isMissingLinksJsonError(result.error.message)) {
+      setSupportsLinksJson(false)
+      result = await supabase
+        .from("contents")
+        .update(prepareContentWritePayload(payload, false))
+        .eq("id", rowId)
+        .eq("org_id", orgId)
+    }
+
+    return result
+  }
+
   const filteredRows = useMemo(() => {
     let list = rows
     if (filterDue === "today") list = list.filter((r) => r.dueClientAt === todayYmd)
@@ -274,13 +525,146 @@ export default function ContentsPage() {
       }
     }
 
+    if (filterProjectId) {
+      list = list.filter((r) => r.projectId === filterProjectId)
+    }
+
     // デフォルトは提出日昇順
     return [...list].sort((a, b) => (a.dueClientAt < b.dueClientAt ? -1 : a.dueClientAt > b.dueClientAt ? 1 : 0))
-  }, [rows, filterDue, filterClientId, todayYmd, tomorrowYmd, weekStartYmd, weekEndYmd, clients])
+  }, [rows, filterDue, filterClientId, filterProjectId, todayYmd, tomorrowYmd, weekStartYmd, weekEndYmd, clients])
 
   useEffect(() => {
     setDebug({ userId: user?.id ?? null, orgId: orgId ?? null, role, error: needsOnboarding ? "onboarding needed" : null })
   }, [user?.id, orgId, role, needsOnboarding])
+
+  useEffect(() => {
+    if (projectIdQuery) {
+      setFilterProjectId(projectIdQuery)
+    }
+  }, [projectIdQuery])
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    window.localStorage.setItem(SAVED_VIEW_STORAGE_KEY, JSON.stringify(savedViews))
+  }, [savedViews])
+
+  useEffect(() => {
+    setDetailTitleDraft(detailRow?.title ?? "")
+    setDetailShareDraft(detailRow ? buildContentShareDraft(detailRow, todayYmd) : "")
+    setDetailDraft(buildDetailDraft(detailRow))
+  }, [detailRow, todayYmd])
+
+  useEffect(() => {
+    if (!detailRow) return
+    const latest = rows.find((row) => row.id === detailRow.id)
+    if (latest && latest !== detailRow) {
+      setDetailRow(latest)
+    }
+  }, [detailRow, rows])
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<ApplyAiResultDetail>).detail
+      if (detail?.source !== "contents" || !detail.result?.text) return
+      if (detail.applyTarget === "contents_create_title") {
+        setForm((prev) => ({ ...prev, title: detail.result.text }))
+        setUiSuccess("AI結果を新規タイトルに反映しました")
+        window.setTimeout(() => setUiSuccess(null), 2500)
+        return
+      }
+      if (detail.applyTarget === "contents_bulk_textarea") {
+        setBulkTextarea(detail.result.text)
+        setUiSuccess("AI結果を一括入力に反映しました")
+        window.setTimeout(() => setUiSuccess(null), 2500)
+        return
+      }
+      if (detail.applyTarget === "contents_detail_title") {
+        setDetailTitleDraft(detail.result.text)
+        return
+      }
+      if (detail.applyTarget === "contents_detail_share_draft") {
+        setDetailShareDraft(detail.result.text)
+        setUiSuccess("AI結果を共有文ドラフトに反映しました")
+        window.setTimeout(() => setUiSuccess(null), 2500)
+      }
+    }
+
+    window.addEventListener("apply-ai-result", handler as EventListener)
+    return () => window.removeEventListener("apply-ai-result", handler as EventListener)
+  }, [])
+
+  const openContentTitleIdeas = (row: Row) => {
+    setDetailRow(row)
+    window.setTimeout(() => {
+      window.dispatchEvent(
+        new CustomEvent("open-ai-palette", {
+          detail: {
+            source: "contents" as const,
+            mode: "title_ideas" as const,
+            text: row.title,
+            compareText: row.title,
+            context: buildContentAiContext(row, todayYmd),
+            title: "Contents AI",
+            applyLabel: "タイトル候補に反映",
+            applyTarget: "contents_detail_title",
+            applyTransform: "first_line" as const,
+            meta: buildContentAiMeta(row),
+          },
+        })
+      )
+    }, 0)
+  }
+
+  const createContentAiContext = useMemo(
+    () =>
+      [
+        `クライアント: ${selectedCreateClient?.name ?? "-"}`,
+        `案件: ${form.projectName || "-"}`,
+        `タイトル: ${form.title || "-"}`,
+        `先方提出日: ${form.dueClientAt || "-"}`,
+        `単価: ${form.unitPrice || "-"}`,
+      ].join("\n"),
+    [form.dueClientAt, form.projectName, form.title, form.unitPrice, selectedCreateClient?.name]
+  )
+
+  const bulkContentAiContext = useMemo(
+    () =>
+      [
+        `クライアント: ${selectedTemplateClient?.name ?? "-"}`,
+        `テンプレート: ${selectedBulkTemplate?.name ?? "-"}`,
+        `案件: ${selectedBulkTemplate?.default_project_name ?? selectedBulkTemplate?.name ?? "-"}`,
+        "一括追加の入力形式: YYYY-MM-DD[TAB]タイトル",
+        "日付が含まれる行は保ちつつ、タイトル候補または整形結果を返してください。",
+      ].join("\n"),
+    [selectedBulkTemplate, selectedTemplateClient?.name]
+  )
+
+  const handleCopyDetailShareDraft = async () => {
+    if (!detailShareDraft.trim()) return
+    try {
+      await navigator.clipboard.writeText(detailShareDraft)
+      setUiSuccess("共有文ドラフトをコピーしました")
+      window.setTimeout(() => setUiSuccess(null), 2500)
+    } catch (copyError) {
+      setUiError(copyError instanceof Error ? copyError.message : "共有文ドラフトのコピーに失敗しました")
+      window.setTimeout(() => setUiError(null), 2500)
+    }
+  }
+
+  const handleSaveView = () => {
+    const name = window.prompt("保存ビュー名", filterProjectId ? "project-view" : "contents-view")
+    if (!name?.trim()) return
+    setSavedViews((prev) => [
+      {
+        id: crypto.randomUUID(),
+        name: name.trim(),
+        filterDue,
+        filterClientId,
+        filterProjectId,
+      },
+      ...prev,
+    ].slice(0, 8))
+  }
 
   const fetchClients = async (currentOrgId: string) => {
     const { data, error: fetchError } = await supabase
@@ -297,12 +681,50 @@ export default function ContentsPage() {
     setClients(data ?? [])
   }
 
+  const fetchProjects = async (currentOrgId: string) => {
+    const { data, error: fetchError } = await supabase
+      .from("projects")
+      .select("id, client_id, name")
+      .eq("org_id", currentOrgId)
+      .order("name")
+
+    if (fetchError) {
+      setProjects([])
+      return
+    }
+
+    setProjects(
+      (data ?? []).map((row) => ({
+        id: row.id,
+        clientId: row.client_id,
+        name: row.name,
+      }))
+    )
+  }
+
+  const fetchMembers = async (currentOrgId: string) => {
+    const { data } = await supabase.auth.getSession()
+    const token = data.session?.access_token
+    if (!token) {
+      setMembers([])
+      return
+    }
+
+    const res = await fetch(`/api/org/members?orgId=${encodeURIComponent(currentOrgId)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    const json = (await res.json().catch(() => null)) as { ok?: boolean; members?: MemberOption[] } | null
+    if (!res.ok || !json?.ok || !Array.isArray(json.members)) {
+      setMembers([])
+      return
+    }
+    setMembers(json.members)
+  }
+
   const fetchContents = async (currentOrgId: string) => {
     const { data, error: fetchError } = await supabase
       .from("contents")
-      .select(
-        "id, project_name, title, unit_price, due_client_at, due_editor_at, status, thumbnail_done, billable_flag, delivery_month, client_id, editor_submitted_at, client_submitted_at, client:clients(name)"
-      )
+      .select("*, client:clients(name)")
       .eq("org_id", currentOrgId)
       .order("due_client_at", { ascending: true })
 
@@ -311,16 +733,23 @@ export default function ContentsPage() {
       return
     }
 
+    const firstRow = data?.[0] as Record<string, unknown> | undefined
+    if (firstRow) {
+      setSupportsLinksJson(Object.prototype.hasOwnProperty.call(firstRow, "links_json"))
+    }
+
     const mapped = (data ?? []).map((row) => {
       const client = Array.isArray(row.client) ? row.client[0] : row.client
       return {
       id: row.id,
     clientId: row.client_id,
       clientName: (client as { name?: string } | null)?.name ?? "",
+      projectId: row.project_id ?? null,
       projectName: row.project_name,
       title: row.title,
       dueClientAt: row.due_client_at,
       dueEditorAt: row.due_editor_at,
+      publishAt: row.publish_at ?? null,
       unitPrice: Number(row.unit_price),
       thumbnailDone: row.thumbnail_done,
       billable: row.billable_flag,
@@ -328,6 +757,19 @@ export default function ContentsPage() {
       status: row.status,
       editorSubmittedAt: row.editor_submitted_at ?? null,
       clientSubmittedAt: row.client_submitted_at ?? null,
+      sequenceNo: row.sequence_no ?? null,
+      assigneeEditorUserId: row.assignee_editor_user_id ?? null,
+      assigneeCheckerUserId: row.assignee_checker_user_id ?? null,
+      revisionCount: Number(row.revision_count ?? 0),
+      workloadPoints: Number(row.workload_points ?? 1),
+      estimatedCost: Number(row.estimated_cost ?? 0),
+      nextAction: row.next_action ?? "",
+      blockedReason: row.blocked_reason ?? "",
+      materialStatus: row.material_status ?? "not_ready",
+      draftStatus: row.draft_status ?? "not_started",
+      finalStatus: row.final_status ?? "not_started",
+      healthScore: Number(row.health_score ?? 100),
+      links: normalizeContentLinks(row.links_json),
     }
     })
 
@@ -340,7 +782,7 @@ export default function ContentsPage() {
 
     const load = async () => {
       setLoading(true)
-      await Promise.all([fetchClients(orgId), fetchContents(orgId)])
+      await Promise.all([fetchClients(orgId), fetchProjects(orgId), fetchMembers(orgId), detectLinksJsonSupport(orgId), fetchContents(orgId)])
       if (active) setLoading(false)
     }
 
@@ -363,11 +805,26 @@ export default function ContentsPage() {
     }
   }, [clients, templateClientId])
 
+  const hasClients = clients.length > 0
+
+  useEffect(() => {
+    if (!hasClients) {
+      setIsAdding(false)
+    }
+  }, [hasClients])
+
+  const openClientRegistration = useCallback(() => {
+    setIsAdding(false)
+    setUiError(null)
+    setUiSuccess(null)
+    setIsCreatingClient(true)
+  }, [])
+
   useEffect(() => {
     if (openClientCreate === "1") {
-      setIsCreatingClient(true)
+      openClientRegistration()
     }
-  }, [openClientCreate])
+  }, [openClientCreate, openClientRegistration])
 
   const fetchTemplates = async (currentOrgId: string, clientId: string) => {
     const { data, error: fetchError } = await supabase
@@ -407,14 +864,95 @@ export default function ContentsPage() {
     void fetchTemplates(orgId, templateClientId)
   }, [orgId, templateClientId])
 
-  const hasClients = clients.length > 0
-
   const canSubmit =
     form.clientId &&
     form.projectName &&
     form.title &&
     form.dueClientAt &&
     form.unitPrice
+
+  const prepareContentPayload = (row: Row, patch: Record<string, unknown>) => {
+    const payload = { ...patch }
+    const dueClientAt = typeof payload.due_client_at === "string" ? payload.due_client_at : row.dueClientAt
+    let dueEditorAt = typeof payload.due_editor_at === "string" ? payload.due_editor_at : row.dueEditorAt
+    if (typeof payload.due_client_at === "string" && !("due_editor_at" in payload)) {
+      dueEditorAt = addDays(payload.due_client_at, -3)
+      payload.due_editor_at = dueEditorAt
+    }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dueClientAt)) {
+      payload.delivery_month = dueClientAt.slice(0, 7)
+    }
+
+    const links = "links_json" in payload ? normalizeContentLinks(payload.links_json) : row.links
+    const validation = {
+      dueClientAt,
+      dueEditorAt,
+      status: String(payload.status ?? row.status),
+      unitPrice: Number(payload.unit_price ?? row.unitPrice),
+      billable: Boolean(payload.billable_flag ?? row.billable),
+      materialStatus: String(payload.material_status ?? row.materialStatus),
+      draftStatus: String(payload.draft_status ?? row.draftStatus),
+      finalStatus: String(payload.final_status ?? row.finalStatus),
+      assigneeEditorUserId: String(payload.assignee_editor_user_id ?? row.assigneeEditorUserId ?? "") || null,
+      assigneeCheckerUserId: String(payload.assignee_checker_user_id ?? row.assigneeCheckerUserId ?? "") || null,
+      nextAction: String(payload.next_action ?? row.nextAction ?? ""),
+      revisionCount: Number(payload.revision_count ?? row.revisionCount ?? 0),
+      estimatedCost: Number(payload.estimated_cost ?? row.estimatedCost ?? 0),
+      links,
+    }
+
+    const errors = validateContentRules(validation)
+    payload.health_score = buildContentHealthScore({
+      ...validation,
+      todayYmd,
+    })
+
+    return { payload, errors, links }
+  }
+
+  const createRowDraft = (params: {
+    clientId: string
+    projectId?: string | null
+    projectName: string
+    title: string
+    dueClientAt: string
+    unitPrice: number
+    status?: string
+    billable?: boolean
+  }): Row => {
+    const dueEditorAt = addDays(params.dueClientAt, -3)
+    return {
+      id: "draft",
+      clientId: params.clientId,
+      clientName: selectedCreateClient?.name ?? selectedTemplateClient?.name ?? "",
+      projectId: params.projectId ?? null,
+      projectName: params.projectName,
+      title: params.title,
+      dueClientAt: params.dueClientAt,
+      dueEditorAt,
+      publishAt: null,
+      unitPrice: params.unitPrice,
+      thumbnailDone: false,
+      billable: params.billable ?? true,
+      deliveryMonth: params.dueClientAt.slice(0, 7),
+      status: params.status ?? "not_started",
+      editorSubmittedAt: null,
+      clientSubmittedAt: null,
+      sequenceNo: null,
+      assigneeEditorUserId: null,
+      assigneeCheckerUserId: null,
+      revisionCount: 0,
+      workloadPoints: 1,
+      estimatedCost: 0,
+      nextAction: "",
+      blockedReason: "",
+      materialStatus: "not_ready",
+      draftStatus: "not_started",
+      finalStatus: "not_started",
+      healthScore: 100,
+      links: {},
+    }
+  }
 
   /** 行更新: due_client_at 更新時に due_editor_at / delivery_month も再計算 */
   const updateContent = async (
@@ -434,17 +972,18 @@ export default function ContentsPage() {
       return next
     })
     setSavingRowIds((prev) => new Set(prev).add(rowId))
-    const payload = { ...patch }
-    if (typeof payload.due_client_at === "string" && /^\d{4}-\d{2}-\d{2}$/.test(payload.due_client_at)) {
-      (payload as Record<string, unknown>).due_editor_at = addDays(payload.due_client_at as string, -3)
-      ;(payload as Record<string, unknown>).delivery_month = (payload.due_client_at as string).slice(0, 7)
+    const { payload, errors } = prepareContentPayload(prevRowSnapshot, patch)
+    if (errors.length > 0) {
+      setSavingRowIds((prev) => {
+        const next = new Set(prev)
+        next.delete(rowId)
+        return next
+      })
+      setUiError(errors[0])
+      return
     }
     try {
-      const { error: updateError } = await supabase
-        .from("contents")
-        .update(payload)
-        .eq("id", rowId)
-        .eq("org_id", orgId)
+      const { error: updateError } = await updateContentRow(rowId, payload)
 
       if (updateError) {
         const shortMsg = updateError.message.length > 40 ? updateError.message.slice(0, 37) + "..." : updateError.message
@@ -511,6 +1050,11 @@ export default function ContentsPage() {
       return
     }
     const status = newStatus === "cancelled" ? "canceled" : newStatus
+    const { payload, errors } = prepareContentPayload(row, { status })
+    if (errors.length > 0) {
+      setUiError(errors[0])
+      return
+    }
     setRowErrors((prev) => {
       const next = { ...prev }
       delete next[row.id]
@@ -518,11 +1062,7 @@ export default function ContentsPage() {
     })
     setSavingRowIds((prev) => new Set(prev).add(row.id))
     try {
-      const { error: updateError } = await supabase
-        .from("contents")
-        .update({ status })
-        .eq("id", row.id)
-        .eq("org_id", orgId)
+      const { error: updateError } = await updateContentRow(row.id, payload)
       if (updateError) {
         setRowErrors((prev) => ({ ...prev, [row.id]: updateError.message.slice(0, 40) }))
         setUiError(`ステータス保存に失敗: ${updateError.message}`)
@@ -561,6 +1101,68 @@ export default function ContentsPage() {
     await updateContent(row.id, { status: "canceled" }, row, "?")
   }
 
+  const handleDuplicateRow = async (row: Row) => {
+    if (!canEdit || !orgId) return
+
+    const duplicateTitle = `${row.title} copy`
+    const draftRow = createRowDraft({
+      clientId: row.clientId,
+      projectId: row.projectId,
+      projectName: row.projectName,
+      title: duplicateTitle,
+      dueClientAt: row.dueClientAt,
+      unitPrice: row.unitPrice,
+      status: "not_started",
+      billable: row.billable,
+    })
+
+    const { payload, errors } = prepareContentPayload(draftRow, {
+      id: crypto.randomUUID(),
+      org_id: orgId,
+      client_id: row.clientId,
+      project_id: row.projectId,
+      project_name: row.projectName,
+      title: duplicateTitle,
+      due_client_at: row.dueClientAt,
+      due_editor_at: row.dueEditorAt,
+      publish_at: null,
+      unit_price: row.unitPrice,
+      thumbnail_done: false,
+      billable_flag: row.billable,
+      delivery_month: row.deliveryMonth,
+      status: "not_started",
+      editor_submitted_at: null,
+      client_submitted_at: null,
+      sequence_no: null,
+      assignee_editor_user_id: row.assigneeEditorUserId,
+      assignee_checker_user_id: row.assigneeCheckerUserId,
+      revision_count: 0,
+      workload_points: row.workloadPoints,
+      estimated_cost: row.estimatedCost,
+      next_action: row.nextAction || null,
+      blocked_reason: row.blockedReason || null,
+      material_status: row.materialStatus,
+      draft_status: row.draftStatus,
+      final_status: row.finalStatus,
+      links_json: row.links,
+    })
+
+    if (errors.length > 0) {
+      setUiError(errors[0])
+      return
+    }
+
+    const { error: insertError } = await insertContentsRows(payload)
+    if (insertError) {
+      setUiError(`行複製に失敗しました: ${insertError.message}`)
+      return
+    }
+
+    setUiSuccess("行を複製しました")
+    window.setTimeout(() => setUiSuccess(null), 2500)
+    await fetchContents(orgId)
+  }
+
   const handleThumbnailChange = async (row: Row, checked: boolean) => {
     if (!canEdit) return
     await updateContent(row.id, { thumbnail_done: checked }, row, "サムネ")
@@ -588,6 +1190,46 @@ export default function ContentsPage() {
     await updateContent(row.id, { due_client_at: valueStr }, row, "先方提出日")
   }
 
+  const handleSaveDetailTitle = async () => {
+    if (!detailRow || !canEdit) return
+    const nextTitle = detailTitleDraft.trim()
+    if (!nextTitle || nextTitle === detailRow.title) return
+    await updateContent(detailRow.id, { title: nextTitle }, detailRow, "タイトル")
+    setDetailRow((prev) => (prev ? { ...prev, title: nextTitle } : prev))
+  }
+
+  const handleSaveDetailMeta = async () => {
+    if (!detailRow || !canEdit) return
+    const normalizedLinks = normalizeContentLinks(detailDraft.links)
+    const projectName =
+      detailDraft.projectName.trim() ||
+      projects.find((project) => project.id === detailDraft.projectId)?.name ||
+      detailRow.projectName
+
+    await updateContent(
+      detailRow.id,
+      {
+        project_id: detailDraft.projectId || null,
+        project_name: projectName,
+        publish_at: detailDraft.publishAt || null,
+        assignee_editor_user_id: detailDraft.assigneeEditorUserId || null,
+        assignee_checker_user_id: detailDraft.assigneeCheckerUserId || null,
+        revision_count: Number(detailDraft.revisionCount || 0),
+        workload_points: Number(detailDraft.workloadPoints || 1),
+        estimated_cost: Number(detailDraft.estimatedCost || 0),
+        next_action: detailDraft.nextAction.trim() || null,
+        blocked_reason: detailDraft.blockedReason.trim() || null,
+        material_status: detailDraft.materialStatus,
+        draft_status: detailDraft.draftStatus,
+        final_status: detailDraft.finalStatus,
+        sequence_no: detailDraft.sequenceNo ? Number(detailDraft.sequenceNo) : null,
+        links_json: normalizedLinks,
+      },
+      detailRow,
+      "詳細"
+    )
+  }
+
   const handleAdd = async () => {
     if (!canSubmit || !canEdit) return
     if (!orgId) {
@@ -595,23 +1237,48 @@ export default function ContentsPage() {
       return
     }
 
-    const dueEditorAt = addDays(form.dueClientAt, -3)
-    const deliveryMonth = form.dueClientAt.slice(0, 7)
-
-    const { error: insertError } = await supabase.from("contents").insert({
+    const projectName = form.projectName.trim() || selectedProject?.name || ""
+    const draft = createRowDraft({
+      clientId: form.clientId,
+      projectId: form.projectId || null,
+      projectName,
+      title: form.title.trim(),
+      dueClientAt: form.dueClientAt,
+      unitPrice: Number(form.unitPrice),
+    })
+    const { payload, errors } = prepareContentPayload(draft, {
       id: crypto.randomUUID(),
       org_id: orgId,
       client_id: form.clientId,
-      project_name: form.projectName,
-      title: form.title,
+      project_id: form.projectId || null,
+      project_name: projectName,
+      title: form.title.trim(),
       unit_price: Number(form.unitPrice),
       due_client_at: form.dueClientAt,
-      due_editor_at: dueEditorAt,
       status: "not_started",
       thumbnail_done: false,
       billable_flag: true,
-      delivery_month: deliveryMonth,
+      publish_at: null,
+      sequence_no: null,
+      assignee_editor_user_id: null,
+      assignee_checker_user_id: null,
+      revision_count: 0,
+      workload_points: 1,
+      estimated_cost: 0,
+      next_action: null,
+      blocked_reason: null,
+      material_status: "not_ready",
+      draft_status: "not_started",
+      final_status: "not_started",
+      links_json: {},
     })
+
+    if (errors.length > 0) {
+      setError(errors[0])
+      return
+    }
+
+    const { error: insertError } = await insertContentsRows(payload)
 
     if (insertError) {
       setError(`追加に失敗しました: ${insertError.message}`)
@@ -621,6 +1288,7 @@ export default function ContentsPage() {
     await fetchContents(orgId)
     setForm({
       clientId: clients[0]?.id ?? "",
+      projectId: "",
       projectName: "",
       title: "",
       dueClientAt: "",
@@ -636,25 +1304,49 @@ export default function ContentsPage() {
     const offsetDays = tpl.default_due_offset_days ?? 0
     base.setDate(base.getDate() + offsetDays)
     const dueClientAt = toDateInputValue(base)
-    const dueEditorAt = addDays(dueClientAt, -3)
-    const deliveryMonth = dueClientAt.slice(0, 7)
+    const projectName = tpl.default_project_name ?? tpl.name
+    const draft = createRowDraft({
+      clientId: templateClientId,
+      projectName,
+      title: tpl.default_title ?? tpl.name,
+      dueClientAt,
+      unitPrice: Number(tpl.default_unit_price ?? 0),
+      status: tpl.default_status ?? "not_started",
+      billable: tpl.default_billable_flag ?? true,
+    })
     setAddingFromTemplateId(tpl.id)
     setUiError(null)
     try {
-      const { error: insertError } = await supabase.from("contents").insert({
+      const { payload, errors } = prepareContentPayload(draft, {
         id: crypto.randomUUID(),
         org_id: orgId,
         client_id: templateClientId,
-        project_name: tpl.default_project_name ?? tpl.name,
+        project_name: projectName,
         title: tpl.default_title ?? tpl.name,
         unit_price: Number(tpl.default_unit_price ?? 0),
         due_client_at: dueClientAt,
-        due_editor_at: dueEditorAt,
         status: tpl.default_status ?? "not_started",
         thumbnail_done: false,
         billable_flag: tpl.default_billable_flag ?? true,
-        delivery_month: deliveryMonth,
+        publish_at: null,
+        sequence_no: null,
+        assignee_editor_user_id: null,
+        assignee_checker_user_id: null,
+        revision_count: 0,
+        workload_points: 1,
+        estimated_cost: 0,
+        next_action: null,
+        blocked_reason: null,
+        material_status: "not_ready",
+        draft_status: "not_started",
+        final_status: "not_started",
+        links_json: {},
       })
+      if (errors.length > 0) {
+        setUiError(errors[0])
+        return
+      }
+      const { error: insertError } = await insertContentsRows(payload)
       if (insertError) {
         setUiError(`追加に失敗しました。しばらくして再試行してください。`)
         return
@@ -870,6 +1562,9 @@ export default function ContentsPage() {
           <div>role: {debug.role ?? "-"}</div>
           <div>error: {debug.error ?? "-"}</div>
         </div>
+        <div style={{ marginBottom: 16 }}>
+          <ChecklistReturnButton />
+        </div>
         <header style={{ marginBottom: 24 }}>
           <p style={{ fontSize: 12, letterSpacing: "0.08em", color: "var(--muted)" }}>
             制作シート          </p>
@@ -877,37 +1572,23 @@ export default function ContentsPage() {
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
             {canEdit && (
               <>
-                <button
-                  type="button"
-                  style={{
-                    padding: "10px 14px",
-                    borderRadius: 10,
-                    border: "1px solid var(--button-primary-bg)",
-                    background: "var(--button-primary-bg)",
-                    color: "var(--primary-contrast)",
-                    fontSize: 14,
-                    cursor: "pointer",
-                  }}
-                  onClick={() => setIsAdding((prev) => !prev)}
-                >
-                  +追加
-                </button>
-                <button
-                  type="button"
-                  style={{
-                    padding: "10px 14px",
-                    borderRadius: 10,
-                    border: "1px solid var(--button-secondary-border)",
-                    background: "var(--button-secondary-bg)",
-                    color: "var(--button-secondary-text)",
-                    fontSize: 14,
-                    fontWeight: 500,
-                    cursor: "pointer",
-                  }}
-                  onClick={() => setIsCreatingClient((prev) => !prev)}
-                >
-                  クライアント作成
-                </button>
+                {hasClients ? (
+                  <button
+                    type="button"
+                    style={{
+                      padding: "10px 14px",
+                      borderRadius: 10,
+                      border: "1px solid var(--button-primary-bg)",
+                      background: "var(--button-primary-bg)",
+                      color: "var(--primary-contrast)",
+                      fontSize: 14,
+                      cursor: "pointer",
+                    }}
+                    onClick={() => setIsAdding((prev) => !prev)}
+                  >
+                    +追加
+                  </button>
+                ) : null}
               </>
             )}
             <Link
@@ -955,7 +1636,8 @@ export default function ContentsPage() {
                 </select>
               </label>
               <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text)" }}>
-                クライアント                <select
+                クライアント
+                <select
                   value={filterClientId}
                   onChange={(e) => setFilterClientId(e.target.value)}
                   style={{
@@ -975,6 +1657,46 @@ export default function ContentsPage() {
                   ))}
                 </select>
               </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text)" }}>
+                案件
+                <select
+                  value={filterProjectId}
+                  onChange={(e) => setFilterProjectId(e.target.value)}
+                  style={{
+                    padding: "6px 8px",
+                    borderRadius: 8,
+                    border: "1px solid var(--input-border)",
+                    background: "var(--input-bg)",
+                    color: "var(--input-text)",
+                    fontSize: 12,
+                  }}
+                >
+                  <option value="">すべて</option>
+                  {projects
+                    .filter((project) => !filterClientId || project.clientId === filterClientId)
+                    .map((project) => (
+                      <option key={project.id} value={project.id}>
+                        {project.name}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                onClick={handleSaveView}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 999,
+                  border: "1px solid var(--button-secondary-border)",
+                  background: "var(--button-secondary-bg)",
+                  color: "var(--button-secondary-text)",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                保存ビュー
+              </button>
             </div>
             <button
               type="button"
@@ -993,6 +1715,33 @@ export default function ContentsPage() {
             <span style={{ fontSize: 12, color: "var(--muted)", paddingTop: 10 }}>
               1行 = 1本（動画/投稿）            </span>
           </div>
+
+          {savedViews.length > 0 && (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+              {savedViews.map((view) => (
+                <div key={view.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 999, background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFilterDue(view.filterDue)
+                      setFilterClientId(view.filterClientId)
+                      setFilterProjectId(view.filterProjectId)
+                    }}
+                    style={{ border: "none", background: "transparent", color: "var(--text)", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                  >
+                    {view.name}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSavedViews((prev) => prev.filter((row) => row.id !== view.id))}
+                    style={{ border: "none", background: "transparent", color: "#b91c1c", fontSize: 12, cursor: "pointer" }}
+                  >
+                    削除
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
 
           {hasClients && (
             <section
@@ -1113,6 +1862,45 @@ export default function ContentsPage() {
                     <span style={{ fontSize: 12, color: "var(--muted)" }}>
                       貼り付け形式 YYYY-MM-DD[TAB]タイトル
                     </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        window.dispatchEvent(
+                          new CustomEvent("open-ai-palette", {
+                            detail: {
+                              source: "contents" as const,
+                              mode: "title_ideas" as const,
+                              modes: ["title_ideas", "rewrite", "format"] as const,
+                              text:
+                                bulkTextarea ||
+                                `${todayYmd}\t${selectedBulkTemplate?.default_title ?? selectedBulkTemplate?.name ?? ""}`.trim(),
+                              compareText: bulkTextarea,
+                              context: bulkContentAiContext,
+                              title: "Contents AI",
+                              applyLabel: "一括入力に反映",
+                              applyTarget: "contents_bulk_textarea",
+                              meta: {
+                                sourceObject: "content_bulk_draft",
+                                recordId: `${templateClientId || "no-client"}:${selectedBulkTemplate?.id ?? "no-template"}`,
+                                recordLabel: `${selectedTemplateClient?.name ?? "未選択"} / ${selectedBulkTemplate?.name ?? "一括追加"}`,
+                              },
+                            },
+                          })
+                        )
+                      }
+                      style={{
+                        padding: "4px 10px",
+                        borderRadius: 999,
+                        border: "1px solid var(--button-secondary-border)",
+                        background: "var(--button-secondary-bg)",
+                        color: "var(--button-secondary-text)",
+                        fontSize: 12,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                      }}
+                    >
+                      AIタイトル案
+                    </button>
                   </div>
                   <textarea
                     rows={4}
@@ -1177,9 +1965,16 @@ export default function ContentsPage() {
 
                         const payloads = inserts.map((item) => {
                           const dueClientAt = item.dueClientAt
-                          const dueEditorAt = addDays(dueClientAt, -3)
-                          const deliveryMonth = dueClientAt.slice(0, 7)
-                          return {
+                          const draft = createRowDraft({
+                            clientId: templateClientId,
+                            projectName: tpl.default_project_name ?? tpl.name,
+                            title: item.title,
+                            dueClientAt,
+                            unitPrice: Number(tpl.default_unit_price ?? 0),
+                            status: tpl.default_status ?? "not_started",
+                            billable: tpl.default_billable_flag ?? true,
+                          })
+                          const { payload, errors: payloadErrors } = prepareContentPayload(draft, {
                             id: crypto.randomUUID(),
                             org_id: orgId,
                             client_id: templateClientId,
@@ -1187,17 +1982,38 @@ export default function ContentsPage() {
                             title: item.title,
                             unit_price: Number(tpl.default_unit_price ?? 0),
                             due_client_at: dueClientAt,
-                            due_editor_at: dueEditorAt,
                             status: tpl.default_status ?? "not_started",
                             thumbnail_done: false,
                             billable_flag: tpl.default_billable_flag ?? true,
-                            delivery_month: deliveryMonth,
+                            publish_at: null,
+                            sequence_no: null,
+                            assignee_editor_user_id: null,
+                            assignee_checker_user_id: null,
+                            revision_count: 0,
+                            workload_points: 1,
+                            estimated_cost: 0,
+                            next_action: null,
+                            blocked_reason: null,
+                            material_status: "not_ready",
+                            draft_status: "not_started",
+                            final_status: "not_started",
+                            links_json: {},
+                          })
+                          if (payloadErrors.length > 0) {
+                            errors.push(`${item.dueClientAt} ${item.title}: ${payloadErrors[0]}`)
+                            return null
                           }
+                          return payload
                         })
 
-                        const { error: insertError } = await supabase
-                          .from("contents")
-                          .insert(payloads)
+                        const validPayloads = payloads.filter((payload): payload is Record<string, unknown> => payload != null)
+
+                        if (validPayloads.length === 0) {
+                          setBulkResultMessage(errors.join(" / "))
+                          return
+                        }
+
+                        const { error: insertError } = await insertContentsRows(validPayloads)
 
                         if (insertError) {
                           setBulkResultMessage(
@@ -1208,8 +2024,8 @@ export default function ContentsPage() {
 
                         await fetchContents(orgId)
                         setBulkResultMessage(
-                          `追加成功: ${inserts.length}件 / 失敗: ${errors.length}件${
-                            errors.length ? `?${errors.join(" / ")}?` : ""
+                          `追加成功: ${validPayloads.length}件 / 失敗: ${errors.length}件${
+                            errors.length ? `（${errors.join(" / ")}）` : ""
                           }`
                         )
                         setUiSuccess("一括追加しました")
@@ -1349,6 +2165,37 @@ export default function ContentsPage() {
                 </select>
               </label>
               <label style={{ display: "grid", gap: 4, fontSize: 12, color: "var(--text)" }}>
+                案件
+                <select
+                  value={form.projectId}
+                  onChange={(event) => {
+                    const project = projects.find((row) => row.id === event.target.value)
+                    setForm((prev) => ({
+                      ...prev,
+                      projectId: event.target.value,
+                      projectName: project?.name ?? prev.projectName,
+                    }))
+                  }}
+                  style={{
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: "1px solid var(--input-border)",
+                    background: "var(--input-bg)",
+                    color: "var(--input-text)",
+                    fontSize: 12,
+                  }}
+                >
+                  <option value="">未設定</option>
+                  {projects
+                    .filter((project) => !form.clientId || project.clientId === form.clientId)
+                    .map((project) => (
+                      <option key={project.id} value={project.id}>
+                        {project.name}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <label style={{ display: "grid", gap: 4, fontSize: 12, color: "var(--text)" }}>
                 プロジェクト                <input
                   value={form.projectName}
                   onChange={(event) =>
@@ -1369,7 +2216,47 @@ export default function ContentsPage() {
                 />
               </label>
               <label style={{ display: "grid", gap: 4, fontSize: 12, color: "var(--text)" }}>
-                タイトル
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <span>タイトル</span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      window.dispatchEvent(
+                        new CustomEvent("open-ai-palette", {
+                          detail: {
+                            source: "contents" as const,
+                            mode: "title_ideas" as const,
+                            modes: ["title_ideas", "rewrite"] as const,
+                            text: form.title || form.projectName,
+                            compareText: form.title,
+                            context: createContentAiContext,
+                            title: "Contents AI",
+                            applyLabel: "タイトルに反映",
+                            applyTarget: "contents_create_title",
+                            applyTransform: "first_line" as const,
+                            meta: {
+                              sourceObject: "content_draft",
+                              recordId: `${form.clientId || "no-client"}:${form.dueClientAt || "draft"}`,
+                              recordLabel: `${selectedCreateClient?.name ?? "未選択"} / ${form.projectName || "新規案件"}`,
+                            },
+                          },
+                        })
+                      )
+                    }
+                    style={{
+                      padding: "4px 10px",
+                      borderRadius: 999,
+                      border: "1px solid var(--button-secondary-border)",
+                      background: "var(--button-secondary-bg)",
+                      color: "var(--button-secondary-text)",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    AIタイトル案
+                  </button>
+                </div>
                 <input
                   value={form.title}
                   onChange={(event) =>
@@ -1699,6 +2586,21 @@ export default function ContentsPage() {
                             <>
                               <button
                                 type="button"
+                                onClick={() => openContentTitleIdeas(row)}
+                                style={{
+                                  padding: "6px 10px",
+                                  borderRadius: 8,
+                                  border: "1px solid var(--button-secondary-border)",
+                                  background: "var(--button-secondary-bg)",
+                                  fontSize: 12,
+                                  color: "var(--button-secondary-text)",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                AIタイトル案
+                              </button>
+                              <button
+                                type="button"
                                 disabled={savingRowIds.has(row.id)}
                                 onClick={() => handleSetCanceled(row)}
                                 style={{
@@ -1727,6 +2629,21 @@ export default function ContentsPage() {
                                 }}
                               >
                                 テンプレとして保存                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void handleDuplicateRow(row)}
+                                style={{
+                                  padding: "6px 10px",
+                                  borderRadius: 8,
+                                  border: "1px solid var(--button-secondary-border)",
+                                  background: "var(--button-secondary-bg)",
+                                  fontSize: 12,
+                                  color: "var(--button-secondary-text)",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                行複製
+                              </button>
                             </>
                           )}
                           <button
@@ -1755,9 +2672,15 @@ export default function ContentsPage() {
                     <td style={tdStyle} colSpan={11}>
                       <GuideEmptyState
                         title="コンテンツはまだ登録されていません"
-                        description="最初のクライアントと1本目の案件を入れると、Home と Billing の導線が一気に使いやすくなります。"
-                        primaryHref="/contents?newClient=1"
+                        description={
+                          hasClients
+                            ? "クライアント登録は済んでいます。上の +追加 から最初の1本を入れると、Home と Billing の導線が動き始めます。"
+                            : "最初のクライアントを登録すると、1本目の制作と請求の導線をそのまま始められます。"
+                        }
+                        primaryHref="/contents"
                         primaryLabel="クライアントを登録する"
+                        hidePrimaryAction={hasClients}
+                        onPrimaryClick={hasClients ? () => setIsAdding(true) : openClientRegistration}
                         helpHref="/help/contents-daily"
                       />
                     </td>
@@ -1816,7 +2739,77 @@ export default function ContentsPage() {
                   <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>
                     {detailRow.clientName} / {detailRow.projectName}
                   </div>
-                  <h2 style={{ margin: 0, fontSize: 22, color: "var(--text)" }}>{detailRow.title}</h2>
+                  {canEdit ? (
+                    <div style={{ display: "grid", gap: 10 }}>
+                      <input
+                        value={detailTitleDraft}
+                        onChange={(event) => setDetailTitleDraft(event.target.value)}
+                        style={{
+                          width: "min(520px, 100%)",
+                          borderRadius: 12,
+                          border: "1px solid var(--input-border)",
+                          background: "var(--input-bg)",
+                          color: "var(--input-text)",
+                          fontSize: 22,
+                          fontWeight: 700,
+                          padding: "10px 12px",
+                        }}
+                      />
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            window.dispatchEvent(
+                              new CustomEvent("open-ai-palette", {
+                                detail: {
+                                  source: "contents" as const,
+                                  mode: "title_ideas" as const,
+                                  text: detailTitleDraft || detailRow.title,
+                                  compareText: detailTitleDraft || detailRow.title,
+                                  context: buildContentAiContext(detailRow, todayYmd),
+                                  title: "Contents AI",
+                                  applyLabel: "タイトル候補に反映",
+                                  applyTarget: "contents_detail_title",
+                                  applyTransform: "first_line" as const,
+                                  meta: buildContentAiMeta(detailRow),
+                                },
+                              })
+                            )
+                          }
+                          style={{
+                            padding: "8px 12px",
+                            borderRadius: 10,
+                            border: "1px solid var(--button-secondary-border)",
+                            background: "var(--button-secondary-bg)",
+                            color: "var(--button-secondary-text)",
+                            fontWeight: 700,
+                            cursor: "pointer",
+                          }}
+                        >
+                          AIタイトル案
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleSaveDetailTitle()}
+                          disabled={!detailTitleDraft.trim() || detailTitleDraft.trim() === detailRow.title}
+                          style={{
+                            padding: "8px 12px",
+                            borderRadius: 10,
+                            border: "1px solid var(--button-primary-bg)",
+                            background: "var(--button-primary-bg)",
+                            color: "var(--primary-contrast)",
+                            fontWeight: 700,
+                            cursor:
+                              !detailTitleDraft.trim() || detailTitleDraft.trim() === detailRow.title ? "not-allowed" : "pointer",
+                          }}
+                        >
+                          タイトルを保存
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <h2 style={{ margin: 0, fontSize: 22, color: "var(--text)" }}>{detailRow.title}</h2>
+                  )}
                 </div>
                 <button
                   type="button"
@@ -1835,28 +2828,387 @@ export default function ContentsPage() {
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+                <DetailStat label="案件" value={detailRow.projectName || "-"} />
                 <DetailStat label="先方提出日" value={detailRow.dueClientAt} />
                 <DetailStat label="編集者提出日" value={detailRow.dueEditorAt} />
+                <DetailStat label="公開日" value={detailRow.publishAt || "-"} />
                 <DetailStat label="対象月" value={detailRow.deliveryMonth || "-"} />
                 <DetailStat label="単価" value={`¥${detailRow.unitPrice.toLocaleString("ja-JP")}`} />
                 <DetailStat label="ステータス" value={statusLabels[detailRow.status] ?? detailRow.status} />
                 <DetailStat label="請求対象" value={detailRow.billable ? "対象" : "対象外"} />
+                <DetailStat label="ヘルス" value={`${detailRow.healthScore}`} />
               </div>
+
+              {canEdit ? (
+                <div style={{ border: "1px solid var(--border)", borderRadius: 14, padding: 14, background: "var(--surface-2)" }}>
+                  <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>競合吸収拡張フィールド</div>
+                  <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
+                    <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
+                      案件
+                      <select
+                        value={detailDraft.projectId}
+                        onChange={(event) => {
+                          const project = projects.find((row) => row.id === event.target.value)
+                          setDetailDraft((prev) => ({
+                            ...prev,
+                            projectId: event.target.value,
+                            projectName: project?.name ?? prev.projectName,
+                          }))
+                        }}
+                        style={{
+                          padding: "8px 10px",
+                          borderRadius: 8,
+                          border: "1px solid var(--input-border)",
+                          background: "var(--input-bg)",
+                          color: "var(--input-text)",
+                        }}
+                      >
+                        <option value="">未設定</option>
+                        {projects.map((project) => (
+                          <option key={project.id} value={project.id}>
+                            {project.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
+                      案件名
+                      <input
+                        value={detailDraft.projectName}
+                        onChange={(event) => setDetailDraft((prev) => ({ ...prev, projectName: event.target.value }))}
+                        style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--input-border)", background: "var(--input-bg)", color: "var(--input-text)" }}
+                      />
+                    </label>
+                    <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
+                      公開日
+                      <input
+                        type="date"
+                        value={detailDraft.publishAt}
+                        onChange={(event) => setDetailDraft((prev) => ({ ...prev, publishAt: event.target.value }))}
+                        style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--input-border)", background: "var(--input-bg)", color: "var(--input-text)" }}
+                      />
+                    </label>
+                    <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
+                      Editor
+                      <select
+                        value={detailDraft.assigneeEditorUserId}
+                        onChange={(event) => setDetailDraft((prev) => ({ ...prev, assigneeEditorUserId: event.target.value }))}
+                        style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--input-border)", background: "var(--input-bg)", color: "var(--input-text)" }}
+                      >
+                        <option value="">未設定</option>
+                        {members.map((member) => (
+                          <option key={member.userId} value={member.userId}>
+                            {member.displayName || member.email || member.userId}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
+                      Checker
+                      <select
+                        value={detailDraft.assigneeCheckerUserId}
+                        onChange={(event) => setDetailDraft((prev) => ({ ...prev, assigneeCheckerUserId: event.target.value }))}
+                        style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--input-border)", background: "var(--input-bg)", color: "var(--input-text)" }}
+                      >
+                        <option value="">未設定</option>
+                        {members.map((member) => (
+                          <option key={member.userId} value={member.userId}>
+                            {member.displayName || member.email || member.userId}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
+                      素材
+                      <select
+                        value={detailDraft.materialStatus}
+                        onChange={(event) => setDetailDraft((prev) => ({ ...prev, materialStatus: event.target.value }))}
+                        style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--input-border)", background: "var(--input-bg)", color: "var(--input-text)" }}
+                      >
+                        {MATERIAL_STATUS_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
+                      Draft
+                      <select
+                        value={detailDraft.draftStatus}
+                        onChange={(event) => setDetailDraft((prev) => ({ ...prev, draftStatus: event.target.value }))}
+                        style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--input-border)", background: "var(--input-bg)", color: "var(--input-text)" }}
+                      >
+                        {DRAFT_STATUS_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
+                      Final
+                      <select
+                        value={detailDraft.finalStatus}
+                        onChange={(event) => setDetailDraft((prev) => ({ ...prev, finalStatus: event.target.value }))}
+                        style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--input-border)", background: "var(--input-bg)", color: "var(--input-text)" }}
+                      >
+                        {FINAL_STATUS_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
+                      修正回数
+                      <input
+                        type="number"
+                        min="0"
+                        value={detailDraft.revisionCount}
+                        onChange={(event) => setDetailDraft((prev) => ({ ...prev, revisionCount: event.target.value }))}
+                        style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--input-border)", background: "var(--input-bg)", color: "var(--input-text)" }}
+                      />
+                    </label>
+                    <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
+                      工数ポイント
+                      <input
+                        type="number"
+                        min="1"
+                        value={detailDraft.workloadPoints}
+                        onChange={(event) => setDetailDraft((prev) => ({ ...prev, workloadPoints: event.target.value }))}
+                        style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--input-border)", background: "var(--input-bg)", color: "var(--input-text)" }}
+                      />
+                    </label>
+                    <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
+                      想定原価
+                      <input
+                        type="number"
+                        min="0"
+                        value={detailDraft.estimatedCost}
+                        onChange={(event) => setDetailDraft((prev) => ({ ...prev, estimatedCost: event.target.value }))}
+                        style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--input-border)", background: "var(--input-bg)", color: "var(--input-text)" }}
+                      />
+                    </label>
+                    <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
+                      連番
+                      <input
+                        type="number"
+                        min="0"
+                        value={detailDraft.sequenceNo}
+                        onChange={(event) => setDetailDraft((prev) => ({ ...prev, sequenceNo: event.target.value }))}
+                        style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--input-border)", background: "var(--input-bg)", color: "var(--input-text)" }}
+                      />
+                    </label>
+                    <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)", gridColumn: "1 / -1" }}>
+                      次アクション
+                      <textarea
+                        rows={3}
+                        value={detailDraft.nextAction}
+                        onChange={(event) => setDetailDraft((prev) => ({ ...prev, nextAction: event.target.value }))}
+                        style={{ width: "100%", borderRadius: 8, border: "1px solid var(--input-border)", background: "var(--input-bg)", color: "var(--input-text)", padding: "8px 10px", resize: "vertical", boxSizing: "border-box" }}
+                      />
+                    </label>
+                    <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)", gridColumn: "1 / -1" }}>
+                      ブロッカー
+                      <textarea
+                        rows={2}
+                        value={detailDraft.blockedReason}
+                        onChange={(event) => setDetailDraft((prev) => ({ ...prev, blockedReason: event.target.value }))}
+                        style={{ width: "100%", borderRadius: 8, border: "1px solid var(--input-border)", background: "var(--input-bg)", color: "var(--input-text)", padding: "8px 10px", resize: "vertical", boxSizing: "border-box" }}
+                      />
+                    </label>
+                    {DETAIL_LINK_KEYS.map((key) => (
+                      <label key={key} style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
+                        {key}
+                        <input
+                          value={detailDraft.links[key]}
+                          onChange={(event) =>
+                            setDetailDraft((prev) => ({
+                              ...prev,
+                              links: { ...prev.links, [key]: event.target.value },
+                            }))
+                          }
+                          placeholder="https://..."
+                          style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--input-border)", background: "var(--input-bg)", color: "var(--input-text)" }}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveDetailMeta()}
+                      style={{
+                        padding: "8px 12px",
+                        borderRadius: 10,
+                        border: "1px solid var(--button-primary-bg)",
+                        background: "var(--button-primary-bg)",
+                        color: "var(--primary-contrast)",
+                        fontWeight: 700,
+                        cursor: "pointer",
+                      }}
+                    >
+                      詳細を保存
+                    </button>
+                  </div>
+                </div>
+              ) : null}
 
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
                 <div style={{ border: "1px solid var(--border)", borderRadius: 14, padding: 14, background: "var(--surface-2)" }}>
                   <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>進行メモ</div>
-                  <div style={{ fontSize: 13, color: "var(--text)", lineHeight: 1.7 }}>
-                    {isClientLate(detailRow, todayYmd)
-                      ? "先方提出日を過ぎています。最優先で対応状況を確認してください。"
-                      : isEditorLate(detailRow, todayYmd)
-                        ? "編集者提出が遅れています。外注確認とリスケ判断が必要です。"
-                        : "大きな遅延はありません。次の更新タイミングを確認してください。"}
-                  </div>
+                  <div style={{ fontSize: 13, color: "var(--text)", lineHeight: 1.7 }}>{buildContentProgressNote(detailRow, todayYmd)}</div>
                 </div>
 
                 <div style={{ border: "1px solid var(--border)", borderRadius: 14, padding: 14, background: "var(--surface-2)" }}>
                   <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>次の行動</div>
+                  <div style={{ fontSize: 13, color: "var(--text)", lineHeight: 1.7, marginBottom: canEdit ? 12 : 10 }}>
+                    {buildContentNextAction(detailRow, todayYmd)}
+                  </div>
+                  {canEdit && (
+                    <div style={{ display: "grid", gap: 10, marginBottom: 10 }}>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            window.dispatchEvent(
+                              new CustomEvent("open-ai-palette", {
+                                detail: {
+                                  source: "contents" as const,
+                                  mode: "status_summary" as const,
+                                  text: detailShareDraft || buildContentShareDraft(detailRow, todayYmd),
+                                  compareText: detailShareDraft || buildContentShareDraft(detailRow, todayYmd),
+                                   context: buildContentAiContext(detailRow, todayYmd),
+                                   title: "Contents AI",
+                                   applyLabel: "共有文ドラフトに反映",
+                                   applyTarget: "contents_detail_share_draft",
+                                   meta: buildContentAiMeta(detailRow),
+                                 },
+                               })
+                             )
+                          }
+                          style={{
+                            padding: "8px 12px",
+                            borderRadius: 10,
+                            border: "1px solid var(--button-secondary-border)",
+                            background: "var(--button-secondary-bg)",
+                            color: "var(--button-secondary-text)",
+                            fontWeight: 700,
+                            cursor: "pointer",
+                          }}
+                        >
+                          AI状況要約
+                        </button>
+                        {(isClientLate(detailRow, todayYmd) || isEditorLate(detailRow, todayYmd)) && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              window.dispatchEvent(
+                                new CustomEvent("open-ai-palette", {
+                                  detail: {
+                                    source: "contents" as const,
+                                    mode: "delay_summary" as const,
+                                    text: detailShareDraft || buildContentShareDraft(detailRow, todayYmd),
+                                    compareText: detailShareDraft || buildContentShareDraft(detailRow, todayYmd),
+                                     context: buildContentAiContext(detailRow, todayYmd),
+                                     title: "Contents AI",
+                                     applyLabel: "共有文ドラフトに反映",
+                                     applyTarget: "contents_detail_share_draft",
+                                     meta: buildContentAiMeta(detailRow),
+                                   },
+                                 })
+                               )
+                            }
+                            style={{
+                              padding: "8px 12px",
+                              borderRadius: 10,
+                              border: "1px solid var(--button-secondary-border)",
+                              background: "var(--button-secondary-bg)",
+                              color: "var(--button-secondary-text)",
+                              fontWeight: 700,
+                              cursor: "pointer",
+                            }}
+                          >
+                            AI遅延要約
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            window.dispatchEvent(
+                              new CustomEvent("open-ai-palette", {
+                                detail: {
+                                  source: "contents" as const,
+                                  mode: "task_rewrite" as const,
+                                  text: detailShareDraft || buildContentShareDraft(detailRow, todayYmd),
+                                  compareText: detailShareDraft || buildContentShareDraft(detailRow, todayYmd),
+                                  context: buildContentAiContext(detailRow, todayYmd),
+                                  title: "Contents AI",
+                                  applyLabel: "共有文ドラフトに反映",
+                                  applyTarget: "contents_detail_share_draft",
+                                  meta: buildContentAiMeta(detailRow),
+                                },
+                              })
+                            )
+                          }
+                          style={{
+                            padding: "8px 12px",
+                            borderRadius: 10,
+                            border: "1px solid var(--button-secondary-border)",
+                            background: "var(--button-secondary-bg)",
+                            color: "var(--button-secondary-text)",
+                            fontWeight: 700,
+                            cursor: "pointer",
+                          }}
+                        >
+                          AIタスク文変換
+                        </button>
+                      </div>
+
+                      <div style={{ display: "grid", gap: 8 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                          <div style={{ fontSize: 12, color: "var(--muted)" }}>共有文ドラフト</div>
+                          <button
+                            type="button"
+                            onClick={() => void handleCopyDetailShareDraft()}
+                            disabled={!detailShareDraft.trim()}
+                            style={{
+                              padding: "6px 10px",
+                              borderRadius: 10,
+                              border: "1px solid var(--button-secondary-border)",
+                              background: "var(--button-secondary-bg)",
+                              color: "var(--button-secondary-text)",
+                              fontWeight: 700,
+                              cursor: detailShareDraft.trim() ? "pointer" : "not-allowed",
+                            }}
+                          >
+                            ドラフトをコピー
+                          </button>
+                        </div>
+                        <textarea
+                          value={detailShareDraft}
+                          onChange={(event) => setDetailShareDraft(event.target.value)}
+                          rows={5}
+                          style={{
+                            width: "100%",
+                            borderRadius: 12,
+                            border: "1px solid var(--input-border)",
+                            background: "var(--input-bg)",
+                            color: "var(--input-text)",
+                            fontSize: 13,
+                            lineHeight: 1.7,
+                            padding: "10px 12px",
+                            resize: "vertical",
+                            boxSizing: "border-box",
+                          }}
+                        />
+                        <div style={{ fontSize: 11, color: "var(--muted)", lineHeight: 1.6 }}>
+                          この欄は保存されません。Slack などへ共有する文面の下書きとして使います。
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <Link href={`/contents?highlight=${encodeURIComponent(detailRow.id)}`} style={{ fontSize: 12, color: "var(--primary)", fontWeight: 700, textDecoration: "none" }}>
                       一覧で位置を確認

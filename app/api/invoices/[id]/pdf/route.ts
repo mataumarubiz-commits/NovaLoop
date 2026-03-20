@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
+import { buildInvoicePdfBaseName, resolveInvoiceRecipientName, safeInvoicePdfFileName } from "@/lib/invoiceNaming"
 import { renderInvoiceHtml } from "@/lib/pdf/renderInvoiceHtml"
 import puppeteer from "puppeteer-core"
 import chromium from "@sparticuz/chromium"
@@ -79,14 +80,6 @@ async function ensureAuth(req: NextRequest): Promise<{ userId: string; orgId: st
   return { userId: user.id, orgId }
 }
 
-function safeFileNameForPdf(invoiceName: string): string {
-  const s = (invoiceName || "invoice")
-    .replace(/[/\\:*?"<>|\s]+/g, "_")
-    .replace(/_+/g, "_")
-    .replace(/^_|_$/g, "") || "invoice"
-  return s.slice(0, 120)
-}
-
 /** GET: 既存 pdf_path の署名URLを返す */
 export async function GET(
   req: NextRequest,
@@ -148,18 +141,18 @@ export async function POST(
     return NextResponse.json({ error: "Invoice not found or access denied" }, { status: 404 })
   }
 
-  const clientId = (invoice as { client_id?: string }).client_id
-  if (!clientId) {
-    return NextResponse.json({ error: "Invoice has no client" }, { status: 400 })
-  }
-
-  const { data: client, error: clientError } = await admin
-    .from("clients")
-    .select("name")
-    .eq("id", clientId)
-    .maybeSingle()
-  if (clientError || !client) {
-    return NextResponse.json({ error: "Client not found" }, { status: 404 })
+  const clientId = (invoice as { client_id?: string | null }).client_id
+  let clientName = ""
+  if (clientId) {
+    const { data: client, error: clientError } = await admin
+      .from("clients")
+      .select("name")
+      .eq("id", clientId)
+      .maybeSingle()
+    if (clientError || !client) {
+      return NextResponse.json({ error: "Client not found" }, { status: 404 })
+    }
+    clientName = (client as { name?: string } | null)?.name?.trim() ?? ""
   }
 
   const { data: lines, error: linesError } = await admin
@@ -173,13 +166,26 @@ export async function POST(
 
   const inv = invoice as Record<string, unknown>
   const invoiceMonth = (inv.invoice_month as string) || ""
-  const defaultName = `【御請求書】${invoiceMonth}_${(client as { name: string }).name}_${(inv.invoice_title as string) || "SNS運用代行"}`
-  const safeName = safeFileNameForPdf((inv.invoice_name as string)?.trim() || defaultName)
+  const recipientName = resolveInvoiceRecipientName({
+    clientName,
+    guestCompanyName: typeof inv.guest_company_name === "string" ? inv.guest_company_name : null,
+    guestClientName: typeof inv.guest_client_name === "string" ? inv.guest_client_name : null,
+  })
+  const safeName = safeInvoicePdfFileName(
+    buildInvoicePdfBaseName({
+      invoiceMonth,
+      clientName,
+      guestCompanyName: typeof inv.guest_company_name === "string" ? inv.guest_company_name : null,
+      guestClientName: typeof inv.guest_client_name === "string" ? inv.guest_client_name : null,
+      invoiceTitle: typeof inv.invoice_title === "string" ? inv.invoice_title : null,
+      invoiceName: typeof inv.invoice_name === "string" ? inv.invoice_name : null,
+    })
+  )
   const storagePath = `${orgId}/invoices/${invoiceMonth}/${safeName}.pdf`
 
   const html = renderInvoiceHtml({
     invoice: inv as Parameters<typeof renderInvoiceHtml>[0]["invoice"],
-    client: client as { name: string },
+    client: { name: recipientName },
     org: null,
     lines: (lines ?? []) as Parameters<typeof renderInvoiceHtml>[0]["lines"],
   })

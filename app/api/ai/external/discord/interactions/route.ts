@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { verifyDiscordSignature } from "@/lib/ai/channelAdapters"
+import { writeExternalAiAuditLog } from "@/lib/ai/externalAudit"
 import { EXTERNAL_CHAT_COPY } from "@/lib/ai/externalCopy"
 import { answerExternalAiQuestion } from "@/lib/ai/externalGateway"
 import { confirmExternalChannelLink, getLinkedActorContext } from "@/lib/ai/externalIdentity"
@@ -195,6 +196,16 @@ export async function POST(req: NextRequest) {
 
   const actor = await getLinkedActorContext({ channelType: "discord", externalUserId })
   if (!actor) {
+    await writeExternalAiAuditLog({
+      channelType: "discord",
+      externalUserId,
+      actor: null,
+      userMessage: question,
+      selectedTools: [],
+      toolResultSummary: {},
+      aiResponse: unlinkedMessage(),
+      status: "unlinked",
+    })
     return interactionResponse(
       unlinkedMessage(),
       buildButtons({ openUrl: settingsUrl, howToUrl: settingsUrl })
@@ -210,6 +221,17 @@ export async function POST(req: NextRequest) {
 
   const baseUrl = (channelSettings as { open_app_url?: string | null } | null)?.open_app_url ?? appUrl
   if ((channelSettings as { discord_enabled?: boolean } | null)?.discord_enabled !== true) {
+    await writeExternalAiAuditLog({
+      channelType: "discord",
+      externalUserId,
+      actor,
+      userMessage: question,
+      selectedTools: [],
+      toolResultSummary: {},
+      aiResponse: EXTERNAL_CHAT_COPY.common.temporaryError,
+      status: "error",
+      errorMessage: "Discord AI channel disabled",
+    })
     return interactionResponse(
       EXTERNAL_CHAT_COPY.common.temporaryError,
       buildButtons({ openUrl: settingsUrl, refreshCategory: "overall" })
@@ -228,7 +250,18 @@ export async function POST(req: NextRequest) {
         includeFilterButtons: true,
       })
     )
-  } catch {
+  } catch (error) {
+    await writeExternalAiAuditLog({
+      channelType: "discord",
+      externalUserId,
+      actor,
+      userMessage: question,
+      selectedTools: [],
+      toolResultSummary: {},
+      aiResponse: null,
+      status: "error",
+      errorMessage: error instanceof Error ? error.message : "Unknown discord AI error",
+    })
     return interactionResponse(
       `${EXTERNAL_CHAT_COPY.common.temporaryError}\n${EXTERNAL_CHAT_COPY.common.temporaryErrorFollow}`,
       buildButtons({ openUrl: baseUrl || appUrl, refreshCategory: "overall" })

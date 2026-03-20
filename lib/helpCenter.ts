@@ -55,13 +55,13 @@ export const HELP_ARTICLES: HelpArticle[] = [
     slug: "setup",
     href: "/help/setup",
     title: "最初のセットアップ",
-    description: "Workspace、口座、クライアント、通知を最初に整える手順です。",
+    description: "ワークスペース、口座、クライアント、通知を最初に整える手順です。",
     category: "getting-started",
     icon: "1",
     order: 1,
     recommended_order: 1,
     highlights: [
-      "Workspace の会社情報と請求者情報を最初に登録する",
+      "ワークスペースの会社情報と請求者情報を最初に登録する",
       "支払い運用がある場合は口座と委託者コードを入れる",
       "クライアントを1社登録し、Contents と Pages を使い始める",
     ],
@@ -69,14 +69,14 @@ export const HELP_ARTICLES: HelpArticle[] = [
       {
         heading: "最初にやること",
         body: [
-          "まずは Settings > Workspace で会社情報、請求者情報、固定メモ、口座情報を登録します。請求や支払いの画面はこの情報を前提に動きます。",
+          "まずは Settings > ワークスペース で会社情報、請求者情報、固定メモ、口座情報を登録します。請求や支払いの画面はこの情報を前提に動きます。",
           "次にクライアントを1社追加し、Contents に案件を1件登録します。Pages では社内向けの手順書や運用ルールを作成できます。",
         ],
       },
       {
         heading: "最初の確認項目",
         body: [
-          "1. Workspace の会社情報と請求先情報",
+          "1. ワークスペースの会社情報と請求先情報",
           "2. 既定の振込口座と委託者コード",
           "3. クライアントの登録",
           "4. Contents の1件登録",
@@ -116,7 +116,7 @@ export const HELP_ARTICLES: HelpArticle[] = [
     slug: "org-roles",
     href: "/help/org-roles",
     title: "組織・メンバー・ロールの使い分け",
-    description: "owner / executive_assistant / member の役割差分を整理します。",
+    description: "オーナー（owner） / 経営補佐（executive_assistant） / メンバー（member）の役割差分を整理します。",
     category: "organization",
     icon: "O",
     order: 1,
@@ -124,8 +124,8 @@ export const HELP_ARTICLES: HelpArticle[] = [
       {
         heading: "基本ルール",
         body: [
-          "owner と executive_assistant は Billing、Invoices、Vendors、Payouts、Settings の主要操作ができます。",
-          "member は原則として閲覧主体で、会計や支払いの更新操作は行いません。",
+          "オーナー（owner）と経営補佐（executive_assistant）は Billing、Invoices、Vendors、Payouts、Settings の主要操作ができます。",
+          "メンバー（member）は原則として閲覧主体で、会計や支払いの更新操作は行いません。",
           "権限は UI 表示だけでなく server-side route 側でも制御されます。",
         ],
       },
@@ -323,4 +323,87 @@ export const HELP_ARTICLES: HelpArticle[] = [
 
 export function getCategoryLabel(categoryId: HelpCategoryId): string {
   return HELP_CATEGORIES.find((category) => category.id === categoryId)?.label ?? categoryId
+}
+
+export type HelpSearchResult = {
+  article: HelpArticle
+  score: number
+  excerpt: string
+  steps: string[]
+}
+
+function normalizeHelpQuery(value: string) {
+  return value.toLowerCase().replace(/\s+/g, "")
+}
+
+function articleSearchText(article: HelpArticle) {
+  return normalizeHelpQuery(
+    [
+      article.title,
+      article.description,
+      article.category,
+      ...(article.highlights ?? []),
+      ...article.sections.flatMap((section) => [section.heading, ...section.body]),
+    ].join(" ")
+  )
+}
+
+function articleSteps(article: HelpArticle) {
+  return article.sections.flatMap((section) => section.body).filter(Boolean).slice(0, 6)
+}
+
+function articleExcerpt(article: HelpArticle) {
+  return article.sections.flatMap((section) => section.body).find(Boolean) ?? article.description
+}
+
+export function searchHelpArticles(query: string, limit = 5): HelpSearchResult[] {
+  const normalizedQuery = normalizeHelpQuery(query)
+  const results = HELP_ARTICLES.map((article) => {
+    const searchText = articleSearchText(article)
+    let score = 0
+
+    if (!normalizedQuery) {
+      score = article.recommended_order ? 100 - article.recommended_order : 10
+    } else {
+      if (normalizeHelpQuery(article.title).includes(normalizedQuery)) score += 8
+      if (normalizeHelpQuery(article.description).includes(normalizedQuery)) score += 4
+      if (normalizeHelpQuery(article.category).includes(normalizedQuery)) score += 2
+      if (searchText.includes(normalizedQuery)) score += 1
+      for (const token of normalizedQuery.split(/[\/,]/).filter(Boolean)) {
+        if (searchText.includes(token)) score += 1
+      }
+    }
+
+    return {
+      article,
+      score,
+      excerpt: articleExcerpt(article),
+      steps: articleSteps(article),
+    }
+  })
+    .filter((item) => item.score > 0)
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score
+      if ((a.article.recommended_order ?? 999) !== (b.article.recommended_order ?? 999)) {
+        return (a.article.recommended_order ?? 999) - (b.article.recommended_order ?? 999)
+      }
+      if (a.article.order !== b.article.order) return a.article.order - b.article.order
+      return a.article.title.localeCompare(b.article.title, "ja")
+    })
+
+  return results.slice(0, limit)
+}
+
+export function getHelpAnswerCandidates(query: string, limit = 5) {
+  return searchHelpArticles(query, limit).map(({ article, excerpt, steps }) => ({
+    id: article.id,
+    slug: article.slug,
+    href: article.href,
+    title: article.title,
+    description: article.description,
+    category: article.category,
+    category_label: getCategoryLabel(article.category),
+    excerpt,
+    steps,
+  }))
 }

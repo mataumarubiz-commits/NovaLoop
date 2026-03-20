@@ -1,294 +1,753 @@
 "use client"
 
-import { useEffect, useState, useCallback, type CSSProperties } from "react"
+import { useCallback, useEffect, useState, type KeyboardEvent } from "react"
 import { useRouter } from "next/navigation"
-import { supabase } from "@/lib/supabase"
-import OnboardingShell from "@/components/OnboardingShell"
 import ChoiceCard from "@/components/ChoiceCard"
+import OnboardingShell from "@/components/OnboardingShell"
+import { supabase } from "@/lib/supabase"
+
+type Step = "name" | "choice" | "personal" | "new_org" | "join" | "joined"
+
+type OwnerOrgOption = {
+  ownerUserId: string
+  orgs: Array<{ id: string; name: string }>
+}
+
+type PendingJoinSnapshot = {
+  ownerEmail: string
+  orgName: string | null
+  requestedAt: string
+}
 
 const inputClassName = "onboarding-input"
+const PENDING_JOIN_STORAGE_KEY = "novaloop.pendingJoinRequest"
+const LP_VIEW_HREF = "/?showLp=1"
 
-const labelStyle: CSSProperties = {
-  display: "block",
-  fontSize: 14,
-  fontWeight: 600,
-  color: "var(--text)",
-  marginBottom: 8,
+function PersonChoiceIcon() {
+  return (
+    <svg className="onboarding-choice-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Z" />
+      <path d="M5.5 20a6.5 6.5 0 0 1 13 0" />
+    </svg>
+  )
+}
+
+function TeamChoiceIcon() {
+  return (
+    <svg className="onboarding-choice-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 20h16" />
+      <path d="M6.5 20V7.5h11V20" />
+      <path d="M9.5 11h1" />
+      <path d="M13.5 11h1" />
+      <path d="M9.5 14.5h1" />
+      <path d="M13.5 14.5h1" />
+      <path d="M10.5 20v-3h3v3" />
+      <path d="M9 7.5V4h6v3.5" />
+    </svg>
+  )
+}
+
+function JoinChoiceIcon() {
+  return (
+    <svg className="onboarding-choice-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10 13a4 4 0 1 0-4-4 4 4 0 0 0 4 4Z" />
+      <path d="M3.5 20a6.5 6.5 0 0 1 9.8-5.58" />
+      <path d="m15 12 6 6" />
+      <path d="M18 12h3v3" />
+    </svg>
+  )
+}
+
+function LoadingMark() {
+  return (
+    <div className="onboarding-loading-shell" aria-live="polite">
+      <div className="onboarding-loading-mark">N</div>
+      <div className="onboarding-spinner" aria-hidden="true" />
+      <p className="onboarding-loading-copy">初期設定を確認しています</p>
+    </div>
+  )
+}
+
+function readPendingJoinSnapshot() {
+  if (typeof window === "undefined") return null
+
+  try {
+    const raw = window.localStorage.getItem(PENDING_JOIN_STORAGE_KEY)
+    if (!raw) return null
+
+    const parsed = JSON.parse(raw) as Partial<PendingJoinSnapshot> | null
+    if (!parsed || typeof parsed.ownerEmail !== "string" || typeof parsed.requestedAt !== "string") {
+      return null
+    }
+
+    return {
+      ownerEmail: parsed.ownerEmail,
+      orgName: typeof parsed.orgName === "string" ? parsed.orgName : null,
+      requestedAt: parsed.requestedAt,
+    }
+  } catch {
+    return null
+  }
+}
+
+function writePendingJoinSnapshot(snapshot: PendingJoinSnapshot) {
+  if (typeof window === "undefined") return
+  window.localStorage.setItem(PENDING_JOIN_STORAGE_KEY, JSON.stringify(snapshot))
+}
+
+function clearPendingJoinSnapshot() {
+  if (typeof window === "undefined") return
+  window.localStorage.removeItem(PENDING_JOIN_STORAGE_KEY)
+}
+
+function isValidEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+}
+
+function formatRequestedDate(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  return new Intl.DateTimeFormat("ja-JP", {
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date)
 }
 
 export default function OnboardingPage() {
   const router = useRouter()
-  const [step, setStep] = useState<"name" | "choice" | "personal" | "new_org" | "join" | "joined">("name")
+  const [checkingSession, setCheckingSession] = useState(true)
+  const [step, setStep] = useState<Step>("name")
   const [displayName, setDisplayName] = useState("")
-  const [personalWorkspaceName, setPersonalWorkspaceName] = useState("")
   const [orgName, setOrgName] = useState("")
-  const [orgDisplayName, setOrgDisplayName] = useState("")
   const [ownerEmail, setOwnerEmail] = useState("")
-  const [ownerOrgs, setOwnerOrgs] = useState<{ ownerUserId: string; orgs: { id: string; name: string }[] } | null>(null)
+  const [ownerOrgs, setOwnerOrgs] = useState<OwnerOrgOption | null>(null)
   const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null)
+  const [pendingJoin, setPendingJoin] = useState<PendingJoinSnapshot | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [userId, setUserId] = useState<string | null>(null)
 
   useEffect(() => {
     let active = true
-    const resolveUser = async () => {
-      let user = (await supabase.auth.getUser()).data.user
-      if (!user) {
-        const { data } = await supabase.auth.getSession()
-        user = data?.session?.user ?? null
-      }
-      if (!active) return
-      if (!user) {
-        router.push("/")
-        return
-      }
 
-      const { data: profileRow } = await supabase.from("user_profiles").select("display_name").eq("user_id", user.id).maybeSingle()
-      const { data: appUsersRows } = await supabase.from("app_users").select("org_id").eq("user_id", user.id).limit(1)
-      const hasDisplayName = profileRow && (profileRow as { display_name?: string }).display_name?.trim()
-      let hasOrgs = (appUsersRows?.length ?? 0) > 0
+    const resolveBootstrap = async () => {
+      try {
+        const { data: sessionData } = await supabase.auth.getSession()
+        let user = sessionData.session?.user ?? null
 
-      if (!hasOrgs) {
-        const { data } = await supabase.auth.getSession()
-        const token = data?.session?.access_token
+        if (!user) {
+          user = (await supabase.auth.getUser()).data.user
+        }
+
+        if (!active) return
+
+        if (!user) {
+          router.replace("/")
+          return
+        }
+
+        const profilePromise = supabase.from("user_profiles").select("display_name").eq("user_id", user.id).maybeSingle()
+
+        let membershipCount = 0
+        const token = sessionData.session?.access_token ?? null
+
         if (token) {
           try {
-            const res = await fetch("/api/auth/my-orgs", { headers: { Authorization: `Bearer ${token}` } })
-            const json = await res.json().catch(() => null)
-            hasOrgs = json?.ok === true && Array.isArray(json.orgs) && json.orgs.length > 0
-          } catch {}
+            const res = await fetch("/api/auth/my-orgs", {
+              headers: { Authorization: `Bearer ${token}` },
+            })
+            const json = (await res.json().catch(() => null)) as
+              | { ok?: boolean; orgs?: Array<{ org_id: string }> }
+              | null
+            if (json?.ok && Array.isArray(json.orgs)) {
+              membershipCount = json.orgs.length
+            }
+          } catch {
+            membershipCount = 0
+          }
         }
-      }
 
-      if (!active) return
-      if (hasOrgs) {
-        router.replace("/home")
-        return
-      }
+        if (membershipCount === 0) {
+          let appUserRows =
+            (await supabase.from("app_users").select("org_id").eq("user_id", user.id)).data ?? []
 
-      setUserId(user.id)
-      if (hasDisplayName && !hasOrgs) {
-        setDisplayName((profileRow as { display_name?: string }).display_name?.trim() ?? "")
-        setStep("choice")
+          for (const delayMs of [400, 1000]) {
+            if ((appUserRows?.length ?? 0) > 0) break
+            await new Promise((resolve) => setTimeout(resolve, delayMs))
+            appUserRows =
+              (await supabase.from("app_users").select("org_id").eq("user_id", user.id)).data ?? []
+          }
+
+          membershipCount = new Set(
+            (appUserRows as Array<{ org_id?: string | null }>)
+              .map((row) => row.org_id)
+              .filter((value): value is string => typeof value === "string" && value.length > 0)
+          ).size
+        }
+
+        const { data: profileRow } = await profilePromise
+        if (!active) return
+
+        if (membershipCount > 0) {
+          clearPendingJoinSnapshot()
+        }
+
+        if (membershipCount > 1) {
+          router.replace("/orgs")
+          return
+        }
+
+        if (membershipCount === 1) {
+          router.replace("/home")
+          return
+        }
+
+        const savedDisplayName = ((profileRow as { display_name?: string } | null)?.display_name ?? "").trim()
+        const savedPendingJoin = readPendingJoinSnapshot()
+
+        setUserId(user.id)
+        setDisplayName(savedDisplayName)
+        setPendingJoin(savedPendingJoin)
+        setStep(savedPendingJoin ? "joined" : savedDisplayName ? "choice" : "name")
+      } finally {
+        if (active) {
+          setCheckingSession(false)
+        }
       }
     }
 
-    void resolveUser()
+    void resolveBootstrap()
+
     return () => {
       active = false
     }
   }, [router])
 
-  useEffect(() => {
-    if (step === "personal") setPersonalWorkspaceName("")
-  }, [step])
-
-  useEffect(() => {
-    if (step === "personal" || step === "new_org" || step === "join") {
-      setOrgDisplayName((prev) => (prev === "" ? displayName : prev))
-    }
-  }, [step, displayName])
-
   const getToken = useCallback(async () => {
     const { data } = await supabase.auth.getSession()
-    return data?.session?.access_token ?? null
+    return data.session?.access_token ?? null
   }, [])
+
+  const resetJoinState = useCallback(() => {
+    setOwnerOrgs(null)
+    setSelectedOrgId(null)
+    setOwnerEmail("")
+    setError(null)
+  }, [])
+
+  const handleEnter =
+    (action: () => void, disabled: boolean) =>
+    (event: KeyboardEvent<HTMLInputElement>) => {
+      if (event.key !== "Enter") return
+      event.preventDefault()
+      if (disabled) return
+      action()
+    }
+
+  const handleClose = useCallback(() => {
+    router.replace(LP_VIEW_HREF)
+  }, [router])
 
   const handleSubmitName = useCallback(async () => {
     if (!displayName.trim() || !userId) return
+
     setError(null)
     setLoading(true)
+
     try {
-      const { data: userData } = await supabase.auth.getUser()
-      const user = userData.user
+      const { data: authData } = await supabase.auth.getUser()
+      const user = authData.user
+
       if (!user || user.id !== userId) {
-        router.push("/?message=relogin")
+        router.replace("/?message=relogin")
         return
       }
-      const { error } = await supabase.from("user_profiles").upsert(
-        { user_id: user.id, display_name: displayName.trim(), updated_at: new Date().toISOString() },
+
+      const { error: upsertError } = await supabase.from("user_profiles").upsert(
+        {
+          user_id: user.id,
+          display_name: displayName.trim(),
+          updated_at: new Date().toISOString(),
+        },
         { onConflict: "user_id" }
       )
-      if (error) throw error
+
+      if (upsertError) throw upsertError
+
       setStep("choice")
-    } catch (e) {
-      const raw = e instanceof Error ? e.message : ""
-      const isMissingTable = raw.includes("user_profiles") && (raw.includes("schema cache") || raw.includes("does not exist"))
-      setError(isMissingTable ? "オンボーディング用のテーブルが不足しています。Supabase SQL を適用してください。" : raw || "表示名の保存に失敗しました。")
+    } catch (submitError) {
+      const message = submitError instanceof Error ? submitError.message : ""
+      const missingTable =
+        message.includes("user_profiles") &&
+        (message.includes("schema cache") || message.includes("does not exist"))
+
+      setError(
+        missingTable
+          ? "表示名を保存する準備がまだ完了していません。Supabase の SQL を適用してください。"
+          : message || "表示名を保存できませんでした。"
+      )
     } finally {
       setLoading(false)
     }
-  }, [displayName, userId, router])
+  }, [displayName, router, userId])
 
   const handleCreatePersonal = useCallback(async () => {
     if (!userId) return
-    const name = personalWorkspaceName.trim() || (displayName.trim() ? `${displayName.trim()}のワークスペース` : "個人")
-    if (!name) {
-      setError("ワークスペース名を入力してください。")
-      return
-    }
+
     setError(null)
     setLoading(true)
+
     try {
       const token = await getToken()
-      if (!token) throw new Error("ログインし直してください。")
-      const displayNameInOrg = orgDisplayName.trim() || displayName.trim() || undefined
+      if (!token) throw new Error("ログイン状態を確認できませんでした。")
+
+      const workspaceName = displayName.trim() ? `${displayName.trim()}のワークスペース` : "個人用ワークスペース"
       const res = await fetch("/api/onboarding/create-org", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ type: "personal", workspaceName: name, displayNameInOrg }),
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          type: "personal",
+          workspaceName,
+          displayNameInOrg: displayName.trim() || undefined,
+        }),
       })
-      const data = await res.json().catch(() => null)
-      if (!res.ok) throw new Error(data?.error ?? "作成に失敗しました。")
-      await new Promise((r) => setTimeout(r, 600))
-      window.location.href = "/home"
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "作成に失敗しました。")
+
+      const data = (await res.json().catch(() => null)) as { error?: string } | null
+      if (!res.ok) throw new Error(data?.error ?? "ワークスペースを作成できませんでした。")
+
+      clearPendingJoinSnapshot()
+      window.location.assign("/home")
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : "ワークスペースを作成できませんでした。")
     } finally {
       setLoading(false)
     }
-  }, [userId, displayName, personalWorkspaceName, orgDisplayName, getToken])
+  }, [displayName, getToken, userId])
 
   const handleCreateOrg = useCallback(async () => {
     if (!orgName.trim() || !userId) return
+
     setError(null)
     setLoading(true)
+
     try {
       const token = await getToken()
-      if (!token) throw new Error("ログインし直してください。")
-      const displayNameInOrg = orgDisplayName.trim() || displayName.trim() || undefined
+      if (!token) throw new Error("ログイン状態を確認できませんでした。")
+
       const res = await fetch("/api/onboarding/create-org", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ type: "new_org", orgName: orgName.trim(), displayNameInOrg }),
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          type: "new_org",
+          orgName: orgName.trim(),
+          displayNameInOrg: displayName.trim() || undefined,
+        }),
       })
-      const data = await res.json().catch(() => null)
-      if (!res.ok) throw new Error(data?.error ?? "作成に失敗しました。")
-      await new Promise((r) => setTimeout(r, 600))
-      window.location.href = "/home"
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "作成に失敗しました。")
+
+      const data = (await res.json().catch(() => null)) as { error?: string } | null
+      if (!res.ok) throw new Error(data?.error ?? "組織を作成できませんでした。")
+
+      clearPendingJoinSnapshot()
+      window.location.assign("/home")
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : "組織を作成できませんでした。")
     } finally {
       setLoading(false)
     }
-  }, [orgName, userId, displayName, orgDisplayName, getToken])
+  }, [displayName, getToken, orgName, userId])
 
-  const fetchOrgsByOwnerEmail = useCallback(async () => {
-    if (!ownerEmail.trim()) return
-    setError(null)
-    setSelectedOrgId(null)
-    setLoading(true)
-    try {
-      const res = await fetch("/api/orgs/lookup-by-owner-email", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ownerEmail: ownerEmail.trim() }),
-      })
-      const data = await res.json().catch(() => null)
-      if (data?.ok === true) {
-        const orgs = data.orgs ?? []
-        setOwnerOrgs({ ownerUserId: data.ownerUserId, orgs })
-        if (orgs.length === 1) setSelectedOrgId(orgs[0].id)
-      } else {
-        setError(data?.message ?? "検索に失敗しました。")
-        setOwnerOrgs(null)
-      }
-    } catch {
-      setError("検索に失敗しました。")
-      setOwnerOrgs(null)
-    } finally {
-      setLoading(false)
+  const lookupOrgsByOwnerEmail = useCallback(async (email: string) => {
+    const res = await fetch("/api/orgs/lookup-by-owner-email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ownerEmail: email }),
+    })
+
+    const data = (await res.json().catch(() => null)) as
+      | {
+          ok?: boolean
+          message?: string
+          ownerUserId?: string
+          orgs?: Array<{ id: string; name: string }>
+        }
+      | null
+
+    if (!res.ok || data?.ok !== true || !data.ownerUserId) {
+      throw new Error(data?.message ?? "組織を確認できませんでした。")
     }
-  }, [ownerEmail])
 
-  const handleJoinRequest = useCallback(async () => {
-    if (!ownerOrgs?.ownerUserId || !selectedOrgId) return
-    setError(null)
-    setLoading(true)
-    try {
+    return {
+      ownerUserId: data.ownerUserId,
+      orgs: Array.isArray(data.orgs) ? data.orgs : [],
+    }
+  }, [])
+
+  const submitJoinRequest = useCallback(
+    async (ownerUserId: string, orgId: string) => {
       const token = await getToken()
-      if (!token) throw new Error("ログインし直してください。")
-      const displayNameInOrg = orgDisplayName.trim() || displayName.trim() || undefined
+      if (!token) throw new Error("ログイン状態を確認できませんでした。")
+
       const res = await fetch("/api/join-request", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ orgId: selectedOrgId, ownerUserId: ownerOrgs.ownerUserId, displayNameInOrg }),
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          orgId,
+          ownerUserId,
+          displayNameInOrg: displayName.trim() || undefined,
+        }),
       })
-      const data = await res.json().catch(() => null)
-      if (!res.ok) throw new Error(data?.error ?? "参加申請に失敗しました。")
-      setStep("joined")
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "参加申請に失敗しました。")
+
+      const data = (await res.json().catch(() => null)) as { error?: string } | null
+      if (!res.ok) {
+        const rawMessage = data?.error ?? "参加申請を送信できませんでした。"
+        if (rawMessage.toLowerCase().includes("duplicate")) {
+          throw new Error("この組織にはすでに申請済みです。")
+        }
+        throw new Error(rawMessage)
+      }
+    },
+    [displayName, getToken]
+  )
+
+  const handleJoinContinue = useCallback(async () => {
+    if (ownerOrgs?.ownerUserId) {
+      if (!selectedOrgId) {
+        setError("参加先の組織を選択してください。")
+        return
+      }
+
+      setError(null)
+      setLoading(true)
+
+      try {
+        await submitJoinRequest(ownerOrgs.ownerUserId, selectedOrgId)
+
+        const selectedOrg = ownerOrgs.orgs.find((org) => org.id === selectedOrgId) ?? null
+        const snapshot = {
+          ownerEmail: ownerEmail.trim(),
+          orgName: selectedOrg?.name ?? null,
+          requestedAt: new Date().toISOString(),
+        }
+
+        writePendingJoinSnapshot(snapshot)
+        setPendingJoin(snapshot)
+        setStep("joined")
+      } catch (joinError) {
+        setError(joinError instanceof Error ? joinError.message : "参加申請を送信できませんでした。")
+      } finally {
+        setLoading(false)
+      }
+
+      return
+    }
+
+    if (!ownerEmail.trim()) return
+
+    if (!isValidEmail(ownerEmail.trim())) {
+      setError("メールアドレスの形式を確認してください。")
+      return
+    }
+
+    setError(null)
+    setLoading(true)
+
+    try {
+      const result = await lookupOrgsByOwnerEmail(ownerEmail.trim())
+
+      if (result.orgs.length === 0) {
+        setOwnerOrgs(null)
+        setSelectedOrgId(null)
+        setError("該当する組織が見つかりませんでした。")
+        return
+      }
+
+      if (result.orgs.length === 1) {
+        const org = result.orgs[0]
+        await submitJoinRequest(result.ownerUserId, org.id)
+
+        const snapshot = {
+          ownerEmail: ownerEmail.trim(),
+          orgName: org.name,
+          requestedAt: new Date().toISOString(),
+        }
+
+        writePendingJoinSnapshot(snapshot)
+        setPendingJoin(snapshot)
+        setStep("joined")
+        return
+      }
+
+      setOwnerOrgs(result)
+      setSelectedOrgId(null)
+    } catch (joinError) {
+      setError(joinError instanceof Error ? joinError.message : "参加申請を送信できませんでした。")
     } finally {
       setLoading(false)
     }
-  }, [ownerOrgs, selectedOrgId, displayName, orgDisplayName, getToken])
+  }, [lookupOrgsByOwnerEmail, ownerEmail, ownerOrgs, selectedOrgId, submitJoinRequest])
 
-  if (!userId) {
-    return <div className="onboarding-page"><div className="onboarding-card" style={{ textAlign: "center", padding: "48px 28px" }}><p style={{ color: "var(--muted)", fontSize: 15 }}>読み込み中...</p></div></div>
+  if (checkingSession || !userId) {
+    return (
+      <div className="onboarding-page">
+        <div className="onboarding-stage">
+          <LoadingMark />
+        </div>
+      </div>
+    )
   }
 
-  const errorBlock = error ? <div role="alert" style={{ marginBottom: 20, padding: 12, borderRadius: 10, background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)", fontSize: 14 }}>{error}</div> : null
+  const errorBlock = error ? (
+    <div role="alert" className="onboarding-alert">
+      {error}
+    </div>
+  ) : null
+
+  const joinSelectionMode = Boolean(ownerOrgs && ownerOrgs.orgs.length > 1)
+  const requestedAtLabel = pendingJoin?.requestedAt ? formatRequestedDate(pendingJoin.requestedAt) : null
 
   return (
     <>
-      {step === "name" && (
-        <OnboardingShell stepCurrent={1} stepTotal={3} title="あなたの表示名を教えてください" description="アプリ内で表示される名前を設定します。" onClose={() => router.push("/")} ctaLabel="次へ" ctaDisabled={loading || !displayName.trim()} ctaLoading={loading} onCtaClick={handleSubmitName} ctaHint={!displayName.trim() ? "表示名を入力してください。" : undefined}>
+      {step === "name" ? (
+        <OnboardingShell
+          stepCurrent={1}
+          stepTotal={3}
+          title="表示名を入力"
+          description="組織ごとに表示名は変更できます"
+          onClose={handleClose}
+          ctaLabel="次へ"
+          ctaDisabled={loading || !displayName.trim()}
+          ctaLoading={loading}
+          onCtaClick={handleSubmitName}
+          footerText="後から変更できます"
+        >
           {errorBlock}
-          <label style={labelStyle}>表示名</label>
-          <input type="text" value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="例: 山田 太郎" className={inputClassName} autoComplete="name" />
-        </OnboardingShell>
-      )}
-      {step === "choice" && (
-        <OnboardingShell stepCurrent={2} stepTotal={3} title="使い方を選んでください" description="このあと作業するワークスペースの始め方を選びます。" onBack={() => setStep("name")}>
-          {errorBlock}
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <ChoiceCard icon="1" title="個人で使う" description="個人用のワークスペースをすぐに作成します。" onClick={() => setStep("personal")} />
-            <ChoiceCard icon="2" title="新しい組織を作る" description="チームや会社用のワークスペースを作成します。" onClick={() => setStep("new_org")} />
-            <ChoiceCard icon="3" title="既存の組織に参加する" description="オーナーのメールアドレスから参加先を検索して申請します。" onClick={() => setStep("join")} />
+          <div className="onboarding-form-stack">
+            <input
+              id="displayName"
+              type="text"
+              value={displayName}
+              onChange={(event) => setDisplayName(event.target.value)}
+              onKeyDown={handleEnter(handleSubmitName, loading || !displayName.trim())}
+              placeholder="例: 一ノ瀬あさひ"
+              className={inputClassName}
+              autoComplete="name"
+              autoFocus
+              maxLength={40}
+              aria-label="表示名"
+            />
           </div>
         </OnboardingShell>
-      )}
-      {step === "personal" && (
-        <OnboardingShell stepCurrent={3} stepTotal={3} title="個人用ワークスペースを作成" description="ワークスペース名を決めると、すぐに利用を開始できます。" onBack={() => setStep("choice")} ctaLabel="作成してホームへ" ctaDisabled={loading} ctaLoading={loading} onCtaClick={handleCreatePersonal}>
+      ) : null}
+
+      {step === "choice" ? (
+        <OnboardingShell
+          stepCurrent={2}
+          stepTotal={3}
+          title="利用方法を選択"
+          description="あとから切り替えや追加もできます"
+          onBack={() => setStep("name")}
+          onClose={handleClose}
+        >
           {errorBlock}
-          <label style={labelStyle}>ワークスペース名</label>
-          <input type="text" value={personalWorkspaceName} onChange={(e) => setPersonalWorkspaceName(e.target.value)} placeholder="例: 山田のワークスペース" className={inputClassName} maxLength={40} />
-          <label style={{ ...labelStyle, marginTop: 16 }}>この組織での表示名</label>
-          <input type="text" value={orgDisplayName} onChange={(e) => setOrgDisplayName(e.target.value)} placeholder="例: 山田 太郎" className={inputClassName} maxLength={40} />
-        </OnboardingShell>
-      )}
-      {step === "new_org" && (
-        <OnboardingShell stepCurrent={3} stepTotal={3} title="組織ワークスペースを作成" description="チームや会社で使うワークスペース名を設定します。" onBack={() => setStep("choice")} ctaLabel="作成してホームへ" ctaDisabled={loading || !orgName.trim()} ctaLoading={loading} onCtaClick={handleCreateOrg} ctaHint={!orgName.trim() ? "組織名を入力してください。" : undefined}>
-          {errorBlock}
-          <label style={labelStyle}>組織名</label>
-          <input type="text" value={orgName} onChange={(e) => setOrgName(e.target.value)} placeholder="例: 株式会社サンプル" className={inputClassName} maxLength={40} />
-          <label style={{ ...labelStyle, marginTop: 16 }}>この組織での表示名</label>
-          <input type="text" value={orgDisplayName} onChange={(e) => setOrgDisplayName(e.target.value)} placeholder="例: 山田 太郎" className={inputClassName} maxLength={40} />
-        </OnboardingShell>
-      )}
-      {step === "join" && (
-        <OnboardingShell stepCurrent={3} stepTotal={3} title="既存の組織に参加" description="オーナーのメールアドレスで組織を検索し、参加申請を送ります。" onBack={() => { setStep("choice"); setOwnerOrgs(null); setOwnerEmail(""); setSelectedOrgId(null) }} ctaLabel={ownerOrgs && ownerOrgs.orgs.length > 0 ? "参加申請を送る" : undefined} ctaDisabled={loading || !selectedOrgId} ctaLoading={loading} onCtaClick={handleJoinRequest} ctaHint={ownerOrgs && ownerOrgs.orgs.length > 0 && !selectedOrgId ? "参加先を選択してください。" : undefined}>
-          {errorBlock}
-          <label style={labelStyle}>オーナーのメールアドレス</label>
-          <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
-            <input type="email" value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} placeholder="owner@example.com" className={inputClassName} style={{ flex: 1 }} />
-            <button type="button" onClick={fetchOrgsByOwnerEmail} disabled={loading || !ownerEmail.trim()} style={{ padding: "14px 20px", borderRadius: 12, border: "none", background: loading || !ownerEmail.trim() ? "var(--surface-2)" : "var(--primary)", color: loading || !ownerEmail.trim() ? "var(--muted)" : "var(--primary-contrast)", fontSize: 14, fontWeight: 600, cursor: loading || !ownerEmail.trim() ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}>{loading ? "検索中..." : "検索"}</button>
-          </div>
-          {ownerOrgs && (ownerOrgs.orgs.length === 0 ? <p style={{ color: "var(--muted)", fontSize: 14 }}>該当する参加先は見つかりませんでした。</p> : <>
-            <label style={{ ...labelStyle, marginBottom: 12 }}>参加する組織を選択してください</label>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 8 }}>
-              {ownerOrgs.orgs.map((org) => (
-                <button key={org.id} type="button" onClick={() => setSelectedOrgId(org.id)} style={{ padding: 16, borderRadius: 12, border: selectedOrgId === org.id ? "2px solid var(--primary)" : "1px solid var(--border)", background: selectedOrgId === org.id ? "var(--surface-2)" : "var(--surface)", color: "var(--text)", fontSize: 15, textAlign: "left", cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,0.04)" }}>{org.name}</button>
-              ))}
+          <div className="onboarding-choice-section">
+            <div className="onboarding-choice-grid">
+              <ChoiceCard
+                icon={<PersonChoiceIcon />}
+                title="個人で使う"
+                description="自分専用のワークスペースを作成します"
+                onClick={() => {
+                  resetJoinState()
+                  setStep("personal")
+                }}
+              />
+              <ChoiceCard
+                icon={<TeamChoiceIcon />}
+                title="チームで使う"
+                description="チーム用の組織を作成して管理を始めます"
+                onClick={() => {
+                  resetJoinState()
+                  setStep("new_org")
+                }}
+              />
             </div>
-            <label style={{ ...labelStyle, marginTop: 16 }}>この組織での表示名</label>
-            <input type="text" value={orgDisplayName} onChange={(e) => setOrgDisplayName(e.target.value)} placeholder="例: 山田 太郎" className={inputClassName} maxLength={40} />
-          </>)}
+            <button
+              type="button"
+              className="onboarding-secondary-link"
+              onClick={() => {
+                setError(null)
+                setStep("join")
+              }}
+            >
+              <span className="onboarding-secondary-link-icon" aria-hidden="true">
+                <JoinChoiceIcon />
+              </span>
+              既存組織に参加する
+            </button>
+          </div>
         </OnboardingShell>
-      )}
-      {step === "joined" && <OnboardingShell stepCurrent={3} stepTotal={3} title="参加申請を送りました" description="オーナーの承認後に、ホームから利用できるようになります。" ctaLabel="ホームへ" onCtaClick={() => router.push("/home")}>{errorBlock}</OnboardingShell>}
+      ) : null}
+
+      {step === "personal" ? (
+        <OnboardingShell
+          stepCurrent={3}
+          stepTotal={3}
+          title="個人用ワークスペースを作成します"
+          description="すぐに使い始められます"
+          onBack={() => setStep("choice")}
+          onClose={handleClose}
+          ctaLabel="作成して続ける"
+          ctaDisabled={loading}
+          ctaLoading={loading}
+          onCtaClick={handleCreatePersonal}
+        >
+          {errorBlock}
+          <div className="onboarding-confirm-card">
+            <div className="onboarding-confirm-label">表示名</div>
+            <div className="onboarding-confirm-value">{displayName || "未設定"}</div>
+            <p className="onboarding-confirm-note">この名前で個人用のワークスペースを作成します。</p>
+          </div>
+        </OnboardingShell>
+      ) : null}
+
+      {step === "new_org" ? (
+        <OnboardingShell
+          stepCurrent={3}
+          stepTotal={3}
+          title="組織名を入力"
+          description="チームで利用する組織を作成します"
+          onBack={() => setStep("choice")}
+          onClose={handleClose}
+          ctaLabel="組織を作成"
+          ctaDisabled={loading || !orgName.trim()}
+          ctaLoading={loading}
+          onCtaClick={handleCreateOrg}
+          footerText="組織名はあとから変更できます"
+        >
+          {errorBlock}
+          <div className="onboarding-form-stack">
+            <input
+              id="orgName"
+              type="text"
+              value={orgName}
+              onChange={(event) => setOrgName(event.target.value)}
+              onKeyDown={handleEnter(handleCreateOrg, loading || !orgName.trim())}
+              placeholder="例: プロジェクトX 株式会社"
+              className={inputClassName}
+              autoComplete="organization"
+              autoFocus
+              maxLength={40}
+              aria-label="組織名"
+            />
+          </div>
+        </OnboardingShell>
+      ) : null}
+
+      {step === "join" ? (
+        <OnboardingShell
+          stepCurrent={3}
+          stepTotal={3}
+          title={joinSelectionMode ? "参加先を選択" : "組織に参加する"}
+          description={
+            joinSelectionMode
+              ? "参加申請を送る組織を選択してください"
+              : "オーナーのメールアドレスを入力すると参加申請を送れます"
+          }
+          onBack={() => {
+            if (joinSelectionMode) {
+              setOwnerOrgs(null)
+              setSelectedOrgId(null)
+              setError(null)
+              return
+            }
+
+            resetJoinState()
+            setStep("choice")
+          }}
+          onClose={handleClose}
+          ctaLabel={joinSelectionMode ? "この組織に申請する" : "参加申請を送る"}
+          ctaDisabled={loading || (joinSelectionMode ? !selectedOrgId : !ownerEmail.trim())}
+          ctaLoading={loading}
+          onCtaClick={handleJoinContinue}
+          footerText={joinSelectionMode ? undefined : "承認されると参加できます"}
+        >
+          {errorBlock}
+
+          {!joinSelectionMode ? (
+            <div className="onboarding-form-stack">
+              <input
+                id="ownerEmail"
+                type="email"
+                value={ownerEmail}
+                onChange={(event) => setOwnerEmail(event.target.value)}
+                onKeyDown={handleEnter(handleJoinContinue, loading || !ownerEmail.trim())}
+                placeholder="owner@example.com"
+                className={inputClassName}
+                autoComplete="email"
+                autoFocus
+                aria-label="オーナーのメールアドレス"
+              />
+            </div>
+          ) : (
+            <div className="onboarding-selection-stack">
+              <div className="onboarding-detail-card">
+                <div className="onboarding-detail-label">送信先</div>
+                <div className="onboarding-detail-value">{ownerEmail}</div>
+              </div>
+
+              <div className="onboarding-selection-list" role="list" aria-label="参加先の組織一覧">
+                {ownerOrgs?.orgs.map((org) => {
+                  const selected = selectedOrgId === org.id
+
+                  return (
+                    <button
+                      key={org.id}
+                      type="button"
+                      className={selected ? "onboarding-selection-card is-selected" : "onboarding-selection-card"}
+                      onClick={() => setSelectedOrgId(org.id)}
+                    >
+                      <span className="onboarding-selection-title">{org.name}</span>
+                      <span className="onboarding-selection-description">この組織に参加申請を送ります</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+        </OnboardingShell>
+      ) : null}
+
+      {step === "joined" ? (
+        <OnboardingShell
+          stepCurrent={3}
+          stepTotal={3}
+          title="申請を送信しました"
+          description="承認されると参加できます"
+          onClose={handleClose}
+        >
+          <div className="onboarding-confirm-card onboarding-confirm-card--success">
+            <div className="onboarding-confirm-label">申請先</div>
+            <div className="onboarding-confirm-value">{pendingJoin?.orgName ?? "オーナー確認待ち"}</div>
+            <p className="onboarding-confirm-note">
+              {pendingJoin?.ownerEmail ? `${pendingJoin.ownerEmail} に紐づく組織へ申請しました。` : "オーナーに参加申請を送りました。"}
+            </p>
+            <p className="onboarding-inline-note">オーナーにはアプリ内通知で届きます。</p>
+            {requestedAtLabel ? <p className="onboarding-inline-note">送信日時: {requestedAtLabel}</p> : null}
+            <p className="onboarding-inline-note">承認後に再度アクセスするとホームへ進めます。</p>
+          </div>
+        </OnboardingShell>
+      ) : null}
     </>
   )
 }

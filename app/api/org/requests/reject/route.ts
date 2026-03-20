@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
 import { getUserIdFromToken, getOrgRole, isOrgAdmin } from "@/lib/apiAuth"
 import { writeAuditLog } from "@/lib/auditLog"
+import { updateJoinRequestDecision } from "@/lib/joinRequests"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -16,13 +17,13 @@ export async function POST(req: NextRequest) {
     if (!requestId) return NextResponse.json({ error: "requestId is required" }, { status: 400 })
 
     const admin = createSupabaseAdmin()
-    const { data: jr } = await admin
+    const { data: jr, error: fetchErr } = await admin
       .from("join_requests")
       .select("id, org_id, owner_user_id, requester_user_id, status")
       .eq("id", requestId)
       .maybeSingle()
     const row = jr as { org_id?: string; owner_user_id?: string; requester_user_id?: string; status?: string } | null
-    if (!row || row.status !== "pending") {
+    if (fetchErr || !row || row.status !== "pending") {
       return NextResponse.json({ error: "Request not found or already decided" }, { status: 400 })
     }
 
@@ -32,20 +33,33 @@ export async function POST(req: NextRequest) {
     }
 
     const now = new Date().toISOString()
-    await admin
-      .from("join_requests")
-      .update({ status: "rejected", decided_at: now, decided_by: userId })
-      .eq("id", requestId)
+    const decisionUpdate = await updateJoinRequestDecision(admin, requestId, {
+      status: "rejected",
+      decidedAt: now,
+      decidedBy: userId,
+    })
+    if (decisionUpdate.error) {
+      return NextResponse.json(
+        { error: decisionUpdate.error.message ?? "Failed to update join request" },
+        { status: 500 }
+      )
+    }
+    if (!decisionUpdate.updated) {
+      return NextResponse.json({ error: "Request not found or already decided" }, { status: 409 })
+    }
 
     if (row.requester_user_id && row.org_id) {
       const { data: org } = await admin.from("organizations").select("name").eq("id", row.org_id).maybeSingle()
       const orgName = (org as { name?: string } | null)?.name ?? ""
-      await admin.from("notifications").insert({
+      const { error: notificationErr } = await admin.from("notifications").insert({
         org_id: row.org_id,
         recipient_user_id: row.requester_user_id,
         type: "membership.rejected",
         payload: { org_id: row.org_id, org_name: orgName, join_request_id: requestId },
       })
+      if (notificationErr) {
+        console.error("[api/org/requests/reject] failed to notify requester", notificationErr)
+      }
     }
 
     const ownerUserId = row.owner_user_id
@@ -60,7 +74,13 @@ export async function POST(req: NextRequest) {
       )
       if (toUpdate?.id) {
         const payload = { ...(toUpdate.payload as object), resolved: true }
-        await admin.from("notifications").update({ read_at: now, payload }).eq("id", toUpdate.id)
+        const { error: ownerNotificationErr } = await admin
+          .from("notifications")
+          .update({ read_at: now, payload })
+          .eq("id", toUpdate.id)
+        if (ownerNotificationErr) {
+          console.error("[api/org/requests/reject] failed to resolve owner notification", ownerNotificationErr)
+        }
       }
     }
 

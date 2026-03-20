@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { requireAdminContext } from "@/lib/adminApi"
-import { ONBOARDING_ITEMS, completionRate } from "@/lib/onboarding"
+import { ONBOARDING_ITEMS, completionRate, filterOnboardingKeys } from "@/lib/onboarding"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -67,7 +67,9 @@ export async function GET(req: NextRequest) {
 
   const rates = Array.from(onboardingByUser.values()).map((items) => completionRate(Array.from(items)))
   const avgRate = rates.length > 0 ? Math.round(rates.reduce((sum, value) => sum + value, 0) / rates.length) : 0
-  const incompleteCount = Array.from(onboardingByUser.values()).filter((items) => items.size < ONBOARDING_ITEMS.length).length
+  const incompleteCount = Array.from(onboardingByUser.values()).filter(
+    (items) => filterOnboardingKeys(Array.from(items)).length < ONBOARDING_ITEMS.length
+  ).length
 
   return NextResponse.json({
     ok: true,

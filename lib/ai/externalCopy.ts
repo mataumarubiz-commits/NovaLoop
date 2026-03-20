@@ -1,7 +1,7 @@
 export const EXTERNAL_CHAT_COPY = {
   settings: {
     overview:
-      "Discord や LINE から、Nova loop 内の案件請求外注請求支払い通知マニュアルを確認できます",
+      "Discord や LINE から、NovaLoop 内の案件請求外注請求支払い通知マニュアルを確認できます",
     scope: "回答は、あなたの権限で閲覧できる範囲に限定されます",
     audit: "外部チャット経由の問い合わせは、改善と安全性のため監査ログに記録されます",
   },
@@ -11,17 +11,17 @@ export const EXTERNAL_CHAT_COPY = {
     permissionAdmin: "組織全体の請求サマリーは、owner または executive_assistant 権限で確認できます",
     permissionVendor: "vendor は自分に関係する情報だけ返します",
     temporaryError: "いま一時的に情報を取得できませんでした。少し時間をおいてもう一度お試しください",
-    temporaryErrorFollow: "必要なら Nova loop の画面でも確認してください",
-    unlinkedTitle: "まだNova loopと連携されていません",
+    temporaryErrorFollow: "必要なら NovaLoop の画面でも確認してください",
+    unlinkedTitle: "まだNovaLoopと連携されていません",
     unlinkedBody: "設定 > 外部チャット連携 から接続してください",
-    linkedTitle: "Nova loop との連携が完了しました",
+    linkedTitle: "NovaLoop との連携が完了しました",
     linkedBody: "このチャットで案件請求外注請求支払い通知マニュアルを確認できます",
   },
   discord: {
-    unlinkedTitle: "まだNova loopと連携されていません",
+    unlinkedTitle: "まだNovaLoopと連携されていません",
     unlinkedBody:
-      "このDiscordアカウントでは、Nova loop の組織データをまだ参照できません。Nova loop の設定画面で Discord 連携を完了してください。",
-    linkedTitle: "Nova loop と連携しました",
+      "このDiscordアカウントでは、NovaLoop の組織データをまだ参照できません。NovaLoop の設定画面で Discord 連携を完了してください。",
+    linkedTitle: "NovaLoop と連携しました",
     linkedBody:
       "このDiscordアカウントで、あなたがアクセス可能な案件請求外注請求支払い通知マニュアルを確認できます。",
     linkedExamples: [
@@ -31,10 +31,10 @@ export const EXTERNAL_CHAT_COPY = {
       "請求の手順教えて",
     ],
     buttons: {
-      open: "Nova loopを開く",
+      open: "NovaLoopを開く",
       detail: "詳細を見る",
       refresh: "再読み込み",
-      link: "Nova loopで連携する",
+      link: "NovaLoopで連携する",
       howTo: "連携方法を見る",
       approvalOnly: "承認待ちだけ見る",
       returnedOnly: "差し戻しだけ見る",
@@ -44,10 +44,10 @@ export const EXTERNAL_CHAT_COPY = {
     },
   },
   line: {
-    unlinkedTitle: "まだNova loopと連携されていません。",
+    unlinkedTitle: "まだNovaLoopと連携されていません。",
     unlinkedBody:
-      "Nova loop の設定画面で LINE 連携を完了すると、案件請求通知を確認できるようになります。",
-    linkedTitle: "Nova loopとの連携が完了しました。",
+      "NovaLoop の設定画面で LINE 連携を完了すると、案件請求通知を確認できるようになります。",
+    linkedTitle: "NovaLoopとの連携が完了しました。",
     linkedBody: "このLINEで、案件請求外注請求支払い通知マニュアルを確認できます。",
     linkedExamples: [
       "今月の請求どうなってる？",
