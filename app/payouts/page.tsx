@@ -66,14 +66,14 @@ const cardStyle: CSSProperties = {
   borderRadius: 16,
   padding: 18,
   background: "var(--surface)",
-  boxShadow: "0 8px 24px rgba(15, 23, 42, 0.06)",
+  boxShadow: "var(--shadow-md)",
 }
 
 const STATUS_META: Record<string, { label: string; bg: string; text: string }> = {
   draft: { label: "未確認", bg: "#f8fafc", text: "#475569" },
   submitted: { label: "提出済み", bg: "#eff6ff", text: "#1d4ed8" },
-  approved: { label: "承認済み", bg: "#ecfdf5", text: "#166534" },
-  rejected: { label: "差し戻し", bg: "#fff7ed", text: "#9a3412" },
+  approved: { label: "承認済み", bg: "var(--success-bg)", text: "var(--success-text)" },
+  rejected: { label: "差し戻し", bg: "var(--warning-bg)", text: "var(--warning-text)" },
   paid: { label: "支払済み", bg: "#f3e8ff", text: "#7e22ce" },
 }
 
@@ -415,18 +415,19 @@ export default function PayoutsPage() {
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg-grad)", padding: "32px 40px 60px" }}>
       <div style={{ maxWidth: 1220, margin: "0 auto", display: "grid", gap: 16 }}>
+        <nav className="page-tab-bar">
+          <Link href="/vendors" data-active="false">外注管理</Link>
+          <Link href="/payouts" data-active="true">振込</Link>
+        </nav>
         <header style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "end" }}>
           <div>
             <p style={{ margin: 0, fontSize: 12, letterSpacing: "0.08em", color: "var(--muted)" }}>PAYOUTS</p>
-            <h1 style={{ margin: "6px 0 8px", fontSize: 30, color: "var(--text)" }}>支払い管理</h1>
+            <h1 style={{ margin: "6px 0 8px", fontSize: 30, color: "var(--text)" }}>振込管理</h1>
             <p style={{ margin: 0, color: "var(--muted)" }}>
               外注請求の承認、支払予定化、銀行CSV、PDF ZIP をまとめて管理します。
             </p>
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <Link href="/vendors" style={linkButtonStyle}>
-              Vendors を開く
-            </Link>
             <select value={month} onChange={(event) => setMonth(event.target.value)} style={inputStyle}>
               {monthOptions.map((option) => (
                 <option key={option} value={option}>
@@ -505,8 +506,8 @@ export default function PayoutsPage() {
           </div>
         </section>
 
-        {error ? <section style={{ ...cardStyle, borderColor: "#fecaca", background: "#fff1f2", color: "#b91c1c" }}>{error}</section> : null}
-        {success ? <section style={{ ...cardStyle, borderColor: "#bbf7d0", background: "#f0fdf4", color: "#166534" }}>{success}</section> : null}
+        {error ? <section style={{ ...cardStyle, borderColor: "var(--error-border)", background: "var(--error-bg)", color: "var(--error-text)" }}>{error}</section> : null}
+        {success ? <section style={{ ...cardStyle, borderColor: "var(--success-border)", background: "var(--success-bg)", color: "var(--success-text)" }}>{success}</section> : null}
 
         <section style={{ ...cardStyle, display: "grid", gap: 14 }}>
           <div>
@@ -592,7 +593,7 @@ export default function PayoutsPage() {
                     <span>口座: {row.accountType || "-"} / {row.accountNumber || "-"}</span>
                     <span>名義カナ: {row.accountHolderKana || "-"}</span>
                   </div>
-                  {row.warning ? <div style={{ marginTop: 6, color: "#b45309", fontSize: 13 }}>{row.warning}</div> : null}
+                  {row.warning ? <div style={{ marginTop: 6, color: "var(--warning-text)", fontSize: 13 }}>{row.warning}</div> : null}
                 </div>
               ))}
             </div>
@@ -660,7 +661,7 @@ export default function PayoutsPage() {
                     <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                       <strong style={{ color: "var(--text)" }}>{vendor?.name ?? "外注先未設定"}</strong>
                       <span style={{ ...badgeBase, background: status.bg, color: status.text }}>{status.label}</span>
-                      {bankMissing ? <span style={{ ...badgeBase, background: "#fff7ed", color: "#9a3412" }}>口座不足</span> : null}
+                      {bankMissing ? <span style={{ ...badgeBase, background: "var(--warning-bg)", color: "var(--warning-text)" }}>口座不足</span> : null}
                     </div>
                     <div style={{ marginTop: 8, display: "flex", gap: 14, flexWrap: "wrap", fontSize: 13, color: "var(--muted)" }}>
                       <span>対象月: {row.billing_month}</span>

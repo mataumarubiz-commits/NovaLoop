@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react"
 import Link from "next/link"
@@ -8,6 +8,12 @@ import { useAuthOrg } from "@/hooks/useAuthOrg"
 import { trackClientEvent } from "@/lib/analytics"
 import OnboardingGuide from "@/components/home/OnboardingGuide"
 import type { OnboardingItemDefinition } from "@/lib/onboarding"
+import {
+  hasClientSubmissionSignal,
+  isContentClientOverdue,
+  isContentClosedStatus,
+  isContentEditorOverdue,
+} from "@/lib/contentWorkflow"
 import {
   notificationActionHref,
   notificationPriority,
@@ -25,23 +31,7 @@ type ContentRow = {
   status: string
   thumbnailDone: boolean
   editorSubmittedAt: string | null
-  unitPrice: number
-  deliveryMonth: string | null
-  billableFlag: boolean
-  invoiceId: string | null
-}
-
-type InvoiceRow = {
-  id: string
-  invoice_month: string
-  status: string
-}
-
-type VendorInvoiceRow = {
-  id: string
-  billing_month: string
-  status: string
-  total: number
+  clientSubmittedAt: string | null
 }
 
 type NotificationRow = {
@@ -81,8 +71,7 @@ const writeCachedOnboardingProgress = (orgId: string, value: OnboardingResponse)
   onboardingProgressCache.set(orgId, value)
 }
 
-const COMPLETED_STATUSES = new Set(["delivered", "published", "canceled", "cancelled"])
-const BILLABLE_DONE_STATUSES = new Set(["delivered", "published"])
+const COMPLETED_STATUSES = new Set(["completed", "approved", "launched", "invoiced", "delivered", "published", "canceled", "cancelled"])
 
 const cardStyle: CSSProperties = {
   border: "1px solid var(--border)",
@@ -99,14 +88,6 @@ const toYmd = (date: Date) => {
   return `${y}-${m}-${d}`
 }
 
-const toYm = (date: Date) => {
-  const y = date.getFullYear()
-  const m = String(date.getMonth() + 1).padStart(2, "0")
-  return `${y}-${m}`
-}
-
-const formatCurrency = (v: number) => `¥${new Intl.NumberFormat("ja-JP", { maximumFractionDigits: 0 }).format(v)}`
-
 const formatTimeAgo = (v: string) => {
   const diffMin = Math.max(0, Math.floor((Date.now() - new Date(v).getTime()) / 60000))
   if (diffMin < 1) return "たった今"
@@ -121,9 +102,7 @@ export default function Home() {
   const { user, activeOrgId, role, loading: authLoading } = useAuthOrg({ redirectToOnboarding: true })
   const [rows, setRows] = useState<ContentRow[]>([])
   const [kgiText, setKgiText] = useState<string>("")
-  const [invoices, setInvoices] = useState<InvoiceRow[]>([])
-  const [vendorInvoices, setVendorInvoices] = useState<VendorInvoiceRow[]>([])
-  const [unreadNotifications, setUnreadNotifications] = useState<NotificationRow[]>([])
+    const [unreadNotifications, setUnreadNotifications] = useState<NotificationRow[]>([])
   const [onboarding, setOnboarding] = useState<OnboardingResponse | null>(null)
   const [onboardingLoading, setOnboardingLoading] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -136,9 +115,9 @@ export default function Home() {
   const shouldShowOnboardingGuide = canAccessBilling && onboarding != null && (!onboarding.done || showChecklistPanel)
   const shouldPrioritizeOnboardingGuide = shouldShowOnboardingGuide
   const roleLabel = isOwner
-    ? "経営モード: 売上・粗利・締め管理"
+    ? "運用管理モード: 期限・通知・優先対応"
     : isExecutiveAssistant
-      ? "運用管理モード: 未処理・通知・締め管理"
+      ? "運用管理モード: 未読・期限・優先対応"
       : "制作進行モード: 今日やること・期限管理"
 
   useEffect(() => {
@@ -146,9 +125,7 @@ export default function Home() {
       const timer = setTimeout(() => {
         setRows([])
         setKgiText("")
-        setInvoices([])
-        setVendorInvoices([])
-        setUnreadNotifications([])
+                setUnreadNotifications([])
         setLoading(false)
       }, 0)
       return () => clearTimeout(timer)
@@ -161,7 +138,7 @@ export default function Home() {
 
       const contentsPromise = supabase
         .from("contents")
-        .select("id, project_name, title, due_client_at, due_editor_at, status, thumbnail_done, editor_submitted_at, unit_price, delivery_month, billable_flag, invoice_id, client:clients(name)")
+        .select("id, project_name, title, due_client_at, due_editor_at, status, thumbnail_done, editor_submitted_at, client_submitted_at, client:clients(name)")
         .eq("org_id", activeOrgId)
         .order("due_client_at", { ascending: true })
 
@@ -185,29 +162,10 @@ export default function Home() {
             .catch(() => ({ notifications: [] as NotificationRow[] }))
         : Promise.resolve({ notifications: [] as NotificationRow[] })
 
-      const invoicesPromise = canAccessBilling
-        ? supabase
-            .from("invoices")
-            .select("id, invoice_month, status")
-            .eq("org_id", activeOrgId)
-            .order("created_at", { ascending: false })
-        : Promise.resolve({ data: [], error: null })
-
-      const vendorInvoicesPromise = canAccessBilling
-        ? supabase
-            .from("vendor_invoices")
-            .select("id, billing_month, status, total")
-            .eq("org_id", activeOrgId)
-            .order("created_at", { ascending: false })
-        : Promise.resolve({ data: [], error: null })
-
-      const [contentsRes, settingRes, notificationsRes, invoicesRes, vendorInvoicesRes] = await Promise.all([
+      const [contentsRes, settingRes, notificationsRes] = await Promise.all([
         contentsPromise,
         settingPromise,
-        notificationsPromise,
-        invoicesPromise,
-        vendorInvoicesPromise,
-      ])
+        notificationsPromise,      ])
 
       if (!mounted) return
 
@@ -227,10 +185,7 @@ export default function Home() {
             status: row.status,
             thumbnailDone: row.thumbnail_done,
             editorSubmittedAt: row.editor_submitted_at ?? null,
-            unitPrice: Number(row.unit_price ?? 0),
-            deliveryMonth: row.delivery_month ?? null,
-            billableFlag: Boolean(row.billable_flag),
-            invoiceId: row.invoice_id ?? null,
+            clientSubmittedAt: row.client_submitted_at ?? null,
           }
         })
         setRows(mapped)
@@ -244,10 +199,6 @@ export default function Home() {
         return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       })
       setUnreadNotifications(sorted as NotificationRow[])
-
-      if (!invoicesRes.error) setInvoices((invoicesRes.data ?? []) as InvoiceRow[])
-      if (!vendorInvoicesRes.error) setVendorInvoices((vendorInvoicesRes.data ?? []) as VendorInvoiceRow[])
-
       setLoading(false)
     }
 
@@ -263,8 +214,7 @@ export default function Home() {
     d.setDate(d.getDate() + 1)
     return toYmd(d)
   }, [])
-  const thisMonth = useMemo(() => toYm(new Date()), [])
-
+  
   useEffect(() => {
     if (authLoading || !activeOrgId || !user?.id) return
     const key = `digest-notif-v1:${user.id}:${activeOrgId}:${todayYmd}`
@@ -339,138 +289,56 @@ export default function Home() {
     }
   }, [activeOrgId, canAccessBilling])
 
-  const incompleteRows = useMemo(() => rows.filter((row) => !COMPLETED_STATUSES.has(row.status)), [rows])
-  const sortedIncomplete = useMemo(() => [...incompleteRows].sort((a, b) => (a.dueClientAt < b.dueClientAt ? -1 : 1)), [incompleteRows])
-  const clientRiskRows = useMemo(() => {
-    const map = new Map<string, { clientName: string; clientOverdue: number; editorOverdue: number; total: number }>()
-    for (const row of incompleteRows) {
-      const key = row.clientName?.trim() || "未設定クライアント"
-      if (!map.has(key)) map.set(key, { clientName: key, clientOverdue: 0, editorOverdue: 0, total: 0 })
-      const entry = map.get(key)!
-      const isClientOverdue = row.dueClientAt < todayYmd
-      const isEditorOverdue = row.dueEditorAt < todayYmd && !row.editorSubmittedAt
-      if (isClientOverdue) entry.clientOverdue += 1
-      if (isEditorOverdue) entry.editorOverdue += 1
-      entry.total = entry.clientOverdue + entry.editorOverdue
-    }
-    return [...map.values()].filter((v) => v.total > 0).sort((a, b) => b.total - a.total || a.clientName.localeCompare(b.clientName, "ja"))
-  }, [incompleteRows, todayYmd])
-
-  const todayTotal = rows.filter((row) => row.dueClientAt === todayYmd).length
-  const tomorrowTotal = rows.filter((row) => row.dueClientAt === tomorrowYmd).length
-  const editorOverdue = incompleteRows.filter((row) => row.dueEditorAt < todayYmd && !row.editorSubmittedAt).length
-  const clientOverdue = incompleteRows.filter((row) => row.dueClientAt < todayYmd).length
-
-  const monthSales = rows
-    .filter((row) => row.deliveryMonth === thisMonth && row.billableFlag && BILLABLE_DONE_STATUSES.has(row.status))
-    .reduce((sum, row) => sum + row.unitPrice, 0)
-
-  const monthOutsource = vendorInvoices
-    .filter((row) => row.billing_month === thisMonth && row.status !== "void")
-    .reduce((sum, row) => sum + Number(row.total ?? 0), 0)
-
-  const grossProfit = monthSales - monthOutsource
-
-  const invoiceTargets = rows.filter(
-    (row) => row.deliveryMonth === thisMonth && row.billableFlag && BILLABLE_DONE_STATUSES.has(row.status)
+  const incompleteRows = useMemo(
+    () => rows.filter((row) => !COMPLETED_STATUSES.has(row.status) && !isContentClosedStatus(row.status)),
+    [rows]
   )
-  const unprocessedInvoiceTargetCount = invoiceTargets.filter((row) => !row.invoiceId).length
-  const createdInvoiceCount = invoices.filter((row) => row.invoice_month === thisMonth).length
-  const pendingPayoutCount = vendorInvoices.filter(
-    (row) => row.billing_month === thisMonth && (row.status === "submitted" || row.status === "approved")
-  ).length
-  const closingProgressPercent =
-    invoiceTargets.length > 0 ? Math.min(100, Math.round((createdInvoiceCount / invoiceTargets.length) * 100)) : 100
-  const urgentCount = canAccessBilling
-    ? clientOverdue + editorOverdue + unprocessedInvoiceTargetCount + pendingPayoutCount
-    : clientOverdue + editorOverdue
-
-  const quickActions = useMemo(() => {
-    if (isOwner) {
-      return [
-        { label: "請求未処理を確認", href: `/billing?month=${encodeURIComponent(thisMonth)}` },
-        { label: "粗利を確認", href: `/invoices?month=${encodeURIComponent(thisMonth)}` },
-        { label: "支払未処理を確認", href: `/payouts?month=${encodeURIComponent(thisMonth)}` },
-      ]
-    }
-    if (isExecutiveAssistant) {
-      return [
-        { label: "未読通知を処理", href: "/notifications" },
-        { label: "請求未処理を確認", href: `/billing?month=${encodeURIComponent(thisMonth)}` },
-        { label: "支払未処理を確認", href: `/payouts?month=${encodeURIComponent(thisMonth)}` },
-      ]
-    }
-    return [
-      { label: "今日提出の一覧を開く", href: "/contents?due=today" },
-      { label: "納期遅れを確認", href: "/contents?filter=client_overdue" },
-      { label: "外注遅延を確認", href: "/contents?filter=editor_overdue" },
-    ]
-  }, [isOwner, isExecutiveAssistant, thisMonth])
+  const sortedIncomplete = useMemo(() => [...incompleteRows].sort((a, b) => (a.dueClientAt < b.dueClientAt ? -1 : 1)), [incompleteRows])
+  const duePendingRows = incompleteRows.filter(
+    (row) => !hasClientSubmissionSignal(row.status, row.clientSubmittedAt)
+  )
+  const todayTotal = duePendingRows.filter((row) => row.dueClientAt === todayYmd).length
+  const tomorrowTotal = duePendingRows.filter((row) => row.dueClientAt === tomorrowYmd).length
+  const editorOverdue = incompleteRows.filter((row) => isContentEditorOverdue(row.status, row.dueEditorAt, todayYmd, row.editorSubmittedAt)).length
+  const clientOverdue = incompleteRows.filter((row) => isContentClientOverdue(row.status, row.dueClientAt, todayYmd, row.clientSubmittedAt)).length
 
   const actionTasks = useMemo<ActionTask[]>(() => {
     const tasks: ActionTask[] = []
     tasks.push({
       id: "client-overdue",
-      label: "納期遅れ対応",
-      description: "先方提出の遅延案件",
+      label: "邏肴悄驕・ｌ蟇ｾ蠢・,
+      description: "蜈域婿謠仙・縺ｮ驕・ｻｶ譯井ｻｶ",
       count: clientOverdue,
       href: "/contents?filter=client_overdue",
       tone: "danger",
     })
     tasks.push({
       id: "editor-overdue",
-      label: "外注遅延対応",
-      description: "編集者提出の遅延案件",
+      label: "螟匁ｳｨ驕・ｻｶ蟇ｾ蠢・,
+      description: "邱ｨ髮・・署蜃ｺ縺ｮ驕・ｻｶ譯井ｻｶ",
       count: editorOverdue,
       href: "/contents?filter=editor_overdue",
       tone: "danger",
     })
     tasks.push({
       id: "today-submit",
-      label: "今日提出の確認",
-      description: "本日提出予定の案件",
+      label: "莉頑律謠仙・縺ｮ遒ｺ隱・,
+      description: "譛ｬ譌･謠仙・莠亥ｮ壹・譯井ｻｶ",
       count: todayTotal,
       href: "/contents?due=today",
       tone: "warn",
     })
-    if (canAccessBilling) {
-      tasks.push({
-        id: "invoice-unprocessed",
-        label: "請求未処理",
-        description: "請求対象の未処理案件",
-        count: unprocessedInvoiceTargetCount,
-        href: `/billing?month=${encodeURIComponent(thisMonth)}`,
-        tone: "warn",
-      })
-      tasks.push({
-        id: "payout-pending",
-        label: "支払未処理",
-        description: "支払い承認待ち案件",
-        count: pendingPayoutCount,
-        href: `/payouts?month=${encodeURIComponent(thisMonth)}`,
-        tone: "warn",
-      })
-    }
-
     const toneWeight = (tone: ActionTask["tone"]) => (tone === "danger" ? 100 : tone === "warn" ? 60 : 20)
     return tasks
       .filter((t) => t.count > 0)
       .sort((a, b) => b.count + toneWeight(b.tone) - (a.count + toneWeight(a.tone)))
       .slice(0, 4)
-  }, [
-    canAccessBilling,
-    clientOverdue,
-    editorOverdue,
-    pendingPayoutCount,
-    thisMonth,
-    todayTotal,
-    unprocessedInvoiceTargetCount,
-  ])
+  }, [clientOverdue, editorOverdue, todayTotal])
 
   const hasHomeBlockingLoad = authLoading || loading || (canAccessBilling && onboardingLoading && onboarding == null)
 
   if (hasHomeBlockingLoad) {
-    return <div style={{ padding: 32, color: "var(--muted)" }}>読み込み中…</div>
+    return <div style={{ padding: 32, color: "var(--muted)" }}>隱ｭ縺ｿ霎ｼ縺ｿ荳ｭ窶ｦ</div>
   }
 
   return (
@@ -485,15 +353,15 @@ export default function Home() {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <div>
             <p style={{ fontSize: 12, letterSpacing: "0.08em", color: "var(--muted)" }}>SNS Ops SaaS</p>
-            <h1 style={{ fontSize: 28, margin: "6px 0 8px", color: "var(--text)" }}>ホーム</h1>
+            <h1 style={{ fontSize: 28, margin: "6px 0 8px", color: "var(--text)" }}>繝帙・繝</h1>
             <p style={{ fontSize: 12, color: "var(--muted)", margin: 0 }}>{roleLabel}</p>
           </div>
           <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
             <Link href="/help/setup" style={{ fontSize: 13, color: "var(--primary)", fontWeight: 600 }}>
-              使い方を見る
+              菴ｿ縺・婿繧定ｦ九ｋ
             </Link>
             <Link href="/notifications" style={{ fontSize: 13, color: "var(--primary)", fontWeight: 600 }}>
-              通知センターへ
+              騾夂衍繧ｻ繝ｳ繧ｿ繝ｼ縺ｸ
             </Link>
           </div>
         </div>
@@ -501,7 +369,7 @@ export default function Home() {
 
       {error && (
         <div style={{ ...cardStyle, marginTop: 12, borderColor: "#fca5a5", background: "#fef2f2", color: "#991b1b" }}>
-          データ取得に失敗しました: {error}
+          繝・・繧ｿ蜿門ｾ励↓螟ｱ謨励＠縺ｾ縺励◆: {error}
         </div>
       )}
 
@@ -509,7 +377,7 @@ export default function Home() {
         <header style={{ marginTop: 18, marginBottom: 20 }}>
           <div style={{ color: "var(--text)" }}>
             KGI:
-            <span style={{ marginLeft: 8, fontWeight: 600 }}>{kgiText || "KGI未設定（/settings で設定）"}</span>
+            <span style={{ marginLeft: 8, fontWeight: 600 }}>{kgiText || "KGI譛ｪ險ｭ螳夲ｼ・settings 縺ｧ險ｭ螳夲ｼ・}</span>
           </div>
         </header>
       ) : null}
@@ -518,29 +386,14 @@ export default function Home() {
         <OnboardingGuide items={onboarding.items} completionRate={onboarding.completion_rate} />
       ) : null}
 
-      <section style={{ ...cardStyle, marginBottom: 14, borderColor: urgentCount > 0 ? "#fca5a5" : "#86efac", background: urgentCount > 0 ? "#fff7f7" : "#f0fdf4" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <div>
-            <div style={{ fontSize: 12, color: urgentCount > 0 ? "#991b1b" : "#166534", fontWeight: 700 }}>
-              {urgentCount > 0 ? "危険: 優先対応が必要です" : "安心: 重大な遅延はありません"}
-            </div>
-            <div style={{ fontSize: 14, color: "var(--text)", marginTop: 2 }}>
-              緊急対応件数 <strong>{urgentCount}件</strong>
-            </div>
-          </div>
-          <Link href={urgentCount > 0 ? "/contents?filter=client_overdue" : "/contents?due=today"} style={{ fontSize: 13, fontWeight: 700, color: "var(--primary)", textDecoration: "none" }}>
-            今すぐ確認
-          </Link>
-        </div>
-      </section>
 
       <section style={{ ...cardStyle, marginBottom: 14 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 8 }}>
-          <h2 style={{ margin: 0, fontSize: 15, color: "var(--text)" }}>今すぐ動くタスク</h2>
-          <span style={{ fontSize: 12, color: "var(--muted)" }}>優先度順</span>
+          <h2 style={{ margin: 0, fontSize: 15, color: "var(--text)" }}>莉翫☆縺仙虚縺上ち繧ｹ繧ｯ</h2>
+          <span style={{ fontSize: 12, color: "var(--muted)" }}>蜆ｪ蜈亥ｺｦ鬆・/span>
         </div>
         {actionTasks.length === 0 ? (
-          <p style={{ margin: 0, fontSize: 13, color: "var(--muted)" }}>緊急タスクはありません。通常進行を維持してください。</p>
+          <p style={{ margin: 0, fontSize: 13, color: "var(--muted)" }}>邱頑･繧ｿ繧ｹ繧ｯ縺ｯ縺ゅｊ縺ｾ縺帙ｓ縲る壼ｸｸ騾ｲ陦後ｒ邯ｭ謖√＠縺ｦ縺上□縺輔＞縲・/p>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 8 }}>
             {actionTasks.map((task) => {
@@ -575,73 +428,43 @@ export default function Home() {
         )}
       </section>
 
-      <section style={{ ...cardStyle, marginBottom: 16 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <h2 style={{ margin: 0, fontSize: 15, color: "var(--text)" }}>最優先アクション</h2>
-          <span style={{ fontSize: 12, color: "var(--muted)" }}>ロール別に最適化</span>
-        </div>
-        <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 8 }}>
-          {quickActions.map((a) => (
-            <Link key={a.href + a.label} href={a.href} style={{ border: "1px solid var(--border)", borderRadius: 10, padding: "10px 12px", textDecoration: "none", color: "var(--text)", background: "var(--surface-2)", fontSize: 13, fontWeight: 600 }}>
-              {a.label}
-            </Link>
-          ))}
-        </div>
-      </section>
 
       <section style={{ marginBottom: 22 }}>
-        <h2 style={{ fontSize: 16, marginBottom: 10, color: "var(--text)" }}>今日の行動</h2>
+        <h2 style={{ fontSize: 16, marginBottom: 10, color: "var(--text)" }}>莉頑律縺ｮ陦悟虚</h2>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12 }}>
           <Link href="/contents?due=today" style={{ ...cardStyle, textDecoration: "none", color: "inherit" }}>
-            <div style={{ fontSize: 12, color: "var(--muted)" }}>今日の先方提出</div>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>莉頑律縺ｮ蜈域婿謠仙・</div>
             <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>{todayTotal}</div>
           </Link>
           <Link href="/contents?due=tomorrow" style={{ ...cardStyle, textDecoration: "none", color: "inherit" }}>
-            <div style={{ fontSize: 12, color: "var(--muted)" }}>明日の先方提出</div>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>譏取律縺ｮ蜈域婿謠仙・</div>
             <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>{tomorrowTotal}</div>
           </Link>
           <Link href="/contents?filter=editor_overdue" style={{ ...cardStyle, textDecoration: "none", color: "inherit", borderColor: editorOverdue > 0 ? "#f87171" : "var(--border)", background: editorOverdue > 0 ? "#fff5f5" : "var(--surface)" }}>
-            <div style={{ fontSize: 12, color: "var(--muted)" }}>外注未提出</div>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>螟匁ｳｨ譛ｪ謠仙・</div>
             <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6, color: editorOverdue > 0 ? "#b91c1c" : "var(--text)" }}>{editorOverdue}</div>
           </Link>
           <Link href="/contents?filter=client_overdue" style={{ ...cardStyle, textDecoration: "none", color: "inherit", borderColor: clientOverdue > 0 ? "#f87171" : "var(--border)", background: clientOverdue > 0 ? "#fff5f5" : "var(--surface)" }}>
-            <div style={{ fontSize: 12, color: "var(--muted)" }}>納期遅れ</div>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>邏肴悄驕・ｌ</div>
             <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6, color: clientOverdue > 0 ? "#b91c1c" : "var(--text)" }}>{clientOverdue}</div>
           </Link>
-          {canAccessBilling ? (
-            <>
-              <Link href={`/billing?month=${encodeURIComponent(thisMonth)}`} style={{ ...cardStyle, textDecoration: "none", color: "inherit" }}>
-                <div style={{ fontSize: 12, color: "var(--muted)" }}>今月売上</div>
-                <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>{formatCurrency(monthSales)}</div>
-              </Link>
-              <Link href={`/payouts?month=${encodeURIComponent(thisMonth)}`} style={{ ...cardStyle, textDecoration: "none", color: "inherit" }}>
-                <div style={{ fontSize: 12, color: "var(--muted)" }}>今月外注費</div>
-                <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>{formatCurrency(monthOutsource)}</div>
-              </Link>
-              <Link href={`/billing?month=${encodeURIComponent(thisMonth)}`} style={{ ...cardStyle, textDecoration: "none", color: "inherit" }}>
-                <div style={{ fontSize: 12, color: "var(--muted)" }}>粗利</div>
-                <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>{formatCurrency(grossProfit)}</div>
-              </Link>
-            </>
-          ) : (
-            <Link href="/contents?filter=client_overdue" style={{ ...cardStyle, textDecoration: "none", color: "inherit" }}>
-              <div style={{ fontSize: 12, color: "var(--muted)" }}>優先対応件数</div>
-              <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6, color: clientOverdue + editorOverdue > 0 ? "#b91c1c" : "var(--text)" }}>
-                {clientOverdue + editorOverdue}
-              </div>
-            </Link>
-          )}
+          <Link href="/contents?filter=client_overdue" style={{ ...cardStyle, textDecoration: "none", color: "inherit" }}>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>蜆ｪ蜈亥ｯｾ蠢應ｻｶ謨ｰ</div>
+            <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6, color: clientOverdue + editorOverdue > 0 ? "#b91c1c" : "var(--text)" }}>
+              {clientOverdue + editorOverdue}
+            </div>
+          </Link>
         </div>
       </section>
 
       <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12, marginBottom: 18 }}>
         <div style={cardStyle}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-            <h2 style={{ fontSize: 16, color: "var(--text)", margin: 0 }}>通知サマリ</h2>
-            <Link href="/notifications" style={{ fontSize: 12, color: "var(--primary)", fontWeight: 600 }}>もっと見る</Link>
+            <h2 style={{ fontSize: 16, color: "var(--text)", margin: 0 }}>騾夂衍繧ｵ繝槭Μ</h2>
+            <Link href="/notifications" style={{ fontSize: 12, color: "var(--primary)", fontWeight: 600 }}>繧ゅ▲縺ｨ隕九ｋ</Link>
           </div>
           {unreadNotifications.length === 0 ? (
-            <p style={{ margin: 0, fontSize: 13, color: "var(--muted)" }}>未読通知はありません。</p>
+            <p style={{ margin: 0, fontSize: 13, color: "var(--muted)" }}>譛ｪ隱ｭ騾夂衍縺ｯ縺ゅｊ縺ｾ縺帙ｓ縲・/p>
           ) : (
             <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 8 }}>
               {unreadNotifications.slice(0, 5).map((n) => (
@@ -678,7 +501,7 @@ export default function Home() {
                       }
                       style={{ fontSize: 12, color: "var(--primary)", fontWeight: 600 }}
                     >
-                      対応
+                      蟇ｾ蠢・
                     </Link>
                   </div>
                 </li>
@@ -688,119 +511,52 @@ export default function Home() {
         </div>
 
         <div style={cardStyle}>
-          <h2 style={{ fontSize: 16, color: "var(--text)", margin: "0 0 10px 0" }}>締め状況</h2>
-          {canAccessBilling ? (
-            <>
-              <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 6 }}>請求生成状況</div>
-              <div style={{ fontSize: 20, fontWeight: 700, color: "var(--text)", marginBottom: 12 }}>
-                {createdInvoiceCount} / {invoiceTargets.length}
-              </div>
-              <div style={{ height: 8, borderRadius: 999, background: "var(--surface-2)", overflow: "hidden", marginBottom: 12 }}>
-                <div
-                  style={{
-                    width: `${closingProgressPercent}%`,
-                    height: "100%",
-                    background: closingProgressPercent >= 100 ? "#22c55e" : "var(--primary)",
-                    transition: "width 0.2s ease",
-                  }}
-                />
-              </div>
-              <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 6 }}>未処理の請求対象</div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: unprocessedInvoiceTargetCount > 0 ? "#b91c1c" : "var(--text)", marginBottom: 12 }}>
-                {unprocessedInvoiceTargetCount}件
-              </div>
-              <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 6 }}>未処理の支払い対象</div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: pendingPayoutCount > 0 ? "#b91c1c" : "var(--text)" }}>
-                {pendingPayoutCount}件
-              </div>
-            </>
-          ) : (
-            <>
-              <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 6 }}>今日・明日の提出見込み</div>
-              <div style={{ fontSize: 20, fontWeight: 700, color: "var(--text)", marginBottom: 12 }}>
-                {todayTotal + tomorrowTotal}件
-              </div>
-              <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 6 }}>遅延対応が必要</div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: clientOverdue + editorOverdue > 0 ? "#b91c1c" : "var(--text)" }}>
-                {clientOverdue + editorOverdue}件
-              </div>
-            </>
-          )}
+          <h2 style={{ fontSize: 16, color: "var(--text)", margin: "0 0 10px 0" }}>邱繧∫憾豕・/h2>
+          <>
+            <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 6 }}>莉頑律繝ｻ譏取律縺ｮ謠仙・隕玖ｾｼ縺ｿ</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: "var(--text)", marginBottom: 12 }}>
+              {todayTotal + tomorrowTotal}莉ｶ
+            </div>
+            <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 6 }}>驕・ｻｶ蟇ｾ蠢懊′蠢・ｦ・/div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: clientOverdue + editorOverdue > 0 ? "#b91c1c" : "var(--text)" }}>
+              {clientOverdue + editorOverdue}莉ｶ
+            </div>
+          </>
         </div>
       </section>
 
-      <section style={{ ...cardStyle, marginBottom: 18 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-          <div>
-            <h2 style={{ margin: 0, fontSize: 16, color: "var(--text)" }}>改善要望 / バグ報告</h2>
-            <p style={{ margin: "6px 0 0", fontSize: 13, color: "var(--muted)" }}>
-              導入で詰まった場所や改善したい点があれば、そのまま送れます。
-            </p>
-          </div>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <Link href="/settings/dashboard?context=/home&type=feedback" style={{ fontSize: 13, fontWeight: 700, color: "var(--primary)", textDecoration: "none" }}>
-              改善要望を送る
-            </Link>
-            <Link href="/settings/dashboard?context=/home&type=bug" style={{ fontSize: 13, fontWeight: 700, color: "var(--primary)", textDecoration: "none" }}>
-              バグ報告を送る
-            </Link>
-          </div>
-        </div>
-      </section>
-
-      <section style={{ ...cardStyle, marginBottom: 18 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
-          <h2 style={{ fontSize: 16, color: "var(--text)", margin: 0 }}>クライアント別の危険案件</h2>
-          <Link href="/contents?filter=client_overdue" style={{ fontSize: 12, color: "var(--primary)", fontWeight: 600 }}>遅延一覧へ</Link>
-        </div>
-        {clientRiskRows.length === 0 ? (
-          <p style={{ margin: 0, fontSize: 13, color: "var(--muted)" }}>危険案件はありません。進行は安定しています。</p>
-        ) : (
-          <div style={{ display: "grid", gap: 8 }}>
-            {clientRiskRows.slice(0, 8).map((r) => (
-              <div key={r.clientName} style={{ border: "1px solid #fecaca", borderRadius: 10, background: "#fff7f7", padding: "8px 10px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: "#991b1b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.clientName}</div>
-                  <div style={{ fontSize: 12, color: "#7f1d1d" }}>納期遅れ {r.clientOverdue}件 / 外注遅延 {r.editorOverdue}件</div>
-                </div>
-                <Link href="/contents?filter=client_overdue" style={{ fontSize: 12, color: "var(--primary)", fontWeight: 700, textDecoration: "none", flexShrink: 0 }}>
-                  対応する
-                </Link>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
 
       <section>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <h2 style={{ fontSize: 18, marginBottom: 8, color: "var(--text)" }}>未完了一覧</h2>
-          <span style={{ fontSize: 12, color: "var(--muted)" }}>先方提出日 昇順</span>
+          <h2 style={{ fontSize: 18, marginBottom: 8, color: "var(--text)" }}>譛ｪ螳御ｺ・ｸ隕ｧ</h2>
+          <span style={{ fontSize: 12, color: "var(--muted)" }}>蜈域婿謠仙・譌･ 譏・・/span>
         </div>
         <div style={{ display: "grid", gap: 10 }}>
           {sortedIncomplete.slice(0, 12).map((row) => {
-            const isOverdue = row.dueClientAt < todayYmd
-            const isEditorLate = row.dueEditorAt < todayYmd && !row.editorSubmittedAt
+            const isOverdue = isContentClientOverdue(row.status, row.dueClientAt, todayYmd, row.clientSubmittedAt)
+            const isEditorLate = isContentEditorOverdue(row.status, row.dueEditorAt, todayYmd, row.editorSubmittedAt)
             return (
               <div key={row.id} style={{ ...cardStyle, borderColor: isOverdue ? "#ef4444" : "var(--border)", background: isOverdue ? "#fff5f5" : "var(--surface)" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14 }}>
                   <div>
                     <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 4 }}>{row.clientName} / {row.projectName}</div>
                     <div style={{ fontSize: 16, fontWeight: 600, color: "var(--text)" }}>{row.title}</div>
-                    <div style={{ fontSize: 12, marginTop: 6, color: "var(--text)" }}>先方提出: {row.dueClientAt} / 編集者提出: {row.dueEditorAt}</div>
+                    <div style={{ fontSize: 12, marginTop: 6, color: "var(--text)" }}>蜈域婿謠仙・: {row.dueClientAt} / 邱ｨ髮・・署蜃ｺ: {row.dueEditorAt}</div>
                   </div>
                   <div style={{ textAlign: "right", display: "grid", gap: 4 }}>
-                    {isOverdue && <span style={{ fontSize: 11, borderRadius: 999, background: "#fee2e2", color: "#b91c1c", padding: "2px 8px" }}>納期遅れ</span>}
-                    {isEditorLate && <span style={{ fontSize: 11, borderRadius: 999, background: "#fee2e2", color: "#b91c1c", padding: "2px 8px" }}>外注遅れ</span>}
-                    {!row.thumbnailDone && <span style={{ fontSize: 11, borderRadius: 999, border: "1px solid var(--chip-border)", color: "var(--chip-text)", padding: "2px 8px" }}>サムネ未</span>}
+                    {isOverdue && <span style={{ fontSize: 11, borderRadius: 999, background: "#fee2e2", color: "#b91c1c", padding: "2px 8px" }}>邏肴悄驕・ｌ</span>}
+                    {isEditorLate && <span style={{ fontSize: 11, borderRadius: 999, background: "#fee2e2", color: "#b91c1c", padding: "2px 8px" }}>螟匁ｳｨ驕・ｌ</span>}
+                    {!row.thumbnailDone && <span style={{ fontSize: 11, borderRadius: 999, border: "1px solid var(--chip-border)", color: "var(--chip-text)", padding: "2px 8px" }}>繧ｵ繝繝肴悴</span>}
                   </div>
                 </div>
               </div>
             )
           })}
-          {sortedIncomplete.length === 0 && <p style={{ color: "var(--muted)" }}>未完了のコンテンツはありません。</p>}
+          {sortedIncomplete.length === 0 && <p style={{ color: "var(--muted)" }}>譛ｪ螳御ｺ・・繧ｳ繝ｳ繝・Φ繝・・縺ゅｊ縺ｾ縺帙ｓ縲・/p>}
         </div>
       </section>
     </div>
   )
 }
+
+

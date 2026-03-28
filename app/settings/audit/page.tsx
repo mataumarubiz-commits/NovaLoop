@@ -68,7 +68,7 @@ export default function AuditSettingsPage() {
           </button>
         </header>
 
-        {error ? <section style={{ ...cardStyle, background: "#fff1f2", borderColor: "#fecaca", color: "#b91c1c" }}>{error}</section> : null}
+        {error ? <section style={{ ...cardStyle, background: "var(--error-bg)", borderColor: "var(--error-border)", color: "var(--error-text)" }}>{error}</section> : null}
 
         <section style={cardStyle}>
           {logs.length === 0 ? (

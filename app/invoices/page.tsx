@@ -50,7 +50,7 @@ const cardStyle: CSSProperties = {
   borderRadius: 16,
   padding: 18,
   background: "var(--surface)",
-  boxShadow: "0 8px 24px rgba(15, 23, 42, 0.06)",
+  boxShadow: "var(--shadow-md)",
 }
 
 const badgeBase: CSSProperties = {
@@ -64,8 +64,8 @@ const badgeBase: CSSProperties = {
 
 const STATUS_META: Record<string, { label: string; bg: string; text: string }> = {
   draft: { label: "Draft", bg: "#f8fafc", text: "#475569" },
-  issued: { label: "発行済み", bg: "#ecfdf5", text: "#166534" },
-  void: { label: "無効", bg: "#fff1f2", text: "#be123c" },
+  issued: { label: "発行済み", bg: "var(--success-bg)", text: "var(--success-text)" },
+  void: { label: "無効", bg: "var(--error-bg)", text: "var(--error-text)" },
 }
 
 function formatCurrency(value: number | null | undefined) {
@@ -134,7 +134,7 @@ export default function InvoicesPage() {
       if (!active) return
       if (invoiceError) {
         setRows([])
-        setError(`請求書一覧の取得に失敗しました: ${invoiceError.message}`)
+        setError(`請求書の取得に失敗しました: ${invoiceError.message}`)
         setLoading(false)
         return
       }
@@ -453,11 +453,15 @@ export default function InvoicesPage() {
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg-grad)", padding: "32px 40px 60px" }}>
       <div style={{ maxWidth: 1220, margin: "0 auto", display: "grid", gap: 16 }}>
+        <nav className="page-tab-bar">
+          <Link href="/billing" data-active="false">請求作成</Link>
+          <Link href="/invoices" data-active="true">請求書</Link>
+        </nav>
         <header style={{ display: "grid", gap: 8 }}>
           <p style={{ margin: 0, fontSize: 12, letterSpacing: "0.08em", color: "var(--muted)" }}>INVOICES</p>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "end" }}>
             <div>
-              <h1 style={{ margin: 0, fontSize: 30, color: "var(--text)" }}>請求書一覧</h1>
+              <h1 style={{ margin: 0, fontSize: 30, color: "var(--text)" }}>請求書</h1>
               <p style={{ margin: "8px 0 0", color: "var(--muted)" }}>
                 一括発行、一括PDF、一括送付準備、コピー新規をここから行います。
               </p>
@@ -570,10 +574,10 @@ export default function InvoicesPage() {
         </section>
 
         {error ? (
-          <section style={{ ...cardStyle, borderColor: "#fecaca", background: "#fff1f2", color: "#b91c1c" }}>{error}</section>
+          <section style={{ ...cardStyle, borderColor: "var(--error-border)", background: "var(--error-bg)", color: "var(--error-text)" }}>{error}</section>
         ) : null}
         {success ? (
-          <section style={{ ...cardStyle, borderColor: "#bbf7d0", background: "#f0fdf4", color: "#166534" }}>{success}</section>
+          <section style={{ ...cardStyle, borderColor: "var(--success-border)", background: "var(--success-bg)", color: "var(--success-text)" }}>{success}</section>
         ) : null}
 
         {sendSummary ? (
@@ -594,7 +598,7 @@ export default function InvoicesPage() {
                     {recipient.email ? ` / ${recipient.email}` : ""}
                   </div>
                   {recipient.address ? <div style={{ marginTop: 4, fontSize: 13, color: "var(--muted)" }}>{recipient.address}</div> : null}
-                  {recipient.warning ? <div style={{ marginTop: 6, color: "#b45309", fontSize: 13 }}>{recipient.warning}</div> : null}
+                  {recipient.warning ? <div style={{ marginTop: 6, color: "var(--warning-text)", fontSize: 13 }}>{recipient.warning}</div> : null}
                 </div>
               ))}
             </div>

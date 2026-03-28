@@ -49,7 +49,7 @@ const cardStyle: CSSProperties = {
   borderRadius: 16,
   padding: 18,
   background: "var(--surface)",
-  boxShadow: "0 10px 30px rgba(15,23,42,0.06)",
+  boxShadow: "var(--shadow-md)",
 }
 
 const buttonStyle: CSSProperties = {
@@ -318,7 +318,7 @@ export default function VendorDetailPage() {
           </div>
         </header>
 
-        {error ? <section style={{ ...cardStyle, borderColor: "#fecaca", background: "#fff1f2", color: "#b91c1c" }}>{error}</section> : null}
+        {error ? <section style={{ ...cardStyle, borderColor: "var(--error-border)", background: "var(--error-bg)", color: "var(--error-text)" }}>{error}</section> : null}
 
         <section style={{ ...cardStyle, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 }}>
           <SummaryBlock label="招待状態" value={vendorUser ? "登録済み" : vendor.vendor_portal_invited_at ? "招待済み" : "未招待"} />
@@ -457,7 +457,7 @@ export default function VendorDetailPage() {
               borderRadius: 18,
               border: "1px solid var(--border)",
               background: "var(--surface)",
-              boxShadow: "0 18px 48px rgba(15,23,42,0.24)",
+              boxShadow: "var(--shadow-lg)",
               padding: 20,
               display: "grid",
               gap: 14,

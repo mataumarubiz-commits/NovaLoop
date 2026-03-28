@@ -26,10 +26,10 @@ export default function GuideEmptyState({
   return (
     <section
       style={{
-        border: "1px dashed rgba(167, 139, 250, 0.45)",
+        border: "1px dashed var(--border)",
         borderRadius: 16,
         padding: 18,
-        background: "linear-gradient(180deg, rgba(255,255,255,0.94), rgba(248,244,255,0.96))",
+        background: "var(--surface)",
         display: "grid",
         gap: 12,
       }}

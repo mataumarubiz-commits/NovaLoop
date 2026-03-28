@@ -49,7 +49,7 @@ export default function PrimaryButton({
           fontSize: 15,
           fontWeight: 600,
           cursor: isDisabled ? "not-allowed" : "pointer",
-          boxShadow: isDisabled ? "none" : "0 2px 8px rgba(0,0,0,0.12)",
+          boxShadow: isDisabled ? "none" : "var(--shadow-sm)",
           opacity: isDisabled ? 0.9 : 1,
           transition: "opacity 0.15s, box-shadow 0.15s",
         }}

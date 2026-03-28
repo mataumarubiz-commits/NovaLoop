@@ -70,9 +70,9 @@ export default function HealthSettingsPage() {
     fontSize: 12,
     fontWeight: 700,
     background:
-      status === "ok" ? "#dcfce7" : status === "warning" ? "#fef3c7" : "#fee2e2",
+      status === "ok" ? "var(--success-bg)" : status === "warning" ? "var(--warning-bg)" : "var(--error-bg)",
     color:
-      status === "ok" ? "#166534" : status === "warning" ? "#92400e" : "#b91c1c",
+      status === "ok" ? "var(--success-text)" : status === "warning" ? "var(--warning-text)" : "var(--error-text)",
   })
 
   if (loading) {
@@ -131,16 +131,16 @@ export default function HealthSettingsPage() {
           </div>
           <div>
             <div style={{ fontSize: 12, color: "var(--muted)" }}>Warning</div>
-            <div style={{ fontSize: 28, fontWeight: 700, color: "#92400e" }}>{summary.warning}</div>
+            <div style={{ fontSize: 28, fontWeight: 700, color: "var(--warning-text)" }}>{summary.warning}</div>
           </div>
           <div>
             <div style={{ fontSize: 12, color: "var(--muted)" }}>Error</div>
-            <div style={{ fontSize: 28, fontWeight: 700, color: "#b91c1c" }}>{summary.error}</div>
+            <div style={{ fontSize: 28, fontWeight: 700, color: "var(--error-text)" }}>{summary.error}</div>
           </div>
         </section>
 
         {error && (
-          <section style={{ ...cardStyle, borderColor: "#fecaca", background: "#fff1f2", color: "#b91c1c" }}>
+          <section style={{ ...cardStyle, borderColor: "var(--error-border)", background: "var(--error-bg)", color: "var(--error-text)" }}>
             {error}
           </section>
         )}

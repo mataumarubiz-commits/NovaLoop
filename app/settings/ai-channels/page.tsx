@@ -195,8 +195,8 @@ export default function AiChannelsSettingsPage() {
           </div>
         </header>
 
-        {message ? <div style={{ ...cardStyle, borderColor: "#bbf7d0", background: "#f0fdf4", color: "#166534" }}>{message}</div> : null}
-        {error ? <div style={{ ...cardStyle, borderColor: "#fecaca", background: "#fff1f2", color: "#b91c1c" }}>{error}</div> : null}
+        {message ? <div style={{ ...cardStyle, borderColor: "var(--success-border)", background: "var(--success-bg)", color: "var(--success-text)" }}>{message}</div> : null}
+        {error ? <div style={{ ...cardStyle, borderColor: "var(--error-border)", background: "var(--error-bg)", color: "var(--error-text)" }}>{error}</div> : null}
 
         {[{ key: "discord", label: "Discord", row: discordLink }, { key: "line", label: "LINE", row: lineLink }].map((item) => (
           <section key={item.key} style={cardStyle}>

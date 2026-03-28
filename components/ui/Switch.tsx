@@ -42,8 +42,8 @@ export default function Switch({
           width: 20,
           height: 20,
           borderRadius: "50%",
-          background: "#fff",
-          boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
+          background: "var(--bg)",
+          boxShadow: "var(--shadow-sm)",
           transition: "left 0.2s",
         }}
       />

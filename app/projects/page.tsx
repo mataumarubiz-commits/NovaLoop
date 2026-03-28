@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import Link from "next/link"
 import { useEffect, useMemo, useState } from "react"
@@ -59,9 +59,20 @@ function statusBadge(enabled: boolean) {
         border: enabled ? "1px solid #86efac" : "1px solid #cbd5e1",
       }}
     >
-      {enabled ? "Set" : "Missing"}
+      {enabled ? "済" : "未設定"}
     </span>
   )
+}
+
+const PRESET_LABELS: Record<PresetKey, string> = {
+  all: "すべて",
+  risk: "リスク",
+  margin: "粗利",
+  revision: "修正多",
+  integration: "連携",
+  delay: "遅延",
+  material: "素材不足",
+  exception: "例外",
 }
 
 function loadSavedViews() {
@@ -232,35 +243,78 @@ export default function ProjectsPage() {
 
   return (
     <ProjectShell
-      title="Projects"
-      description="案件一覧、粗利、遅延、素材不足、例外、連携状況をまとめて確認します。"
+      title="案件管理"
+      description="案件マスタ、担当、期間、収支、連携設定をまとめて管理します。日々の1本ごとの進行更新はコンテンツで回します。"
       action={
         canEdit ? (
           <button type="button" onClick={() => setCreating((prev) => !prev)} style={buttonPrimaryStyle}>
-            {creating ? "Close form" : "+ Add project"}
+            {creating ? "閉じる" : "+ 案件マスタを作成"}
           </button>
         ) : null
       }
     >
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
-        <ProjectInfoCard label="month" value={month} />
-        <ProjectInfoCard label="projects" value={`${totals.projects}`} />
-        <ProjectInfoCard label="delays" value={`${totals.delay}`} accent={totals.delay > 0 ? "#b91c1c" : undefined} />
-        <ProjectInfoCard label="exceptions" value={`${totals.exception}`} accent={totals.exception > 0 ? "#b45309" : undefined} />
-        <ProjectInfoCard label="missing material" value={`${totals.missingMaterial}`} accent={totals.missingMaterial > 0 ? "#b45309" : undefined} />
-        <ProjectInfoCard label="contents" value={`${totals.contents}`} />
-        <ProjectInfoCard label="health" value={`${avgHealth}`} accent={avgHealth < 80 ? "#b91c1c" : undefined} />
-        {canViewFinance ? <ProjectInfoCard label="sales" value={formatCurrency(totals.sales)} /> : null}
-        {canViewFinance ? <ProjectInfoCard label="cost+expense" value={formatCurrency(totals.cost)} /> : null}
+        <ProjectInfoCard label="対象月" value={month} />
+        <ProjectInfoCard label="案件数" value={`${totals.projects}`} />
+        <ProjectInfoCard label="遅延" value={`${totals.delay}`} accent={totals.delay > 0 ? "#b91c1c" : undefined} />
+        <ProjectInfoCard label="例外" value={`${totals.exception}`} accent={totals.exception > 0 ? "#b45309" : undefined} />
+        <ProjectInfoCard label="素材不足" value={`${totals.missingMaterial}`} accent={totals.missingMaterial > 0 ? "#b45309" : undefined} />
+        <ProjectInfoCard label="コンテンツ数" value={`${totals.contents}`} />
+        <ProjectInfoCard label="健全度" value={`${avgHealth}`} accent={avgHealth < 80 ? "#b91c1c" : undefined} />
+        {canViewFinance ? <ProjectInfoCard label="売上" value={formatCurrency(totals.sales)} /> : null}
+        {canViewFinance ? <ProjectInfoCard label="原価+経費" value={formatCurrency(totals.cost)} /> : null}
       </div>
 
+      <ProjectSection title="使い分け" description="迷ったら、案件の箱はここで作成し、日々の制作進行はコンテンツで更新します。">
+        <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))" }}>
+          <div
+            style={{
+              display: "grid",
+              gap: 8,
+              padding: 16,
+              borderRadius: 18,
+              border: "1px solid var(--border)",
+              background: "var(--surface)",
+            }}
+          >
+            <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", color: "var(--muted)" }}>PROJECT MASTER</div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: "var(--text)" }}>このページでやること</div>
+            <div style={{ color: "var(--muted)", lineHeight: 1.7 }}>
+              案件名、責任者、期間、契約、連携先、収支の土台をここで整えます。継続運用する案件の正式な入口です。
+            </div>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>向いている場面: 新規案件の立ち上げ / 継続案件の整理 / 全体の見直し</div>
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gap: 8,
+              padding: 16,
+              borderRadius: 18,
+              border: "1px solid var(--border)",
+              background: "var(--surface)",
+            }}
+          >
+            <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", color: "var(--muted)" }}>DAILY EXECUTION</div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: "var(--text)" }}>コンテンツへ回すこと</div>
+            <div style={{ color: "var(--muted)", lineHeight: 1.7 }}>
+              1本ごとの納期、担当、進捗、請求対象の更新はコンテンツで回します。案件の箱を作ったら、実作業はそちらで動かします。
+            </div>
+            <div>
+              <Link href="/contents" style={{ ...buttonSecondaryStyle, display: "inline-flex", textDecoration: "none" }}>
+                コンテンツ運用を開く
+              </Link>
+            </div>
+          </div>
+        </div>
+      </ProjectSection>
+
       {creating ? (
-        <ProjectSection title="Create Project" description="まず案件の箱を作成し、その後に contents / tasks / assets を紐づけます。">
+        <ProjectSection title="案件マスタを作成" description="まず案件の箱を作成し、その後にコンテンツ・タスク・素材を紐づけます。">
           <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
             <label style={{ display: "grid", gap: 6 }}>
-              <span>client</span>
+              <span>クライアント</span>
               <select value={form.clientId} onChange={(event) => setForm((prev) => ({ ...prev, clientId: event.target.value }))} style={inputStyle}>
-                <option value="">select</option>
+                <option value="">選択してください</option>
                 {clients.map((client) => (
                   <option key={client.id} value={client.id}>
                     {client.name}
@@ -269,15 +323,15 @@ export default function ProjectsPage() {
               </select>
             </label>
             <label style={{ display: "grid", gap: 6 }}>
-              <span>code</span>
+              <span>案件コード</span>
               <input value={form.code} onChange={(event) => setForm((prev) => ({ ...prev, code: event.target.value }))} style={inputStyle} />
             </label>
             <label style={{ display: "grid", gap: 6 }}>
-              <span>name</span>
+              <span>案件名</span>
               <input value={form.name} onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))} style={inputStyle} />
             </label>
             <label style={{ display: "grid", gap: 6 }}>
-              <span>status</span>
+              <span>ステータス</span>
               <select value={form.status} onChange={(event) => setForm((prev) => ({ ...prev, status: event.target.value }))} style={inputStyle}>
                 {Object.entries(PROJECT_STATUS_LABELS).map(([value, label]) => (
                   <option key={value} value={value}>
@@ -287,7 +341,7 @@ export default function ProjectsPage() {
               </select>
             </label>
             <label style={{ display: "grid", gap: 6 }}>
-              <span>contract</span>
+              <span>契約形態</span>
               <select value={form.contractType} onChange={(event) => setForm((prev) => ({ ...prev, contractType: event.target.value }))} style={inputStyle}>
                 {Object.entries(CONTRACT_TYPE_LABELS).map(([value, label]) => (
                   <option key={value} value={value}>
@@ -297,9 +351,9 @@ export default function ProjectsPage() {
               </select>
             </label>
             <label style={{ display: "grid", gap: 6 }}>
-              <span>owner</span>
+              <span>担当者</span>
               <select value={form.ownerUserId} onChange={(event) => setForm((prev) => ({ ...prev, ownerUserId: event.target.value }))} style={inputStyle}>
-                <option value="">unset</option>
+                <option value="">未設定</option>
                 {members.map((member) => (
                   <option key={member.userId} value={member.userId}>
                     {member.displayName || member.email || member.userId}
@@ -308,11 +362,11 @@ export default function ProjectsPage() {
               </select>
             </label>
             <label style={{ display: "grid", gap: 6 }}>
-              <span>start</span>
+              <span>開始日</span>
               <input type="date" value={form.startDate} onChange={(event) => setForm((prev) => ({ ...prev, startDate: event.target.value }))} style={inputStyle} />
             </label>
             <label style={{ display: "grid", gap: 6 }}>
-              <span>end</span>
+              <span>終了日</span>
               <input type="date" value={form.endDate} onChange={(event) => setForm((prev) => ({ ...prev, endDate: event.target.value }))} style={inputStyle} />
             </label>
             <label style={{ display: "grid", gap: 6 }}>
@@ -332,17 +386,17 @@ export default function ProjectsPage() {
               <input value={form.discordChannelId} onChange={(event) => setForm((prev) => ({ ...prev, discordChannelId: event.target.value }))} style={inputStyle} />
             </label>
             <label style={{ display: "grid", gap: 6, gridColumn: "1 / -1" }}>
-              <span>drive</span>
+              <span>Google Drive</span>
               <input value={form.driveFolderUrl} onChange={(event) => setForm((prev) => ({ ...prev, driveFolderUrl: event.target.value }))} style={inputStyle} />
             </label>
             <label style={{ display: "grid", gap: 6, gridColumn: "1 / -1" }}>
-              <span>notes</span>
+              <span>メモ</span>
               <textarea value={form.notes} onChange={(event) => setForm((prev) => ({ ...prev, notes: event.target.value }))} rows={3} style={{ ...inputStyle, resize: "vertical" }} />
             </label>
           </div>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 12 }}>
             <button type="button" onClick={() => void createProject()} disabled={busy} style={buttonPrimaryStyle}>
-              {busy ? "Creating..." : "Create project"}
+              {busy ? "作成中..." : "案件マスタを作成"}
             </button>
             {uiError ? <span style={{ color: "#b91c1c", fontSize: 12 }}>{uiError}</span> : null}
             {uiSuccess ? <span style={{ color: "#166534", fontSize: 12 }}>{uiSuccess}</span> : null}
@@ -350,11 +404,11 @@ export default function ProjectsPage() {
         </ProjectSection>
       ) : null}
 
-      <ProjectSection title="Filters" description="クライアント、担当者、ステータス、保存ビューで絞り込みます。">
+      <ProjectSection title="絞り込み" description="クライアント、担当者、ステータス、保存ビューで絞り込みます。">
         <div style={{ display: "grid", gap: 10, gridTemplateColumns: "minmax(220px, 1.4fr) repeat(3, minmax(180px, 0.8fr))" }}>
-          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="search project / client / owner / note" style={inputStyle} />
+          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="案件名 / クライアント / 担当者 / メモ で検索" style={inputStyle} />
           <select value={clientFilter} onChange={(event) => setClientFilter(event.target.value)} style={inputStyle}>
-            <option value="">all clients</option>
+            <option value="">すべてのクライアント</option>
             {clients.map((client) => (
               <option key={client.id} value={client.id}>
                 {client.name}
@@ -362,7 +416,7 @@ export default function ProjectsPage() {
             ))}
           </select>
           <select value={ownerFilter} onChange={(event) => setOwnerFilter(event.target.value)} style={inputStyle}>
-            <option value="">all owners</option>
+            <option value="">すべての担当者</option>
             {members.map((member) => (
               <option key={member.userId} value={member.userId}>
                 {member.displayName || member.email || member.userId}
@@ -370,7 +424,7 @@ export default function ProjectsPage() {
             ))}
           </select>
           <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} style={inputStyle}>
-            <option value="">all statuses</option>
+            <option value="">すべてのステータス</option>
             {Object.entries(PROJECT_STATUS_LABELS).map(([value, label]) => (
               <option key={value} value={value}>
                 {label}
@@ -395,11 +449,11 @@ export default function ProjectsPage() {
                 cursor: "pointer",
               }}
             >
-              {value}
+              {PRESET_LABELS[value]}
             </button>
           ))}
           <button type="button" onClick={saveView} style={{ ...buttonSecondaryStyle, padding: "8px 12px", borderRadius: 999, marginLeft: "auto" }}>
-            Save view
+            ビューを保存
           </button>
         </div>
 
@@ -425,7 +479,7 @@ export default function ProjectsPage() {
                   onClick={() => setSavedViews((prev) => prev.filter((row) => row.id !== view.id))}
                   style={{ border: "none", background: "transparent", color: "#b91c1c", cursor: "pointer" }}
                 >
-                  Delete
+                  削除
                 </button>
               </div>
             ))}
@@ -433,35 +487,35 @@ export default function ProjectsPage() {
         ) : null}
       </ProjectSection>
 
-      <ProjectSection title="Project List" description="粗利、遅延、素材不足、停滞、例外、連携状況を一覧で見ます。">
-        {loading ? <div style={{ color: "var(--muted)" }}>Loading...</div> : null}
+      <ProjectSection title="案件一覧" description="粗利、遅延、素材不足、停滞、例外、連携状況を一覧で見ます。">
+        {loading ? <div style={{ color: "var(--muted)" }}>読み込み中...</div> : null}
         {!loading && error ? <div style={{ color: "#b91c1c" }}>{error}</div> : null}
-        {!loading && !error && filtered.length === 0 ? <div style={{ color: "var(--muted)" }}>No projects match the current filter.</div> : null}
+        {!loading && !error && filtered.length === 0 ? <div style={{ color: "var(--muted)" }}>条件に一致する案件がありません。</div> : null}
         {!loading && !error && filtered.length > 0 ? (
           <div style={{ overflowX: "auto" }}>
             <table style={{ ...tableStyle, minWidth: canViewFinance ? 1800 : 1460 }}>
               <thead>
                 <tr>
                   {[
-                    "project",
-                    "code",
-                    "client",
-                    "status",
-                    "contract",
-                    "owner",
-                    "range",
-                    "monthly items",
-                    ...(canViewFinance ? ["sales", "vendor cost", "expenses", "gross", "margin"] : []),
-                    "delays",
-                    "revision heavy",
-                    "missing material",
-                    "stagnation",
-                    "exceptions",
-                    "chatwork",
-                    "google",
-                    "slack/discord",
-                    "drive",
-                    "health",
+                    "案件名",
+                    "コード",
+                    "クライアント",
+                    "ステータス",
+                    "契約形態",
+                    "担当者",
+                    "期間",
+                    "当月件数",
+                    ...(canViewFinance ? ["売上", "外注費", "経費", "粗利", "利益率"] : []),
+                    "遅延",
+                    "修正多",
+                    "素材不足",
+                    "停滞",
+                    "例外",
+                    "Chatwork",
+                    "Google",
+                    "Slack/Discord",
+                    "Drive",
+                    "健全度",
                   ].map((label) => (
                     <th key={label} style={thStyle}>
                       {label}

@@ -10,6 +10,7 @@ export type AuditAction =
   | "page.duplicate"
   | "page.archive"
   | "page.restore"
+  | "page.template.install"
   | "page.comment.create"
   | "page.comment.delete"
   | "page.revision.restore"
@@ -31,9 +32,15 @@ export type AuditAction =
   | "membership.approve"
   | "membership.reject"
   | "role.update"
+  | "platform.purchase.request"
+  | "platform.payment.mark_paid"
+  | "platform.transfer.approve"
+  | "platform.entitlement.grant"
+  | "platform.entitlement.revoke"
+  | "org.create"
 
 type AuditParams = {
-  org_id: string
+  org_id: string | null
   user_id: string
   action: AuditAction
   resource_type?: string

@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { useCallback, useEffect, useState, useMemo, type CSSProperties } from "react"
+import { useCallback, useEffect, useState, useMemo, useRef, type CSSProperties } from "react"
 import { useSearchParams } from "next/navigation"
 import { supabase } from "../../lib/supabase"
 import { useAuthOrg } from "@/hooks/useAuthOrg"
@@ -9,65 +9,80 @@ import ChecklistReturnButton from "@/components/home/ChecklistReturnButton"
 import type { ApplyAiResultDetail } from "@/lib/aiClientEvents"
 import {
   buildContentHealthScore,
-  DRAFT_STATUS_OPTIONS,
-  FINAL_STATUS_OPTIONS,
-  MATERIAL_STATUS_OPTIONS,
+  isContentClientOverdue,
+  isContentEditorOverdue,
   normalizeContentLinks,
   validateContentRules,
   type ContentLinks,
 } from "@/lib/contentWorkflow"
+import {
+  GUIDED_ADD_TYPE_OPTIONS,
+  GUIDED_STATUS_OPTIONS,
+  buildGuidedTitle,
+  calculateGuidedAmount,
+  getGuidedBillingModelLabel,
+  getGuidedStatusLabel,
+  getGuidedTemplateById,
+  getGuidedTemplates,
+  getGuidedUnitLabel,
+  getMonthEndDate,
+  type GuidedAddType,
+  type GuidedTemplate,
+} from "@/lib/contentsGuidedCatalog"
 import GuideEmptyState from "@/components/shared/GuideEmptyState"
 
 const tableStyle: CSSProperties = {
   width: "100%",
   borderCollapse: "collapse",
   background: "var(--table-bg)",
+  tableLayout: "auto",
+  fontSize: 13,
 }
 
 const thStyle: CSSProperties = {
   textAlign: "left",
-  fontSize: 13,
+  fontSize: 12,
   letterSpacing: "0.04em",
-  color: "var(--text)",
+  color: "var(--muted)",
   fontWeight: 600,
-  padding: "10px 12px",
+  padding: "8px 10px",
   borderBottom: "1px solid var(--table-border)",
   background: "var(--table-header-bg)",
   position: "sticky",
   top: 0,
   zIndex: 1,
+  whiteSpace: "nowrap",
 }
 
 const tdStyle: CSSProperties = {
-  padding: "12px",
+  padding: "8px 10px",
   borderBottom: "1px solid var(--table-border)",
-  fontSize: 14,
+  fontSize: 13,
   fontWeight: 500,
   color: "var(--text)",
-  verticalAlign: "top",
+  verticalAlign: "middle",
 }
 
 /** クライアント・プロジェクト・タイトル用: 横読み省略表示 */
 const tdTextStyle: CSSProperties = {
   ...tdStyle,
-  maxWidth: 0,
-  minWidth: 140,
+  maxWidth: 160,
   overflow: "hidden",
   textOverflow: "ellipsis",
   whiteSpace: "nowrap",
 }
 const tdTitleStyle: CSSProperties = {
   ...tdTextStyle,
-  minWidth: 200,
+  maxWidth: 220,
 }
 
 /** 対象月など chip 用スタイル */
 const pillStyle: CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
-  padding: "2px 8px",
+  padding: "1px 6px",
   borderRadius: 999,
-  fontSize: 13,
+  fontSize: 11,
   fontWeight: 600,
   background: "var(--chip-bg)",
   color: "var(--chip-text)",
@@ -78,9 +93,9 @@ const pillStyle: CSSProperties = {
 const badgeGreen: CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
-  padding: "2px 8px",
+  padding: "1px 6px",
   borderRadius: 999,
-  fontSize: 13,
+  fontSize: 11,
   fontWeight: 600,
   background: "#dcfce7",
   color: "#14532d",
@@ -91,9 +106,9 @@ const badgeGreen: CSSProperties = {
 const badgeAmber: CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
-  padding: "2px 8px",
+  padding: "1px 6px",
   borderRadius: 999,
-  fontSize: 13,
+  fontSize: 11,
   fontWeight: 600,
   background: "#fef3c7",
   color: "#92400e",
@@ -104,14 +119,33 @@ const badgeAmber: CSSProperties = {
 const badgeRed: CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
-  padding: "2px 8px",
+  padding: "1px 6px",
   borderRadius: 999,
-  fontSize: 13,
+  fontSize: 11,
   fontWeight: 600,
   background: "#fee2e2",
   color: "#7f1d1d",
   border: "1px solid #fca5a5",
 }
+
+/** 操作ボタン共通スタイル */
+const actionBtnStyle: CSSProperties = {
+  padding: "3px 8px",
+  borderRadius: 6,
+  border: "1px solid var(--button-secondary-border)",
+  background: "var(--button-secondary-bg)",
+  fontSize: 11,
+  color: "var(--button-secondary-text)",
+  cursor: "pointer",
+  whiteSpace: "nowrap",
+}
+
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat("ja-JP", {
+    style: "currency",
+    currency: "JPY",
+    maximumFractionDigits: 0,
+  }).format(Number(value || 0))
 
 /** ステータス表示用の型 */
 type ClientOption = {
@@ -151,6 +185,12 @@ type Row = {
   projectId: string | null
   projectName: string
   title: string
+  serviceName: string
+  serviceCategory: string | null
+  billingModel: string | null
+  unitType: string | null
+  quantity: number
+  amount: number
   dueClientAt: string
   dueEditorAt: string
   publishAt: string | null
@@ -159,6 +199,7 @@ type Row = {
   billable: boolean
   deliveryMonth: string
   status: string
+  invoiceId: string | null
   editorSubmittedAt: string | null
   clientSubmittedAt: string | null
   sequenceNo: number | null
@@ -181,15 +222,11 @@ type DetailDraft = {
   projectName: string
   publishAt: string
   assigneeEditorUserId: string
-  assigneeCheckerUserId: string
   revisionCount: string
   workloadPoints: string
   estimatedCost: string
   nextAction: string
   blockedReason: string
-  materialStatus: string
-  draftStatus: string
-  finalStatus: string
   sequenceNo: string
   links: Record<string, string>
 }
@@ -202,47 +239,60 @@ type SavedView = {
   filterProjectId: string
 }
 
+type GuidedIntakeForm = {
+  clientId: string
+  addType: GuidedAddType
+  templateId: string
+  projectId: string
+  projectName: string
+  targetMonth: string
+  quantity: string
+  unitPrice: string
+  status: string
+  customTitle: string
+  dueClientAt: string
+  showAdvanced: boolean
+}
+
 const SAVED_VIEW_STORAGE_KEY = "novaloop:contents:saved-views"
 
 /** 未完了ではないステータス（納品・公開・没） */
-const COMPLETED_STATUSES = new Set(["delivered", "published", "canceled", "cancelled"])
+const COMPLETED_STATUSES = new Set(["delivered", "published", "invoiced", "canceled", "cancelled"])
 
 const isIncomplete = (status: string) => !COMPLETED_STATUSES.has(status)
 
-/** 先方遅延: 先方提出日を過ぎていて未完了 */
+/** 先方遅延: 先方提出前だけを遅延扱いにする */
 const isClientLate = (row: Row, todayYmd: string) =>
-  isIncomplete(row.status) && row.dueClientAt < todayYmd
+  isContentClientOverdue(row.status, row.dueClientAt, todayYmd, row.clientSubmittedAt)
 
-/** 外注遅延: 編集者提出日を過ぎていて未提出かつ未完了 */
+/** 外注遅延: 編集完了前だけを遅延扱いにする */
 const isEditorLate = (row: Row, todayYmd: string) =>
-  isIncomplete(row.status) &&
-  row.dueEditorAt < todayYmd &&
-  row.editorSubmittedAt == null
+  isContentEditorOverdue(row.status, row.dueEditorAt, todayYmd, row.editorSubmittedAt)
 
 const buildContentProgressNote = (row: Row, todayYmd: string) => {
   if (isClientLate(row, todayYmd)) {
-    return "先方提出日を過ぎています。最優先で対応状況を確認してください。"
+    return "先方提出日を過ぎています。影響範囲を確認し、今日中の対応方針を固めてください。"
   }
   if (isEditorLate(row, todayYmd)) {
-    return "編集者提出が遅れています。外注確認とリスケ判断が必要です。"
+    return "編集者提出が遅れています。進捗を確認し、必要なら日程の再調整を進めてください。"
   }
-  return "大きな遅延はありません。次の更新タイミングを確認してください。"
+  return "大きな遅れはありません。次の更新タイミングだけ押さえておけば十分です。"
 }
 
 const buildContentNextAction = (row: Row, todayYmd: string) => {
   if (isClientLate(row, todayYmd)) {
-    return "先方提出可否とリスケ要否を関係者に確認し、今日中の連絡方針を決めてください。"
+    return "先方提出の可否と再調整の要否を確認し、関係者への連絡方針を決めてください。"
   }
   if (isEditorLate(row, todayYmd)) {
-    return "編集者の提出見込みを確認し、差し替えや日程再調整の要否を整理してください。"
+    return "編集者の提出見込みを確認し、差し替えや日程再調整の必要性を整理してください。"
   }
   if (row.status === "submitted_to_client") {
-    return "先方確認待ちです。戻し有無と次回の確認タイミングを共有してください。"
+    return "先方確認待ちです。戻しの有無と次回の確認タイミングを共有してください。"
   }
   if (row.status === "delivered" || row.status === "published") {
-    return "納品済みです。請求対象月と請求可否を最終確認してください。"
+    return "納品済みです。請求対象月と請求可否を最後に確認してください。"
   }
-  return "次の更新担当と確認タイミングを決め、必要な共有先へ連絡してください。"
+  return "次の更新担当と確認タイミングを決め、必要な共有先へ案内してください。"
 }
 
 const buildContentShareDraft = (row: Row, todayYmd: string) =>
@@ -279,17 +329,28 @@ function buildContentAiMeta(row: Row) {
 
 const statusLabels: Record<string, string> = {
   not_started: "未着手",
-  materials_checked: "素材確認",
+  materials_checked: "進行中",
   editing: "編集中",
   internal_revision: "内部確認",
   editing_revision: "編集修正",
+  billable: "請求対象",
+  operating: "進行中",
   submitted_to_client: "先方提出",
   client_revision: "先方修正",
-  scheduling: "予約投稿",
-  delivered: "納品完了",
+  scheduling: "公開調整",
+  delivered: "納品済み",
+  completed: "納品済み",
+  approved: "請求対象",
+  invoiced: "請求済み",
   published: "公開済み",
+  launched: "公開済み",
   canceled: "キャンセル",
   cancelled: "キャンセル",
+}
+
+const createCurrentMonth = () => {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`
 }
 
 const toDateInputValue = (value: Date) => {
@@ -305,6 +366,23 @@ const addDays = (dateStr: string, days: number) => {
   return toDateInputValue(date)
 }
 
+const defaultGuidedTemplate = getGuidedTemplates("monthly_fixed")[0] ?? null
+
+const createDefaultGuidedForm = (): GuidedIntakeForm => ({
+  clientId: "",
+  addType: "monthly_fixed",
+  templateId: defaultGuidedTemplate?.id ?? "",
+  projectId: "",
+  projectName: "",
+  targetMonth: createCurrentMonth(),
+  quantity: String(defaultGuidedTemplate?.defaultQuantity ?? 1),
+  unitPrice: String(defaultGuidedTemplate?.defaultUnitPrice ?? 0),
+  status: defaultGuidedTemplate?.defaultStatus ?? "billable",
+  customTitle: "",
+  dueClientAt: getMonthEndDate(createCurrentMonth()),
+  showAdvanced: false,
+})
+
 const DETAIL_LINK_KEYS = ["draft", "final", "publish", "proof", "reference"] as const
 
 function buildDetailDraft(row: Row | null): DetailDraft {
@@ -314,15 +392,11 @@ function buildDetailDraft(row: Row | null): DetailDraft {
     projectName: row?.projectName ?? "",
     publishAt: row?.publishAt ?? "",
     assigneeEditorUserId: row?.assigneeEditorUserId ?? "",
-    assigneeCheckerUserId: row?.assigneeCheckerUserId ?? "",
     revisionCount: String(row?.revisionCount ?? 0),
     workloadPoints: String(row?.workloadPoints ?? 1),
     estimatedCost: String(row?.estimatedCost ?? 0),
     nextAction: row?.nextAction ?? "",
     blockedReason: row?.blockedReason ?? "",
-    materialStatus: row?.materialStatus ?? "not_ready",
-    draftStatus: row?.draftStatus ?? "not_started",
-    finalStatus: row?.finalStatus ?? "not_started",
     sequenceNo: row?.sequenceNo != null ? String(row.sequenceNo) : "",
     links: Object.fromEntries(DETAIL_LINK_KEYS.map((key) => [key, links[key] ?? ""])),
   }
@@ -349,6 +423,14 @@ type OrgDebug = {
 const isMissingLinksJsonError = (message?: string | null) =>
   message?.includes("column contents.links_json does not exist") ?? false
 
+const isMissingWorkItemFieldsError = (message?: string | null) =>
+  message?.includes("column contents.service_name does not exist") ||
+  message?.includes("column contents.quantity does not exist") ||
+  message?.includes("column contents.amount does not exist") ||
+  message?.includes("column contents.billing_model does not exist") ||
+  message?.includes("column contents.service_category does not exist") ||
+  message?.includes("column contents.unit_type does not exist")
+
 const withoutLinksJson = (payload: Record<string, unknown>) => {
   if (!Object.prototype.hasOwnProperty.call(payload, "links_json")) return payload
   const next = { ...payload }
@@ -356,12 +438,29 @@ const withoutLinksJson = (payload: Record<string, unknown>) => {
   return next
 }
 
+const withoutWorkItemFields = (payload: Record<string, unknown>) => {
+  const next = { ...payload }
+  delete next.service_name
+  delete next.service_category
+  delete next.billing_model
+  delete next.unit_type
+  delete next.quantity
+  delete next.amount
+  return next
+}
+
 const prepareContentWritePayload = (
   payload: Record<string, unknown> | Record<string, unknown>[],
-  supportsLinksJson: boolean | null
+  supportsLinksJson: boolean | null,
+  supportsWorkItemFields: boolean | null
 ) => {
-  if (supportsLinksJson !== false) return payload
-  return Array.isArray(payload) ? payload.map((item) => withoutLinksJson(item)) : withoutLinksJson(payload)
+  const sanitize = (item: Record<string, unknown>) => {
+    let next = item
+    if (supportsLinksJson === false) next = withoutLinksJson(next)
+    if (supportsWorkItemFields === false) next = withoutWorkItemFields(next)
+    return next
+  }
+  return Array.isArray(payload) ? payload.map((item) => sanitize(item)) : sanitize(payload)
 }
 
 export default function ContentsPage() {
@@ -375,6 +474,9 @@ export default function ContentsPage() {
   const [uiError, setUiError] = useState<string | null>(null)
   const [uiSuccess, setUiSuccess] = useState<string | null>(null)
   const [isAdding, setIsAdding] = useState(false)
+  const [guidedStep, setGuidedStep] = useState<1 | 2>(1)
+  const [guidedForm, setGuidedForm] = useState<GuidedIntakeForm>(createDefaultGuidedForm)
+  const [showFilters, setShowFilters] = useState(false)
   const [isCreatingClient, setIsCreatingClient] = useState(false)
   const [creatingClient, setCreatingClient] = useState(false)
   const [newClientName, setNewClientName] = useState("")
@@ -406,19 +508,26 @@ export default function ContentsPage() {
   const [editingCell, setEditingCell] = useState<EditingCell | null>(null)
   const [savingRowIds, setSavingRowIds] = useState<Set<string>>(() => new Set())
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({})
+  const [focusMonth, setFocusMonth] = useState(createCurrentMonth())
   const [filterDue, setFilterDue] = useState<"" | "today" | "tomorrow" | "week" | "late">("")
   const [filterClientId, setFilterClientId] = useState("")
   const [filterProjectId, setFilterProjectId] = useState("")
+  const [filterStatus, setFilterStatus] = useState("")
   const [savedViews, setSavedViews] = useState<SavedView[]>(loadSavedViews)
   const [detailRow, setDetailRow] = useState<Row | null>(null)
   const [detailTitleDraft, setDetailTitleDraft] = useState("")
   const [detailShareDraft, setDetailShareDraft] = useState("")
   const [detailDraft, setDetailDraft] = useState<DetailDraft>(() => buildDetailDraft(null))
   const [supportsLinksJson, setSupportsLinksJson] = useState<boolean | null>(null)
+  const [supportsWorkItemFields, setSupportsWorkItemFields] = useState<boolean | null>(null)
+  const isMountedRef = useRef(false)
+  const timeoutIdsRef = useRef<number[]>([])
   const searchParams = useSearchParams()
   const highlightId = searchParams.get("highlight")
   const openClientCreate = searchParams.get("newClient")
   const projectIdQuery = searchParams.get("projectId")
+  const dueQuery = searchParams.get("due")
+  const filterQuery = searchParams.get("filter")
   const isLoading = authLoading || loading
 
   const canEdit = role === "owner" || role === "executive_assistant"
@@ -434,10 +543,55 @@ export default function ContentsPage() {
     () => projects.find((project) => project.id === form.projectId) ?? null,
     [form.projectId, projects]
   )
+  const selectedGuidedProject = useMemo(
+    () => projects.find((project) => project.id === guidedForm.projectId) ?? null,
+    [guidedForm.projectId, projects]
+  )
+  const guidedTemplates = useMemo(
+    () => getGuidedTemplates(guidedForm.addType),
+    [guidedForm.addType]
+  )
+  const selectedGuidedTemplate = useMemo(
+    () =>
+      guidedTemplates.find((template) => template.id === guidedForm.templateId) ??
+      getGuidedTemplateById(guidedForm.templateId) ??
+      guidedTemplates[0] ??
+      null,
+    [guidedForm.templateId, guidedTemplates]
+  )
   const selectedBulkTemplate = useMemo(
     () => templates.find((template) => template.id === bulkTemplateId) ?? templates[0] ?? null,
     [bulkTemplateId, templates]
   )
+  const guidedProjects = useMemo(
+    () => projects.filter((project) => !guidedForm.clientId || project.clientId === guidedForm.clientId),
+    [guidedForm.clientId, projects]
+  )
+  const guidedPreviewTitle = useMemo(() => {
+    if (!selectedGuidedTemplate) return ""
+    return (
+      guidedForm.customTitle.trim() ||
+      buildGuidedTitle({
+        serviceName: selectedGuidedTemplate.name,
+        billingModel: selectedGuidedTemplate.billingModel,
+        unitType: selectedGuidedTemplate.unitType,
+        quantity: Number(guidedForm.quantity || selectedGuidedTemplate.defaultQuantity || 1),
+        targetMonth: guidedForm.targetMonth,
+      })
+    )
+  }, [guidedForm.customTitle, guidedForm.quantity, guidedForm.targetMonth, selectedGuidedTemplate])
+  const guidedPreviewAmount = useMemo(
+    () => calculateGuidedAmount(Number(guidedForm.quantity || 0), Number(guidedForm.unitPrice || 0)),
+    [guidedForm.quantity, guidedForm.unitPrice]
+  )
+
+  const scheduleDelayedAction = useCallback((callback: () => void, delayMs: number) => {
+    const timeoutId = window.setTimeout(() => {
+      if (isMountedRef.current) callback()
+    }, delayMs)
+    timeoutIdsRef.current.push(timeoutId)
+    return timeoutId
+  }, [])
 
   const todayYmd = useMemo(() => {
     const d = new Date()
@@ -479,11 +633,37 @@ export default function ContentsPage() {
     return true
   }
 
+  const detectWorkItemFieldSupport = async (currentOrgId: string) => {
+    const { error: workItemError } = await supabase
+      .from("contents")
+      .select("service_name, quantity, amount, billing_model, service_category, unit_type")
+      .eq("org_id", currentOrgId)
+      .limit(1)
+
+    if (workItemError && isMissingWorkItemFieldsError(workItemError.message)) {
+      setSupportsWorkItemFields(false)
+      return false
+    }
+
+    setSupportsWorkItemFields(true)
+    return true
+  }
+
   const insertContentsRows = async (payload: Record<string, unknown> | Record<string, unknown>[]) => {
-    let result = await supabase.from("contents").insert(prepareContentWritePayload(payload, supportsLinksJson))
+    let result = await supabase
+      .from("contents")
+      .insert(prepareContentWritePayload(payload, supportsLinksJson, supportsWorkItemFields))
     if (result.error && isMissingLinksJsonError(result.error.message)) {
       setSupportsLinksJson(false)
-      result = await supabase.from("contents").insert(prepareContentWritePayload(payload, false))
+      result = await supabase
+        .from("contents")
+        .insert(prepareContentWritePayload(payload, false, supportsWorkItemFields))
+    }
+    if (result.error && isMissingWorkItemFieldsError(result.error.message)) {
+      setSupportsWorkItemFields(false)
+      result = await supabase
+        .from("contents")
+        .insert(prepareContentWritePayload(payload, supportsLinksJson, false))
     }
     return result
   }
@@ -495,7 +675,7 @@ export default function ContentsPage() {
 
     let result = await supabase
       .from("contents")
-      .update(prepareContentWritePayload(payload, supportsLinksJson))
+      .update(prepareContentWritePayload(payload, supportsLinksJson, supportsWorkItemFields))
       .eq("id", rowId)
       .eq("org_id", orgId)
 
@@ -503,7 +683,16 @@ export default function ContentsPage() {
       setSupportsLinksJson(false)
       result = await supabase
         .from("contents")
-        .update(prepareContentWritePayload(payload, false))
+        .update(prepareContentWritePayload(payload, false, supportsWorkItemFields))
+        .eq("id", rowId)
+        .eq("org_id", orgId)
+    }
+
+    if (result.error && isMissingWorkItemFieldsError(result.error.message)) {
+      setSupportsWorkItemFields(false)
+      result = await supabase
+        .from("contents")
+        .update(prepareContentWritePayload(payload, supportsLinksJson, false))
         .eq("id", rowId)
         .eq("org_id", orgId)
     }
@@ -513,6 +702,7 @@ export default function ContentsPage() {
 
   const filteredRows = useMemo(() => {
     let list = rows
+    if (focusMonth) list = list.filter((r) => r.deliveryMonth === focusMonth)
     if (filterDue === "today") list = list.filter((r) => r.dueClientAt === todayYmd)
     else if (filterDue === "tomorrow") list = list.filter((r) => r.dueClientAt === tomorrowYmd)
     else if (filterDue === "week") list = list.filter((r) => r.dueClientAt >= weekStartYmd && r.dueClientAt <= weekEndYmd)
@@ -529,9 +719,61 @@ export default function ContentsPage() {
       list = list.filter((r) => r.projectId === filterProjectId)
     }
 
-    // デフォルトは提出日昇順
-    return [...list].sort((a, b) => (a.dueClientAt < b.dueClientAt ? -1 : a.dueClientAt > b.dueClientAt ? 1 : 0))
-  }, [rows, filterDue, filterClientId, filterProjectId, todayYmd, tomorrowYmd, weekStartYmd, weekEndYmd, clients])
+    if (filterStatus) {
+      list = list.filter((r) => r.status === filterStatus)
+    }
+
+    return [...list].sort((a, b) => {
+      const invoiceableA = Number(a.billable && !a.invoiceId)
+      const invoiceableB = Number(b.billable && !b.invoiceId)
+      if (invoiceableA !== invoiceableB) return invoiceableB - invoiceableA
+      if (a.deliveryMonth !== b.deliveryMonth) return a.deliveryMonth < b.deliveryMonth ? 1 : -1
+      if (a.clientName !== b.clientName) return a.clientName.localeCompare(b.clientName, "ja")
+      if (a.dueClientAt !== b.dueClientAt) return a.dueClientAt < b.dueClientAt ? -1 : 1
+      return a.title.localeCompare(b.title, "ja")
+    })
+  }, [
+    rows,
+    focusMonth,
+    filterDue,
+    filterClientId,
+    filterProjectId,
+    filterStatus,
+    todayYmd,
+    tomorrowYmd,
+    weekStartYmd,
+    weekEndYmd,
+    clients,
+  ])
+
+  const invoicePreviewRows = useMemo(
+    () => filteredRows.filter((row) => row.billable && !row.invoiceId),
+    [filteredRows]
+  )
+  const invoicePreviewAmount = useMemo(
+    () => invoicePreviewRows.reduce((sum, row) => sum + Number(row.amount || row.unitPrice), 0),
+    [invoicePreviewRows]
+  )
+  const invoiceReadyCount = useMemo(
+    () =>
+      invoicePreviewRows.filter((row) =>
+        ["billable", "operating", "delivered", "published", "approved", "completed"].includes(row.status)
+      ).length,
+    [invoicePreviewRows]
+  )
+  const lateCount = useMemo(
+    () => filteredRows.filter((row) => isClientLate(row, todayYmd) || isEditorLate(row, todayYmd)).length,
+    [filteredRows, todayYmd]
+  )
+
+  useEffect(() => {
+    isMountedRef.current = true
+    return () => {
+      isMountedRef.current = false
+      timeoutIdsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId))
+      timeoutIdsRef.current = []
+    }
+  }, [])
 
   useEffect(() => {
     setDebug({ userId: user?.id ?? null, orgId: orgId ?? null, role, error: needsOnboarding ? "onboarding needed" : null })
@@ -542,6 +784,24 @@ export default function ContentsPage() {
       setFilterProjectId(projectIdQuery)
     }
   }, [projectIdQuery])
+
+  useEffect(() => {
+    if (dueQuery === "today") setFilterDue("today")
+    else if (dueQuery === "tomorrow") setFilterDue("tomorrow")
+  }, [dueQuery])
+
+  useEffect(() => {
+    if (filterQuery === "client_overdue" || filterQuery === "editor_overdue") {
+      setFilterDue("late")
+    }
+  }, [filterQuery])
+
+  useEffect(() => {
+    if (projectIdQuery || highlightId || dueQuery || filterQuery) {
+      setFocusMonth("")
+      setShowFilters(true)
+    }
+  }, [projectIdQuery, highlightId, dueQuery, filterQuery])
 
   useEffect(() => {
     if (typeof window === "undefined") return
@@ -569,13 +829,13 @@ export default function ContentsPage() {
       if (detail.applyTarget === "contents_create_title") {
         setForm((prev) => ({ ...prev, title: detail.result.text }))
         setUiSuccess("AI結果を新規タイトルに反映しました")
-        window.setTimeout(() => setUiSuccess(null), 2500)
+        scheduleDelayedAction(() => setUiSuccess(null), 2500)
         return
       }
       if (detail.applyTarget === "contents_bulk_textarea") {
         setBulkTextarea(detail.result.text)
         setUiSuccess("AI結果を一括入力に反映しました")
-        window.setTimeout(() => setUiSuccess(null), 2500)
+        scheduleDelayedAction(() => setUiSuccess(null), 2500)
         return
       }
       if (detail.applyTarget === "contents_detail_title") {
@@ -585,7 +845,7 @@ export default function ContentsPage() {
       if (detail.applyTarget === "contents_detail_share_draft") {
         setDetailShareDraft(detail.result.text)
         setUiSuccess("AI結果を共有文ドラフトに反映しました")
-        window.setTimeout(() => setUiSuccess(null), 2500)
+        scheduleDelayedAction(() => setUiSuccess(null), 2500)
       }
     }
 
@@ -595,7 +855,7 @@ export default function ContentsPage() {
 
   const openContentTitleIdeas = (row: Row) => {
     setDetailRow(row)
-    window.setTimeout(() => {
+    scheduleDelayedAction(() => {
       window.dispatchEvent(
         new CustomEvent("open-ai-palette", {
           detail: {
@@ -604,7 +864,7 @@ export default function ContentsPage() {
             text: row.title,
             compareText: row.title,
             context: buildContentAiContext(row, todayYmd),
-            title: "Contents AI",
+            title: "コンテンツAI",
             applyLabel: "タイトル候補に反映",
             applyTarget: "contents_detail_title",
             applyTransform: "first_line" as const,
@@ -644,10 +904,10 @@ export default function ContentsPage() {
     try {
       await navigator.clipboard.writeText(detailShareDraft)
       setUiSuccess("共有文ドラフトをコピーしました")
-      window.setTimeout(() => setUiSuccess(null), 2500)
+      scheduleDelayedAction(() => setUiSuccess(null), 2500)
     } catch (copyError) {
       setUiError(copyError instanceof Error ? copyError.message : "共有文ドラフトのコピーに失敗しました")
-      window.setTimeout(() => setUiError(null), 2500)
+      scheduleDelayedAction(() => setUiError(null), 2500)
     }
   }
 
@@ -736,10 +996,20 @@ export default function ContentsPage() {
     const firstRow = data?.[0] as Record<string, unknown> | undefined
     if (firstRow) {
       setSupportsLinksJson(Object.prototype.hasOwnProperty.call(firstRow, "links_json"))
+      setSupportsWorkItemFields(
+        Object.prototype.hasOwnProperty.call(firstRow, "service_name") &&
+          Object.prototype.hasOwnProperty.call(firstRow, "quantity") &&
+          Object.prototype.hasOwnProperty.call(firstRow, "amount") &&
+          Object.prototype.hasOwnProperty.call(firstRow, "billing_model") &&
+          Object.prototype.hasOwnProperty.call(firstRow, "service_category") &&
+          Object.prototype.hasOwnProperty.call(firstRow, "unit_type")
+      )
     }
 
     const mapped = (data ?? []).map((row) => {
       const client = Array.isArray(row.client) ? row.client[0] : row.client
+      const quantity = Number(row.quantity ?? 1)
+      const unitPrice = Number(row.unit_price ?? 0)
       return {
       id: row.id,
     clientId: row.client_id,
@@ -747,14 +1017,21 @@ export default function ContentsPage() {
       projectId: row.project_id ?? null,
       projectName: row.project_name,
       title: row.title,
+      serviceName: row.service_name ?? row.title ?? row.project_name,
+      serviceCategory: row.service_category ?? null,
+      billingModel: row.billing_model ?? null,
+      unitType: row.unit_type ?? null,
+      quantity,
+      amount: Number(row.amount ?? quantity * unitPrice),
       dueClientAt: row.due_client_at,
       dueEditorAt: row.due_editor_at,
       publishAt: row.publish_at ?? null,
-      unitPrice: Number(row.unit_price),
+      unitPrice,
       thumbnailDone: row.thumbnail_done,
       billable: row.billable_flag,
       deliveryMonth: row.delivery_month,
       status: row.status,
+      invoiceId: row.invoice_id ?? null,
       editorSubmittedAt: row.editor_submitted_at ?? null,
       clientSubmittedAt: row.client_submitted_at ?? null,
       sequenceNo: row.sequence_no ?? null,
@@ -782,7 +1059,14 @@ export default function ContentsPage() {
 
     const load = async () => {
       setLoading(true)
-      await Promise.all([fetchClients(orgId), fetchProjects(orgId), fetchMembers(orgId), detectLinksJsonSupport(orgId), fetchContents(orgId)])
+      await Promise.all([
+        fetchClients(orgId),
+        fetchProjects(orgId),
+        fetchMembers(orgId),
+        detectLinksJsonSupport(orgId),
+        detectWorkItemFieldSupport(orgId),
+        fetchContents(orgId),
+      ])
       if (active) setLoading(false)
     }
 
@@ -800,6 +1084,12 @@ export default function ContentsPage() {
   }, [clients, form.clientId])
 
   useEffect(() => {
+    if (!guidedForm.clientId && clients.length > 0) {
+      setGuidedForm((prev) => ({ ...prev, clientId: clients[0].id }))
+    }
+  }, [clients, guidedForm.clientId])
+
+  useEffect(() => {
     if (!templateClientId && clients.length > 0) {
       setTemplateClientId(clients[0].id)
     }
@@ -810,6 +1100,12 @@ export default function ContentsPage() {
   useEffect(() => {
     if (!hasClients) {
       setIsAdding(false)
+    }
+  }, [hasClients])
+
+  useEffect(() => {
+    if (!hasClients) {
+      setGuidedForm(createDefaultGuidedForm())
     }
   }, [hasClients])
 
@@ -915,19 +1211,37 @@ export default function ContentsPage() {
     projectId?: string | null
     projectName: string
     title: string
+    serviceName?: string
+    serviceCategory?: string | null
+    billingModel?: string | null
+    unitType?: string | null
+    quantity?: number
+    amount?: number
     dueClientAt: string
     unitPrice: number
     status?: string
     billable?: boolean
   }): Row => {
     const dueEditorAt = addDays(params.dueClientAt, -3)
+    const quantity = Number(params.quantity ?? 1)
+    const amount = Number(params.amount ?? quantity * params.unitPrice)
     return {
       id: "draft",
       clientId: params.clientId,
-      clientName: selectedCreateClient?.name ?? selectedTemplateClient?.name ?? "",
+      clientName:
+        clients.find((client) => client.id === params.clientId)?.name ??
+        selectedCreateClient?.name ??
+        selectedTemplateClient?.name ??
+        "",
       projectId: params.projectId ?? null,
       projectName: params.projectName,
       title: params.title,
+      serviceName: params.serviceName ?? params.title,
+      serviceCategory: params.serviceCategory ?? null,
+      billingModel: params.billingModel ?? null,
+      unitType: params.unitType ?? null,
+      quantity,
+      amount,
       dueClientAt: params.dueClientAt,
       dueEditorAt,
       publishAt: null,
@@ -936,6 +1250,7 @@ export default function ContentsPage() {
       billable: params.billable ?? true,
       deliveryMonth: params.dueClientAt.slice(0, 7),
       status: params.status ?? "not_started",
+      invoiceId: null,
       editorSubmittedAt: null,
       clientSubmittedAt: null,
       sequenceNo: null,
@@ -999,7 +1314,7 @@ export default function ContentsPage() {
       })
       await fetchContents(orgId)
       setUiSuccess("保存しました")
-      setTimeout(() => setUiSuccess(null), 2500)
+      scheduleDelayedAction(() => setUiSuccess(null), 2500)
     } finally {
       setSavingRowIds((prev) => {
         const next = new Set(prev)
@@ -1040,7 +1355,7 @@ export default function ContentsPage() {
       return
     }
     setUiSuccess("テンプレートを保存しました")
-    setTimeout(() => setUiSuccess(null), 2500)
+    scheduleDelayedAction(() => setUiSuccess(null), 2500)
   }
 
   /** ステータス変更: contents 更新 + status_events に履歴 insert */
@@ -1051,8 +1366,11 @@ export default function ContentsPage() {
     }
     const status = newStatus === "cancelled" ? "canceled" : newStatus
     const { payload, errors } = prepareContentPayload(row, { status })
-    if (errors.length > 0) {
-      setUiError(errors[0])
+    const nonBlockingErrors = errors.filter(
+      (message) => !message.includes("編集担当が未設定のまま進行ステータスへ進められません。")
+    )
+    if (nonBlockingErrors.length > 0) {
+      setUiError(nonBlockingErrors[0])
       return
     }
     setRowErrors((prev) => {
@@ -1081,7 +1399,7 @@ export default function ContentsPage() {
       }
       await fetchContents(orgId)
       setUiSuccess("ステータスを更新しました")
-      setTimeout(() => setUiSuccess(null), 2500)
+      scheduleDelayedAction(() => setUiSuccess(null), 2500)
     } finally {
       setSavingRowIds((prev) => {
         const next = new Set(prev)
@@ -1159,7 +1477,7 @@ export default function ContentsPage() {
     }
 
     setUiSuccess("行を複製しました")
-    window.setTimeout(() => setUiSuccess(null), 2500)
+    scheduleDelayedAction(() => setUiSuccess(null), 2500)
     await fetchContents(orgId)
   }
 
@@ -1213,21 +1531,177 @@ export default function ContentsPage() {
         project_name: projectName,
         publish_at: detailDraft.publishAt || null,
         assignee_editor_user_id: detailDraft.assigneeEditorUserId || null,
-        assignee_checker_user_id: detailDraft.assigneeCheckerUserId || null,
         revision_count: Number(detailDraft.revisionCount || 0),
         workload_points: Number(detailDraft.workloadPoints || 1),
         estimated_cost: Number(detailDraft.estimatedCost || 0),
         next_action: detailDraft.nextAction.trim() || null,
         blocked_reason: detailDraft.blockedReason.trim() || null,
-        material_status: detailDraft.materialStatus,
-        draft_status: detailDraft.draftStatus,
-        final_status: detailDraft.finalStatus,
         sequence_no: detailDraft.sequenceNo ? Number(detailDraft.sequenceNo) : null,
         links_json: normalizedLinks,
       },
       detailRow,
       "詳細"
     )
+  }
+
+  const openGuidedAdd = () => {
+    const initialMonth = createCurrentMonth()
+    const initialTemplate = getGuidedTemplates("monthly_fixed")[0] ?? null
+    setGuidedStep(1)
+    setIsAdding(true)
+    setGuidedForm({
+      clientId: "",
+      addType: "monthly_fixed",
+      templateId: initialTemplate?.id ?? "",
+      projectId: "",
+      projectName: "",
+      targetMonth: initialMonth,
+      quantity: String(initialTemplate?.defaultQuantity ?? 1),
+      unitPrice: String(initialTemplate?.defaultUnitPrice ?? 0),
+      status: initialTemplate?.defaultStatus ?? "billable",
+      customTitle: "",
+      dueClientAt: getMonthEndDate(initialMonth),
+      showAdvanced: false,
+    })
+  }
+
+  const handleGuidedAddTypeSelect = (addType: GuidedAddType) => {
+    const nextTemplates = getGuidedTemplates(addType)
+    const nextTemplate = nextTemplates[0] ?? null
+    setGuidedForm((prev) => ({
+      ...prev,
+      addType,
+      templateId: nextTemplate?.id ?? "",
+      projectId: "",
+      projectName: "",
+      quantity: String(nextTemplate?.defaultQuantity ?? 1),
+      unitPrice: String(nextTemplate?.defaultUnitPrice ?? 0),
+      status: nextTemplate?.defaultStatus ?? "billable",
+      customTitle: "",
+    }))
+  }
+
+  const handleGuidedTemplateSelect = (template: GuidedTemplate) => {
+    setGuidedForm((prev) => ({
+      ...prev,
+      templateId: template.id,
+      quantity: String(template.defaultQuantity),
+      unitPrice: String(template.defaultUnitPrice),
+      status: template.defaultStatus,
+      customTitle: "",
+    }))
+  }
+
+  const handleGuidedAdd = async () => {
+    if (!canEdit || !orgId || !selectedGuidedTemplate) return
+    if (guidedForm.addType === "vendor_invoice") return
+    const unitPrice = Number(guidedForm.unitPrice || 0)
+    const quantity = Number(guidedForm.quantity || 1)
+    if (!guidedForm.clientId) {
+      setUiError("取引先を選択してください")
+      return
+    }
+    if (!guidedForm.targetMonth) {
+      setUiError("対象月を入力してください")
+      return
+    }
+    if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+      setUiError("単価を正しく入力してください")
+      return
+    }
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      setUiError("数量を正しく入力してください")
+      return
+    }
+
+    const dueClientAt = guidedForm.showAdvanced && guidedForm.dueClientAt
+      ? guidedForm.dueClientAt
+      : getMonthEndDate(guidedForm.targetMonth)
+    const projectName =
+      guidedForm.projectName.trim() ||
+      selectedGuidedProject?.name ||
+      selectedGuidedTemplate.name
+    const title =
+      guidedForm.customTitle.trim() ||
+      buildGuidedTitle({
+        serviceName: selectedGuidedTemplate.name,
+        billingModel: selectedGuidedTemplate.billingModel,
+        unitType: selectedGuidedTemplate.unitType,
+        quantity,
+        targetMonth: guidedForm.targetMonth,
+      })
+
+    const draft = createRowDraft({
+      clientId: guidedForm.clientId,
+      projectId: guidedForm.projectId || null,
+      projectName,
+      title,
+      serviceName: selectedGuidedTemplate.name,
+      serviceCategory: selectedGuidedTemplate.serviceCategory,
+      billingModel: selectedGuidedTemplate.billingModel,
+      unitType: selectedGuidedTemplate.unitType,
+      quantity,
+      amount: calculateGuidedAmount(quantity, unitPrice),
+      dueClientAt,
+      unitPrice,
+      status: guidedForm.status,
+      billable: guidedForm.status !== "invoiced",
+    })
+
+    const { payload, errors } = prepareContentPayload(draft, {
+      id: crypto.randomUUID(),
+      org_id: orgId,
+      client_id: guidedForm.clientId,
+      project_id: guidedForm.projectId || null,
+      project_name: projectName,
+      title,
+      service_name: selectedGuidedTemplate.name,
+      service_category: selectedGuidedTemplate.serviceCategory,
+      billing_model: selectedGuidedTemplate.billingModel,
+      unit_type: selectedGuidedTemplate.unitType,
+      quantity,
+      amount: calculateGuidedAmount(quantity, unitPrice),
+      unit_price: unitPrice,
+      due_client_at: dueClientAt,
+      delivery_month: guidedForm.targetMonth,
+      status: guidedForm.status,
+      thumbnail_done: false,
+      billable_flag: guidedForm.status !== "invoiced",
+      publish_at: null,
+      sequence_no: null,
+      assignee_editor_user_id: null,
+      assignee_checker_user_id: null,
+      revision_count: 0,
+      workload_points: Math.max(1, quantity),
+      estimated_cost: 0,
+      next_action: null,
+      blocked_reason: null,
+      material_status: "not_ready",
+      draft_status: "not_started",
+      final_status: "not_started",
+      links_json: {},
+    })
+
+    if (errors.length > 0) {
+      setUiError(errors[0])
+      return
+    }
+
+    payload.delivery_month = guidedForm.targetMonth
+
+    const { error: insertError } = await insertContentsRows(payload)
+    if (insertError) {
+      setUiError(`追加に失敗しました: ${insertError.message}`)
+      return
+    }
+
+    await fetchContents(orgId)
+    setFocusMonth(guidedForm.targetMonth)
+    setUiSuccess("請求対象を追加しました")
+    scheduleDelayedAction(() => setUiSuccess(null), 2500)
+    setIsAdding(false)
+    setGuidedStep(1)
+    setGuidedForm(createDefaultGuidedForm())
   }
 
   const handleAdd = async () => {
@@ -1353,7 +1827,7 @@ export default function ContentsPage() {
       }
       await fetchContents(orgId)
       setUiSuccess("追加しました")
-      setTimeout(() => setUiSuccess(null), 2500)
+      scheduleDelayedAction(() => setUiSuccess(null), 2500)
     } finally {
       setAddingFromTemplateId(null)
     }
@@ -1392,6 +1866,7 @@ export default function ContentsPage() {
 
       await fetchClients(orgId)
       setForm((prev) => ({ ...prev, clientId }))
+      setGuidedForm((prev) => ({ ...prev, clientId }))
       setNewClientName("")
       setIsCreatingClient(false)
       setUiSuccess("クライアントを作成しました")
@@ -1548,24 +2023,361 @@ export default function ContentsPage() {
           pointerEvents: "auto",
         }}
       >
-        <div
-          style={{
-            fontSize: 11,
-            color: "var(--muted)",
-            fontFamily:
-              "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace",
-            marginBottom: 8,
-          }}
-        >
-          <div>user_id: {debug.userId ?? "-"}</div>
-          <div>org_id: {debug.orgId ?? "-"}</div>
-          <div>role: {debug.role ?? "-"}</div>
-          <div>error: {debug.error ?? "-"}</div>
-        </div>
         <div style={{ marginBottom: 16 }}>
           <ChecklistReturnButton />
         </div>
-        <header style={{ marginBottom: 24 }}>
+        <header style={{ marginBottom: 24, display: "grid", gap: 16 }}>
+          <section
+            style={{
+              display: "grid",
+              gap: 16,
+              gridTemplateColumns: "minmax(0, 1.5fr) minmax(280px, 0.9fr)",
+              padding: "22px 24px",
+              borderRadius: 24,
+              border: "1px solid color-mix(in srgb, var(--border) 84%, white 16%)",
+              background:
+                "linear-gradient(135deg, color-mix(in srgb, var(--surface) 86%, white 14%), color-mix(in srgb, #dbeafe 22%, var(--surface) 78%))",
+              boxShadow: "0 18px 48px rgba(15, 23, 42, 0.08)",
+            }}
+          >
+            <div style={{ display: "grid", gap: 12 }}>
+              <div style={{ fontSize: 12, letterSpacing: "0.12em", color: "var(--muted)", fontWeight: 700 }}>
+                BILLING INTAKE
+              </div>
+              <div>
+                <h1 style={{ fontSize: 30, margin: "0 0 8px", color: "var(--text)", lineHeight: 1.15 }}>
+                  今月請求するものを迷わず追加して確認する
+                </h1>
+                <p style={{ margin: 0, color: "var(--muted)", fontSize: 14, lineHeight: 1.8 }}>
+                  Lycollection 向けに、この画面は「請求対象の追加と確認」に絞っています。取引先、追加タイプ、対象月、金額だけ決めれば十分です。
+                  ワークフローや詳細リンクはあとから必要な分だけ触れます。
+                </p>
+              </div>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                {canEdit ? (
+                  hasClients ? (
+                    <button
+                      type="button"
+                      onClick={openGuidedAdd}
+                      style={{
+                        padding: "12px 16px",
+                        borderRadius: 999,
+                        border: "1px solid var(--button-primary-bg)",
+                        background: "var(--button-primary-bg)",
+                        color: "var(--primary-contrast)",
+                        fontSize: 14,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                      }}
+                    >
+                      請求対象を追加
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={openClientRegistration}
+                      style={{
+                        padding: "12px 16px",
+                        borderRadius: 999,
+                        border: "1px solid var(--button-primary-bg)",
+                        background: "var(--button-primary-bg)",
+                        color: "var(--primary-contrast)",
+                        fontSize: 14,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                      }}
+                    >
+                      取引先を追加
+                    </button>
+                  )
+                ) : null}
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: "var(--muted)",
+                    maxWidth: 360,
+                    lineHeight: 1.6,
+                  }}
+                >
+                  案件全体の管理や連携設定は後回しで大丈夫です。まずは今月請求するものだけをここに揃えます。
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowFilters((prev) => !prev)}
+                  style={{
+                    padding: "10px 14px",
+                    borderRadius: 999,
+                    border: "1px solid var(--button-secondary-border)",
+                    background: "var(--button-secondary-bg)",
+                    color: "var(--button-secondary-text)",
+                    fontSize: 13,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  {showFilters ? "絞り込みを閉じる" : "絞り込みを開く"}
+                </button>
+              </div>
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gap: 10,
+                gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+                alignContent: "start",
+              }}
+            >
+              {[
+                {
+                  label: focusMonth ? `${focusMonth} の請求候補` : "表示中の請求候補",
+                  value: `${invoicePreviewRows.length}件`,
+                },
+                { label: "請求見込み", value: formatCurrency(invoicePreviewAmount) },
+                { label: "すぐ請求へ回せる", value: `${invoiceReadyCount}件` },
+                { label: "要確認", value: `${lateCount}件` },
+              ].map((item) => (
+                <div
+                  key={item.label}
+                  style={{
+                    padding: "14px 16px",
+                    borderRadius: 18,
+                    border: "1px solid color-mix(in srgb, var(--border) 80%, white 20%)",
+                    background: "color-mix(in srgb, var(--surface) 92%, white 8%)",
+                  }}
+                >
+                  <div style={{ fontSize: 11, color: "var(--muted)", fontWeight: 700, letterSpacing: "0.04em" }}>
+                    {item.label}
+                  </div>
+                  <div style={{ marginTop: 6, fontSize: 22, fontWeight: 800, color: "var(--text)" }}>{item.value}</div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section
+            style={{
+              display: "grid",
+              gap: 12,
+              gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+            }}
+          >
+            <div
+              style={{
+                display: "grid",
+                gap: 8,
+                padding: "16px 18px",
+                borderRadius: 18,
+                border: "1px solid var(--border)",
+                background: "var(--surface)",
+                boxShadow: "0 6px 18px rgba(15, 23, 42, 0.05)",
+              }}
+            >
+              <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", color: "var(--muted)" }}>HOW TO USE</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: "var(--text)" }}>ここでは請求対象だけ扱います</div>
+              <div style={{ color: "var(--muted)", lineHeight: 1.7 }}>
+                1件追加するときに決めるのは、取引先、追加タイプ、対象月、金額が中心です。明細タイトル、請求区分、単位、初期ステータスは自動で補完します。
+              </div>
+              <div style={{ fontSize: 12, color: "var(--muted)" }}>後回しでよいもの: ワークフロー / 外部参照ID / 詳細リンク / 細かい運用メモ</div>
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gap: 8,
+                padding: "16px 18px",
+                borderRadius: 18,
+                border: "1px solid var(--border)",
+                background: "var(--surface)",
+                boxShadow: "0 6px 18px rgba(15, 23, 42, 0.05)",
+              }}
+            >
+              <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", color: "var(--muted)" }}>MONTH-END FLOW</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: "var(--text)" }}>月末請求までの流れ</div>
+              <div style={{ color: "var(--muted)", lineHeight: 1.7 }}>
+                1. 請求対象を追加する。 2. 今月分の一覧で漏れと金額を確認する。 3. `delivery_month` を軸に Billing で請求書をまとめて作る。
+              </div>
+              <div>
+                <Link
+                  href={focusMonth ? `/billing?month=${encodeURIComponent(focusMonth)}` : "/billing"}
+                  style={{
+                    display: "inline-flex",
+                    padding: "8px 12px",
+                    borderRadius: 999,
+                    border: "1px solid var(--button-secondary-border)",
+                    background: "var(--button-secondary-bg)",
+                    color: "var(--button-secondary-text)",
+                    fontSize: 12,
+                    fontWeight: 700,
+                    textDecoration: "none",
+                  }}
+                >
+                  対象月の請求を開く
+                </Link>
+              </div>
+            </div>
+          </section>
+
+          <section
+            style={{
+              padding: "14px 16px",
+              borderRadius: 18,
+              border: "1px solid var(--border)",
+              background: "var(--surface)",
+              boxShadow: "0 6px 18px rgba(15, 23, 42, 0.05)",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+              <div style={{ display: "grid", gap: 4 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>
+                  表示中: {focusMonth || "全月"} / {filterClientId ? clients.find((client) => client.id === filterClientId)?.name ?? "取引先指定" : "全取引先"}
+                </div>
+                <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                  初期表示は今月分の請求確認です。必要なときだけ条件を広げてください。
+                </div>
+              </div>
+              {showFilters ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFocusMonth(createCurrentMonth())
+                    setFilterDue("")
+                    setFilterClientId("")
+                    setFilterProjectId("")
+                    setFilterStatus("")
+                  }}
+                  style={{
+                    padding: "8px 12px",
+                    borderRadius: 999,
+                    border: "1px solid var(--button-secondary-border)",
+                    background: "var(--button-secondary-bg)",
+                    color: "var(--button-secondary-text)",
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  表示をリセット
+                </button>
+              ) : null}
+            </div>
+            {showFilters ? (
+              <div
+                style={{
+                  marginTop: 14,
+                  display: "grid",
+                  gap: 10,
+                  gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+                }}
+              >
+                <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
+                  対象月
+                  <input
+                    type="month"
+                    value={focusMonth}
+                    onChange={(event) => setFocusMonth(event.target.value)}
+                    style={{
+                      padding: "8px 10px",
+                      borderRadius: 10,
+                      border: "1px solid var(--input-border)",
+                      background: "var(--input-bg)",
+                      color: "var(--input-text)",
+                      fontSize: 12,
+                    }}
+                  />
+                </label>
+                <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
+                  納期の見方
+                  <select
+                    value={filterDue}
+                    onChange={(event) => setFilterDue(event.target.value as typeof filterDue)}
+                    style={{
+                      padding: "8px 10px",
+                      borderRadius: 10,
+                      border: "1px solid var(--input-border)",
+                      background: "var(--input-bg)",
+                      color: "var(--input-text)",
+                      fontSize: 12,
+                    }}
+                  >
+                    <option value="">すべて</option>
+                    <option value="today">今日</option>
+                    <option value="tomorrow">明日</option>
+                    <option value="week">今週</option>
+                    <option value="late">遅延のみ</option>
+                  </select>
+                </label>
+                <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
+                  取引先
+                  <select
+                    value={filterClientId}
+                    onChange={(event) => setFilterClientId(event.target.value)}
+                    style={{
+                      padding: "8px 10px",
+                      borderRadius: 10,
+                      border: "1px solid var(--input-border)",
+                      background: "var(--input-bg)",
+                      color: "var(--input-text)",
+                      fontSize: 12,
+                    }}
+                  >
+                    <option value="">すべて</option>
+                    {clients.map((client) => (
+                      <option key={client.id} value={client.id}>
+                        {client.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
+                  案件
+                  <select
+                    value={filterProjectId}
+                    onChange={(event) => setFilterProjectId(event.target.value)}
+                    style={{
+                      padding: "8px 10px",
+                      borderRadius: 10,
+                      border: "1px solid var(--input-border)",
+                      background: "var(--input-bg)",
+                      color: "var(--input-text)",
+                      fontSize: 12,
+                    }}
+                  >
+                    <option value="">すべて</option>
+                    {projects
+                      .filter((project) => !filterClientId || project.clientId === filterClientId)
+                      .map((project) => (
+                        <option key={project.id} value={project.id}>
+                          {project.name}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
+                  ステータス
+                  <select
+                    value={filterStatus}
+                    onChange={(event) => setFilterStatus(event.target.value)}
+                    style={{
+                      padding: "8px 10px",
+                      borderRadius: 10,
+                      border: "1px solid var(--input-border)",
+                      background: "var(--input-bg)",
+                      color: "var(--input-text)",
+                      fontSize: 12,
+                    }}
+                  >
+                    <option value="">すべて</option>
+                    {Object.entries(statusLabels).map(([value, label]) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            ) : null}
+          </section>
+        </header>
+        {false && <header style={{ marginBottom: 24 }}>
           <p style={{ fontSize: 12, letterSpacing: "0.08em", color: "var(--muted)" }}>
             制作シート          </p>
           <h1 style={{ fontSize: 28, margin: "6px 0 8px", color: "var(--text)" }}>コンテンツ一覧</h1>
@@ -1591,21 +2403,6 @@ export default function ContentsPage() {
                 ) : null}
               </>
             )}
-            <Link
-              href="/settings/dashboard?context=/contents&type=feedback"
-              style={{
-                padding: "10px 14px",
-                borderRadius: 10,
-                border: "1px solid var(--button-secondary-border)",
-                background: "var(--button-secondary-bg)",
-                color: "var(--button-secondary-text)",
-                fontSize: 14,
-                fontWeight: 500,
-                textDecoration: "none",
-              }}
-            >
-              改善要望を送る
-            </Link>
             <div
               style={{
                 display: "flex",
@@ -1876,7 +2673,7 @@ export default function ContentsPage() {
                                 `${todayYmd}\t${selectedBulkTemplate?.default_title ?? selectedBulkTemplate?.name ?? ""}`.trim(),
                               compareText: bulkTextarea,
                               context: bulkContentAiContext,
-                              title: "Contents AI",
+                              title: "コンテンツAI",
                               applyLabel: "一括入力に反映",
                               applyTarget: "contents_bulk_textarea",
                               meta: {
@@ -2029,7 +2826,7 @@ export default function ContentsPage() {
                           }`
                         )
                         setUiSuccess("一括追加しました")
-                        setTimeout(() => setUiSuccess(null), 2500)
+                        scheduleDelayedAction(() => setUiSuccess(null), 2500)
                       }}
                       style={{
                         padding: "6px 12px",
@@ -2053,7 +2850,7 @@ export default function ContentsPage() {
               )}
             </section>
           )}
-        </header>
+        </header>}
 
         {error && (
           <div
@@ -2120,7 +2917,480 @@ export default function ContentsPage() {
           </section>
         )}
 
-        {isAdding && (
+        {isAdding ? (
+          <section
+            style={{
+              marginBottom: 16,
+              padding: 18,
+              borderRadius: 20,
+              border: "1px solid var(--border)",
+              background: "var(--surface)",
+              boxShadow: "0 16px 44px rgba(15, 23, 42, 0.12)",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
+              <div>
+                <div style={{ fontSize: 12, color: "var(--muted)", fontWeight: 700, letterSpacing: "0.08em" }}>
+                  STEP {guidedStep} / 2
+                </div>
+                <h2 style={{ margin: "6px 0 4px", fontSize: 22, color: "var(--text)" }}>請求対象を追加</h2>
+                <p style={{ margin: 0, fontSize: 13, lineHeight: 1.7, color: "var(--muted)" }}>
+                  取引先と追加タイプを選んだら、対象月と金額だけで登録できます。明細タイトル、請求区分、単位は自動で補完します。
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAdding(false)
+                  setGuidedStep(1)
+                }}
+                style={{
+                  padding: "8px 12px",
+                  borderRadius: 999,
+                  border: "1px solid var(--button-secondary-border)",
+                  background: "var(--button-secondary-bg)",
+                  color: "var(--button-secondary-text)",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                閉じる
+              </button>
+            </div>
+
+            {guidedStep === 1 ? (
+              <div style={{ marginTop: 18, display: "grid", gap: 16 }}>
+                <div style={{ display: "grid", gap: 8 }}>
+                  <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
+                    取引先
+                    <select
+                      value={guidedForm.clientId}
+                      onChange={(event) => setGuidedForm((prev) => ({ ...prev, clientId: event.target.value }))}
+                      style={{
+                        padding: "10px 12px",
+                        borderRadius: 10,
+                        border: "1px solid var(--input-border)",
+                        background: "var(--input-bg)",
+                        color: "var(--input-text)",
+                        fontSize: 13,
+                      }}
+                    >
+                      <option value="">選択してください</option>
+                      {clients.map((client) => (
+                        <option key={client.id} value={client.id}>
+                          {client.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={openClientRegistration}
+                    style={{
+                      justifySelf: "start",
+                      border: "none",
+                      background: "transparent",
+                      color: "var(--primary)",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      padding: 0,
+                    }}
+                  >
+                    一覧にない取引先を追加
+                  </button>
+                </div>
+
+                <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
+                  {GUIDED_ADD_TYPE_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => handleGuidedAddTypeSelect(option.value)}
+                      style={{
+                        display: "grid",
+                        gap: 6,
+                        textAlign: "left",
+                        padding: "14px 16px",
+                        borderRadius: 16,
+                        border: `1px solid ${guidedForm.addType === option.value ? "var(--primary)" : "var(--border)"}`,
+                        background:
+                          guidedForm.addType === option.value
+                            ? "color-mix(in srgb, var(--primary) 10%, var(--surface) 90%)"
+                            : "color-mix(in srgb, var(--surface) 92%, white 8%)",
+                        color: "var(--text)",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <span style={{ fontSize: 15, fontWeight: 800 }}>{option.label}</span>
+                      <span style={{ fontSize: 12, color: "var(--muted)", lineHeight: 1.6 }}>{option.description}</span>
+                    </button>
+                  ))}
+                </div>
+
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={() => setIsAdding(false)}
+                    style={{
+                      padding: "10px 14px",
+                      borderRadius: 999,
+                      border: "1px solid var(--button-secondary-border)",
+                      background: "var(--button-secondary-bg)",
+                      color: "var(--button-secondary-text)",
+                      fontSize: 13,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    キャンセル
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setGuidedStep(2)}
+                    disabled={!guidedForm.clientId}
+                    style={{
+                      padding: "10px 16px",
+                      borderRadius: 999,
+                      border: "1px solid var(--button-primary-bg)",
+                      background: guidedForm.clientId ? "var(--button-primary-bg)" : "var(--surface-2)",
+                      color: guidedForm.clientId ? "var(--primary-contrast)" : "var(--muted)",
+                      fontSize: 13,
+                      fontWeight: 700,
+                      cursor: guidedForm.clientId ? "pointer" : "not-allowed",
+                    }}
+                  >
+                    次へ
+                  </button>
+                </div>
+              </div>
+            ) : guidedForm.addType === "vendor_invoice" ? (
+              <div style={{ marginTop: 18, display: "grid", gap: 12 }}>
+                <div
+                  style={{
+                    padding: "16px 18px",
+                    borderRadius: 16,
+                    border: "1px solid var(--border)",
+                    background: "color-mix(in srgb, var(--surface) 90%, white 10%)",
+                  }}
+                >
+                  <div style={{ fontSize: 16, fontWeight: 800, color: "var(--text)" }}>外注請求は専用導線へ</div>
+                  <div style={{ marginTop: 6, fontSize: 13, color: "var(--muted)", lineHeight: 1.7 }}>
+                    PMF では、外注請求を `contents` に混ぜずに専用画面へ誘導します。コンテンツ追加の画面を重くしないためです。
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={() => setGuidedStep(1)}
+                    style={{
+                      padding: "10px 14px",
+                      borderRadius: 999,
+                      border: "1px solid var(--button-secondary-border)",
+                      background: "var(--button-secondary-bg)",
+                      color: "var(--button-secondary-text)",
+                      fontSize: 13,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    戻る
+                  </button>
+                  <Link
+                    href="/vendors/submissions"
+                    style={{
+                      padding: "10px 16px",
+                      borderRadius: 999,
+                      border: "1px solid var(--button-primary-bg)",
+                      background: "var(--button-primary-bg)",
+                      color: "var(--primary-contrast)",
+                      fontSize: 13,
+                      fontWeight: 700,
+                      textDecoration: "none",
+                    }}
+                  >
+                    外注請求の画面を開く
+                  </Link>
+                </div>
+              </div>
+            ) : (
+              <div style={{ marginTop: 18, display: "grid", gap: 18 }}>
+                <div style={{ fontSize: 12, color: "var(--muted)", lineHeight: 1.7 }}>
+                  ここで必要なのは、商材、対象月、金額だけです。ワークフローや詳細項目はあとで詳細から調整できます。
+                </div>
+                <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
+                  <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
+                    商材テンプレ
+                    <select
+                      value={selectedGuidedTemplate?.id ?? ""}
+                      onChange={(event) => {
+                        const template = getGuidedTemplateById(event.target.value)
+                        if (template) handleGuidedTemplateSelect(template)
+                      }}
+                      style={{
+                        padding: "10px 12px",
+                        borderRadius: 10,
+                        border: "1px solid var(--input-border)",
+                        background: "var(--input-bg)",
+                        color: "var(--input-text)",
+                        fontSize: 13,
+                      }}
+                    >
+                      {guidedTemplates.map((template) => (
+                        <option key={template.id} value={template.id}>
+                          {template.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
+                    既存案件に紐づける（任意）
+                    <select
+                      value={guidedForm.projectId}
+                      onChange={(event) => setGuidedForm((prev) => ({ ...prev, projectId: event.target.value }))}
+                      style={{
+                        padding: "10px 12px",
+                        borderRadius: 10,
+                        border: "1px solid var(--input-border)",
+                        background: "var(--input-bg)",
+                        color: "var(--input-text)",
+                        fontSize: 13,
+                      }}
+                    >
+                      <option value="">選択しない</option>
+                      {guidedProjects.map((project) => (
+                        <option key={project.id} value={project.id}>
+                          {project.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
+                    管理用の案件名（任意）
+                    <input
+                      value={guidedForm.projectName}
+                      onChange={(event) => setGuidedForm((prev) => ({ ...prev, projectName: event.target.value }))}
+                      placeholder={selectedGuidedTemplate?.name ?? "案件名を入力"}
+                      style={{
+                        padding: "10px 12px",
+                        borderRadius: 10,
+                        border: "1px solid var(--input-border)",
+                        background: "var(--input-bg)",
+                        color: "var(--input-text)",
+                        fontSize: 13,
+                      }}
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
+                    対象月
+                    <input
+                      type="month"
+                      value={guidedForm.targetMonth}
+                      onChange={(event) =>
+                        setGuidedForm((prev) => ({
+                          ...prev,
+                          targetMonth: event.target.value,
+                          dueClientAt: prev.showAdvanced ? prev.dueClientAt : getMonthEndDate(event.target.value),
+                        }))
+                      }
+                      style={{
+                        padding: "10px 12px",
+                        borderRadius: 10,
+                        border: "1px solid var(--input-border)",
+                        background: "var(--input-bg)",
+                        color: "var(--input-text)",
+                        fontSize: 13,
+                      }}
+                    />
+                  </label>
+                  {selectedGuidedTemplate &&
+                  selectedGuidedTemplate.billingModel !== "monthly_fixed" &&
+                  selectedGuidedTemplate.billingModel !== "project_fixed" ? (
+                    <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
+                      数量
+                      <input
+                        type="number"
+                        min="1"
+                        value={guidedForm.quantity}
+                        onChange={(event) => setGuidedForm((prev) => ({ ...prev, quantity: event.target.value }))}
+                        style={{
+                          padding: "10px 12px",
+                          borderRadius: 10,
+                          border: "1px solid var(--input-border)",
+                          background: "var(--input-bg)",
+                          color: "var(--input-text)",
+                          fontSize: 13,
+                        }}
+                      />
+                    </label>
+                  ) : null}
+                  <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
+                    単価
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={guidedForm.unitPrice}
+                      onChange={(event) => setGuidedForm((prev) => ({ ...prev, unitPrice: event.target.value }))}
+                      style={{
+                        padding: "10px 12px",
+                        borderRadius: 10,
+                        border: "1px solid var(--input-border)",
+                        background: "var(--input-bg)",
+                        color: "var(--input-text)",
+                        fontSize: 13,
+                      }}
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
+                    初期ステータス
+                    <select
+                      value={guidedForm.status}
+                      onChange={(event) => setGuidedForm((prev) => ({ ...prev, status: event.target.value }))}
+                      style={{
+                        padding: "10px 12px",
+                        borderRadius: 10,
+                        border: "1px solid var(--input-border)",
+                        background: "var(--input-bg)",
+                        color: "var(--input-text)",
+                        fontSize: 13,
+                      }}
+                    >
+                      {GUIDED_STATUS_OPTIONS.map((status) => (
+                        <option key={status.value} value={status.value}>
+                          {status.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                <div
+                  style={{
+                    padding: "16px 18px",
+                    borderRadius: 18,
+                    border: "1px solid var(--border)",
+                    background: "color-mix(in srgb, var(--surface) 90%, white 10%)",
+                  }}
+                >
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "var(--muted)", letterSpacing: "0.08em" }}>
+                    請求プレビュー
+                  </div>
+                  <div style={{ marginTop: 10, display: "grid", gap: 6 }}>
+                    <div style={{ fontSize: 18, fontWeight: 800, color: "var(--text)" }}>{guidedPreviewTitle || "明細タイトルを作成します"}</div>
+                    <div style={{ fontSize: 13, color: "var(--muted)" }}>
+                      {selectedGuidedTemplate ? getGuidedBillingModelLabel(selectedGuidedTemplate.billingModel) : "-"} / 数量 {guidedForm.quantity || "1"} {selectedGuidedTemplate ? getGuidedUnitLabel(selectedGuidedTemplate.unitType) : ""}
+                    </div>
+                    <div style={{ fontSize: 13, color: "var(--muted)" }}>納品予定 {guidedForm.showAdvanced ? guidedForm.dueClientAt || "-" : getMonthEndDate(guidedForm.targetMonth)}</div>
+                    <div style={{ fontSize: 22, fontWeight: 800, color: "var(--text)" }}>{formatCurrency(guidedPreviewAmount)}</div>
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gap: 10 }}>
+                  <button
+                    type="button"
+                    onClick={() => setGuidedForm((prev) => ({ ...prev, showAdvanced: !prev.showAdvanced }))}
+                    style={{
+                      justifySelf: "start",
+                      border: "none",
+                      background: "transparent",
+                      color: "var(--primary)",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      padding: 0,
+                    }}
+                  >
+                    {guidedForm.showAdvanced ? "詳細入力を閉じる" : "明細タイトルと納品予定を手動で調整する"}
+                  </button>
+                  {guidedForm.showAdvanced ? (
+                    <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
+                      <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
+                        明細タイトル
+                        <input
+                          value={guidedForm.customTitle}
+                          onChange={(event) => setGuidedForm((prev) => ({ ...prev, customTitle: event.target.value }))}
+                          placeholder={guidedPreviewTitle || "明細タイトル"}
+                          style={{
+                            padding: "10px 12px",
+                            borderRadius: 10,
+                            border: "1px solid var(--input-border)",
+                            background: "var(--input-bg)",
+                            color: "var(--input-text)",
+                            fontSize: 13,
+                          }}
+                        />
+                      </label>
+                      <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
+                        納品予定日
+                        <input
+                          type="date"
+                          value={guidedForm.dueClientAt}
+                          onChange={(event) => setGuidedForm((prev) => ({ ...prev, dueClientAt: event.target.value }))}
+                          style={{
+                            padding: "10px 12px",
+                            borderRadius: 10,
+                            border: "1px solid var(--input-border)",
+                            background: "var(--input-bg)",
+                            color: "var(--input-text)",
+                            fontSize: 13,
+                          }}
+                        />
+                      </label>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={() => setGuidedStep(1)}
+                    style={{
+                      padding: "10px 14px",
+                      borderRadius: 999,
+                      border: "1px solid var(--button-secondary-border)",
+                      background: "var(--button-secondary-bg)",
+                      color: "var(--button-secondary-text)",
+                      fontSize: 13,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    戻る
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleGuidedAdd()}
+                    disabled={!guidedForm.clientId || !guidedForm.targetMonth || !selectedGuidedTemplate}
+                    style={{
+                      padding: "10px 16px",
+                      borderRadius: 999,
+                      border: "1px solid var(--button-primary-bg)",
+                      background:
+                        guidedForm.clientId && guidedForm.targetMonth && selectedGuidedTemplate
+                          ? "var(--button-primary-bg)"
+                          : "var(--surface-2)",
+                      color:
+                        guidedForm.clientId && guidedForm.targetMonth && selectedGuidedTemplate
+                          ? "var(--primary-contrast)"
+                          : "var(--muted)",
+                      fontSize: 13,
+                      fontWeight: 700,
+                      cursor:
+                        guidedForm.clientId && guidedForm.targetMonth && selectedGuidedTemplate
+                          ? "pointer"
+                          : "not-allowed",
+                    }}
+                  >
+                    この内容で請求対象を追加
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
+        ) : null}
+
+        {false && isAdding && (
           <section
             style={{
               marginBottom: 16,
@@ -2133,6 +3403,9 @@ export default function ContentsPage() {
           >
             <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, color: "var(--text)" }}>
               コンテンツ追加
+            </div>
+            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 12, lineHeight: 1.7 }}>
+              この画面では 1本ごとの実行明細を追加します。継続案件の責任者、期間、連携設定まで整えるときは案件管理へ戻してください。
             </div>
             <div
               style={{
@@ -2165,7 +3438,7 @@ export default function ContentsPage() {
                 </select>
               </label>
               <label style={{ display: "grid", gap: 4, fontSize: 12, color: "var(--text)" }}>
-                案件
+                既存案件に紐づける
                 <select
                   value={form.projectId}
                   onChange={(event) => {
@@ -2196,7 +3469,7 @@ export default function ContentsPage() {
                 </select>
               </label>
               <label style={{ display: "grid", gap: 4, fontSize: 12, color: "var(--text)" }}>
-                プロジェクト                <input
+                案件名（未登録でも可）                <input
                   value={form.projectName}
                   onChange={(event) =>
                     setForm((prev) => ({
@@ -2230,7 +3503,7 @@ export default function ContentsPage() {
                             text: form.title || form.projectName,
                             compareText: form.title,
                             context: createContentAiContext,
-                            title: "Contents AI",
+                            title: "コンテンツAI",
                             applyLabel: "タイトルに反映",
                             applyTarget: "contents_create_title",
                             applyTransform: "first_line" as const,
@@ -2297,7 +3570,9 @@ export default function ContentsPage() {
               <label style={{ display: "grid", gap: 4, fontSize: 12, color: "var(--text)" }}>
                 単価
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   value={form.unitPrice}
                   onChange={(event) =>
                     setForm((prev) => ({
@@ -2331,7 +3606,7 @@ export default function ContentsPage() {
                 onClick={handleAdd}
                 disabled={!canSubmit}
               >
-                追加する
+                コンテンツを追加する
               </button>
               <button
                 type="button"
@@ -2356,26 +3631,49 @@ export default function ContentsPage() {
         <section
           style={{
             border: "1px solid var(--table-border)",
-            borderRadius: 16,
+            borderRadius: 12,
             overflow: "hidden",
-            boxShadow: "0 8px 24px rgba(0,0,0,0.08)",
+            boxShadow: "0 4px 16px rgba(0,0,0,0.06)",
           }}
         >
-          <div style={{ maxHeight: "70vh", overflow: "auto" }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 12,
+              flexWrap: "wrap",
+              alignItems: "center",
+              padding: "16px 18px",
+              borderBottom: "1px solid var(--table-border)",
+              background: "var(--surface)",
+            }}
+          >
+            <div style={{ display: "grid", gap: 4 }}>
+              <div style={{ fontSize: 18, fontWeight: 800, color: "var(--text)" }}>
+                {focusMonth ? `${focusMonth} の請求対象` : "請求対象一覧"}
+              </div>
+              <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                今月何を請求するかが分かる順で並びます。請求対象が上、請求済みや対象外は下に寄せています。
+              </div>
+            </div>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>
+              表示件数 {filteredRows.length}件 / 請求見込み {formatCurrency(invoicePreviewAmount)}
+            </div>
+          </div>
+          <div style={{ maxHeight: "72vh", overflowX: "auto", overflowY: "auto" }}>
             <table style={tableStyle}>
               <thead>
                 <tr>
-                  <th style={{ ...thStyle, minWidth: 140 }}>クライアント</th>
-                  <th style={{ ...thStyle, minWidth: 140 }}>プロジェクト</th>
-                  <th style={{ ...thStyle, minWidth: 200 }}>タイトル</th>
-                  <th style={thStyle}>先方提出日</th>
-                  <th style={thStyle}>編集者提出日</th>
-                  <th style={thStyle}>単価</th>
-                  <th style={thStyle}>サムネ</th>
-                  <th style={thStyle}>請求</th>
-                  <th style={thStyle}>対象月</th>
-                  <th style={thStyle}>ステータス</th>
-                  <th style={thStyle}>操作</th>
+                  <th style={{ ...thStyle, width: 140 }}>取引先</th>
+                  <th style={{ ...thStyle, width: 150 }}>案件</th>
+                  <th style={{ ...thStyle, width: 280 }}>商材 / 明細</th>
+                  <th style={{ ...thStyle, width: 170 }}>対象月 / 納品予定</th>
+                  <th style={{ ...thStyle, width: 110 }}>単価</th>
+                  <th style={{ ...thStyle, width: 76 }}>数量</th>
+                  <th style={{ ...thStyle, width: 110 }}>金額</th>
+                  <th style={{ ...thStyle, width: 120 }}>ステータス</th>
+                  <th style={{ ...thStyle, width: 80 }}>請求</th>
+                  <th style={{ ...thStyle, width: 120 }}>詳細</th>
                 </tr>
               </thead>
               <tbody>
@@ -2402,64 +3700,69 @@ export default function ContentsPage() {
                       {row.projectName}
                     </td>
                     <td style={tdTitleStyle} title={row.title}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 4 }}>
+                        <span style={pillStyle}>{getGuidedBillingModelLabel(row.billingModel)}</span>
                         {clientLate && <span style={badgeRed}>先方遅延</span>}
                         {editorLate && <span style={badgeRed}>外注遅延</span>}
                       </div>
-                      <div>{row.title}</div>
-                    </td>
-                    <td style={tdStyle}>
-                      <input
-                        type="date"
-                        disabled={savingRowIds.has(row.id) || !canEdit}
-                        value={
-                          editingCell?.rowId === row.id && editingCell?.field === "dueClientAt"
-                            ? editingCell.value
-                            : row.dueClientAt
-                        }
-                        onChange={(e) => {
-                          const v = e.target.value
-                          setEditingCell(
-                            editingCell?.rowId === row.id && editingCell?.field === "dueClientAt"
-                              ? { ...editingCell, value: v }
-                              : { rowId: row.id, field: "dueClientAt", value: v }
-                          )
-                        }}
-                        onFocus={() =>
-                          setEditingCell({
-                            rowId: row.id,
-                            field: "dueClientAt",
-                            value: row.dueClientAt,
-                          })
-                        }
-                        onBlur={(e) => {
-                          setEditingCell(null)
-                          const v = e.target.value
-                          if (/^\d{4}-\d{2}-\d{2}$/.test(v)) {
-                            void handleDueClientSave(row, v)
-                          }
-                        }}
-                        style={{
-                          padding: "6px 8px",
-                          borderRadius: 8,
-                          border: "1px solid var(--input-border)",
-                          background: savingRowIds.has(row.id) || !canEdit ? "var(--surface-2)" : "var(--input-bg)",
-                          fontSize: 13,
-                          color: "var(--input-text)",
-                          cursor: savingRowIds.has(row.id) ? "not-allowed" : "pointer",
-                        }}
-                      />
-                      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
-                        自動計算: 先方提出日 - 3日。編集者提出日・対象月も連動更新
+                      <div style={{ fontWeight: 700 }}>{row.serviceName || row.projectName}</div>
+                      <div style={{ marginTop: 4, fontSize: 12, color: "var(--muted)", lineHeight: 1.6 }}>
+                        {row.title}
                       </div>
                     </td>
                     <td style={tdStyle}>
-                      {row.dueEditorAt}
+                      <div>
+                        <span style={pillStyle}>{row.deliveryMonth}</span>
+                      </div>
+                      <div style={{ marginTop: 6 }}>
+                        <input
+                          type="date"
+                          disabled={savingRowIds.has(row.id) || !canEdit}
+                          value={
+                            editingCell?.rowId === row.id && editingCell?.field === "dueClientAt"
+                              ? editingCell.value
+                              : row.dueClientAt
+                          }
+                          onChange={(e) => {
+                            const v = e.target.value
+                            setEditingCell(
+                              editingCell?.rowId === row.id && editingCell?.field === "dueClientAt"
+                                ? { ...editingCell, value: v }
+                                : { rowId: row.id, field: "dueClientAt", value: v }
+                            )
+                          }}
+                          onFocus={() =>
+                            setEditingCell({
+                              rowId: row.id,
+                              field: "dueClientAt",
+                              value: row.dueClientAt,
+                            })
+                          }
+                          onBlur={(e) => {
+                            setEditingCell(null)
+                            const v = e.target.value
+                            if (/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+                              void handleDueClientSave(row, v)
+                            }
+                          }}
+                          style={{
+                            padding: "4px 6px",
+                            borderRadius: 6,
+                            border: "1px solid var(--input-border)",
+                            background: savingRowIds.has(row.id) || !canEdit ? "var(--surface-2)" : "var(--input-bg)",
+                            fontSize: 12,
+                            color: "var(--input-text)",
+                            cursor: savingRowIds.has(row.id) ? "not-allowed" : "pointer",
+                            width: "100%",
+                          }}
+                        />
+                      </div>
                     </td>
                     <td style={tdStyle}>
                       <input
-                        type="number"
-                        min={0}
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
                         disabled={savingRowIds.has(row.id) || !canEdit}
                         value={
                           editingCell?.rowId === row.id && editingCell?.field === "unitPrice"
@@ -2489,56 +3792,26 @@ export default function ContentsPage() {
                           }
                         }}
                         style={{
-                          padding: "6px 8px",
-                          borderRadius: 8,
+                          padding: "4px 6px",
+                          borderRadius: 6,
                           border: "1px solid var(--input-border)",
                           background: savingRowIds.has(row.id) || !canEdit ? "var(--surface-2)" : "var(--input-bg)",
-                          fontSize: 13,
+                          fontSize: 12,
                           color: "var(--input-text)",
-                          width: 100,
+                          width: 72,
                           cursor: savingRowIds.has(row.id) ? "not-allowed" : "text",
                         }}
                       />
                     </td>
                     <td style={tdStyle}>
-                      <label style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: savingRowIds.has(row.id) || !canEdit ? "not-allowed" : "pointer" }}>
-                        <input
-                          type="checkbox"
-                          disabled={savingRowIds.has(row.id) || !canEdit}
-                          checked={row.thumbnailDone}
-                          onChange={() =>
-                            handleThumbnailChange(row, !row.thumbnailDone)
-                          }
-                          style={{ width: 18, height: 18, cursor: savingRowIds.has(row.id) || !canEdit ? "not-allowed" : "pointer" }}
-                        />
-                        {row.thumbnailDone ? (
-                          <span style={badgeGreen}>済</span>
-                        ) : (
-                          <span style={badgeAmber}>未</span>
-                        )}
-                      </label>
+                      {row.quantity}
+                      {row.unitType ? (
+                        <span style={{ marginLeft: 4, fontSize: 11, color: "var(--muted)" }}>
+                          {getGuidedUnitLabel(row.unitType)}
+                        </span>
+                      ) : null}
                     </td>
-                    <td style={tdStyle}>
-                      <label style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: savingRowIds.has(row.id) || !canEdit ? "not-allowed" : "pointer" }}>
-                        <input
-                          type="checkbox"
-                          disabled={savingRowIds.has(row.id) || !canEdit}
-                          checked={row.billable}
-                          onChange={() =>
-                            handleBillableChange(row, !row.billable)
-                          }
-                          style={{ width: 18, height: 18, cursor: savingRowIds.has(row.id) || !canEdit ? "not-allowed" : "pointer" }}
-                        />
-                        {row.billable ? (
-                          <span style={badgeGreen}>OK</span>
-                        ) : (
-                          <span style={badgeRed}>NG</span>
-                        )}
-                      </label>
-                    </td>
-                    <td style={tdStyle}>
-                      <span style={pillStyle}>{row.deliveryMonth}</span>
-                    </td>
+                    <td style={tdStyle}>{formatCurrency(row.amount ?? row.unitPrice)}</td>
                     <td style={tdStyle}>
                       <select
                         value={row.status ?? ""}
@@ -2547,20 +3820,21 @@ export default function ContentsPage() {
                           handleStatusChange(row, e.target.value)
                         }
                         style={{
-                          padding: "6px 8px",
-                          borderRadius: 8,
+                          padding: "4px 6px",
+                          borderRadius: 6,
                           border: "1px solid var(--input-border)",
                           background: savingRowIds.has(row.id) || !canEdit ? "var(--surface-2)" : "var(--input-bg)",
-                          fontSize: 13,
+                          fontSize: 12,
                           fontWeight: 500,
                           color: "var(--input-text)",
                           cursor: savingRowIds.has(row.id) || !canEdit ? "not-allowed" : "pointer",
-                          minWidth: 120,
+                          width: "100%",
+                          maxWidth: 120,
                         }}
                       >
                         {row.status &&
                         !(row.status in statusLabels) ? (
-                          <option value={row.status}>{row.status}</option>
+                          <option value={row.status}>{getGuidedStatusLabel(row.status)}</option>
                         ) : null}
                         {Object.entries(statusLabels)
                           .filter(([k]) => k !== "cancelled")
@@ -2571,132 +3845,79 @@ export default function ContentsPage() {
                           ))}
                       </select>
                     </td>
-                    <td style={tdStyle}>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    <td style={{ ...tdStyle, textAlign: "center" }}>
+                      <label style={{ display: "inline-flex", alignItems: "center", gap: 4, cursor: savingRowIds.has(row.id) || !canEdit ? "not-allowed" : "pointer" }}>
+                        <input
+                          type="checkbox"
+                          disabled={savingRowIds.has(row.id) || !canEdit}
+                          checked={row.billable}
+                          onChange={() =>
+                            handleBillableChange(row, !row.billable)
+                          }
+                          style={{ width: 15, height: 15, cursor: savingRowIds.has(row.id) || !canEdit ? "not-allowed" : "pointer" }}
+                        />
+                        {row.billable ? (
+                          <span style={badgeGreen}>OK</span>
+                        ) : (
+                          <span style={badgeRed}>NG</span>
+                        )}
+                      </label>
+                    </td>
+                    <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                         {savingRowIds.has(row.id) && (
-                          <span style={{ fontSize: 12, color: "var(--muted)" }}>保存中...</span>
+                          <span style={{ fontSize: 11, color: "var(--muted)" }}>保存中...</span>
                         )}
                         {rowErrors[row.id] && (
-                          <span style={{ fontSize: 12, color: "#b91c1c" }}>
-                            保存失敗: {rowErrors[row.id]}
+                          <span style={{ fontSize: 11, color: "#b91c1c" }}>
+                            保存失敗
                           </span>
                         )}
-                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                          {canEdit && (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => openContentTitleIdeas(row)}
-                                style={{
-                                  padding: "6px 10px",
-                                  borderRadius: 8,
-                                  border: "1px solid var(--button-secondary-border)",
-                                  background: "var(--button-secondary-bg)",
-                                  fontSize: 12,
-                                  color: "var(--button-secondary-text)",
-                                  cursor: "pointer",
-                                }}
-                              >
-                                AIタイトル案
-                              </button>
-                              <button
-                                type="button"
-                                disabled={savingRowIds.has(row.id)}
-                                onClick={() => handleSetCanceled(row)}
-                                style={{
-                                  padding: "6px 10px",
-                                  borderRadius: 8,
-                                  border: "1px solid #b91c1c",
-                                  background: savingRowIds.has(row.id) ? "#fecaca" : "#fef2f2",
-                                  color: "#b91c1c",
-                                  fontSize: 12,
-                                  cursor: savingRowIds.has(row.id) ? "wait" : "pointer",
-                                }}
-                              >
-                                没にする
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleSaveAsTemplate(row)}
-                                style={{
-                                  padding: "6px 10px",
-                                  borderRadius: 8,
-                                  border: "1px solid var(--chip-border)",
-                                  background: "var(--chip-bg)",
-                                  fontSize: 12,
-                                  color: "var(--chip-text)",
-                                  cursor: "pointer",
-                                }}
-                              >
-                                テンプレとして保存                              </button>
-                              <button
-                                type="button"
-                                onClick={() => void handleDuplicateRow(row)}
-                                style={{
-                                  padding: "6px 10px",
-                                  borderRadius: 8,
-                                  border: "1px solid var(--button-secondary-border)",
-                                  background: "var(--button-secondary-bg)",
-                                  fontSize: 12,
-                                  color: "var(--button-secondary-text)",
-                                  cursor: "pointer",
-                                }}
-                              >
-                                行複製
-                              </button>
-                            </>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => setDetailRow(row)}
-                            style={{
-                              padding: "6px 10px",
-                              borderRadius: 8,
-                              border: "1px solid var(--button-secondary-border)",
-                              background: "var(--button-secondary-bg)",
-                              fontSize: 12,
-                              color: "var(--button-secondary-text)",
-                              cursor: "pointer",
-                            }}
-                          >
-                            詳細
-                          </button>
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setDetailRow(row)}
+                          style={actionBtnStyle}
+                        >
+                          詳細
+                        </button>
                       </div>
                     </td>
                   </tr>
                 );
                 })}
-                {!isLoading && rows.length === 0 && (
+                {!isLoading && filteredRows.length === 0 && (
                   <tr>
-                    <td style={tdStyle} colSpan={11}>
+                    <td style={tdStyle} colSpan={10}>
                       <GuideEmptyState
-                        title="コンテンツはまだ登録されていません"
+                        title={rows.length === 0 ? "請求対象はまだ登録されていません" : "この条件に合う請求対象はありません"}
                         description={
-                          hasClients
-                            ? "クライアント登録は済んでいます。上の +追加 から最初の1本を入れると、Home と Billing の導線が動き始めます。"
-                            : "最初のクライアントを登録すると、1本目の制作と請求の導線をそのまま始められます。"
+                          rows.length === 0
+                            ? hasClients
+                              ? "取引先登録は済んでいます。上の「請求対象を追加」から、今月分をそのまま登録してください。"
+                              : "最初の取引先を登録すると、請求対象の追加から月末請求までをそのまま始められます。"
+                            : "対象月や取引先の条件を広げると、他の請求候補も確認できます。"
                         }
                         primaryHref="/contents"
-                        primaryLabel="クライアントを登録する"
-                        hidePrimaryAction={hasClients}
-                        onPrimaryClick={hasClients ? () => setIsAdding(true) : openClientRegistration}
+                        primaryLabel={rows.length === 0 ? "取引先を登録する" : "請求対象を追加する"}
+                        hidePrimaryAction={rows.length === 0 ? hasClients : false}
+                        onPrimaryClick={rows.length === 0 ? (hasClients ? openGuidedAdd : openClientRegistration) : openGuidedAdd}
                         helpHref="/help/contents-daily"
                       />
                     </td>
                   </tr>
                 )}
                 <tr>
-                  <td style={tdStyle} colSpan={11}>
+                  <td style={tdStyle} colSpan={10}>
                     <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
                       <div>
-                        必須項目:
+                        追加時に自動で入る項目:
                         <strong style={{ marginLeft: 6 }}>
-                          client / project_name / title / due_client_at / unit_price
+                          delivery_month / 明細タイトル / 単位 / 請求区分 / 初期ステータス
                         </strong>
                       </div>
                       <div style={{ color: "var(--muted)" }}>
-                        先方提出日昇順で表示します。                      </div>
+                        一覧は請求対象のものが上に寄りやすく、今月分の確認をしやすい順で表示します。
+                      </div>
                     </div>
                   </td>
                 </tr>
@@ -2709,28 +3930,30 @@ export default function ContentsPage() {
           <div
             role="dialog"
             aria-modal="true"
-            style={{
-              position: "fixed",
-              inset: 0,
-              background: "rgba(15, 23, 42, 0.42)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              padding: 20,
-              zIndex: 60,
-            }}
+              style={{
+                position: "fixed",
+                inset: 0,
+                background: "rgba(15, 23, 42, 0.42)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: 12,
+                zIndex: 60,
+              }}
             onClick={() => setDetailRow(null)}
           >
             <div
               style={{
-                width: "min(720px, 100%)",
+                width: "min(860px, 100%)",
+                maxHeight: "calc(100vh - 24px)",
                 borderRadius: 18,
                 border: "1px solid var(--border)",
                 background: "var(--surface)",
                 boxShadow: "0 18px 48px rgba(15, 23, 42, 0.24)",
-                padding: 20,
+                padding: 18,
                 display: "grid",
                 gap: 16,
+                overflowY: "auto",
               }}
               onClick={(event) => event.stopPropagation()}
             >
@@ -2744,17 +3967,18 @@ export default function ContentsPage() {
                       <input
                         value={detailTitleDraft}
                         onChange={(event) => setDetailTitleDraft(event.target.value)}
-                        style={{
-                          width: "min(520px, 100%)",
-                          borderRadius: 12,
-                          border: "1px solid var(--input-border)",
-                          background: "var(--input-bg)",
-                          color: "var(--input-text)",
-                          fontSize: 22,
-                          fontWeight: 700,
-                          padding: "10px 12px",
-                        }}
-                      />
+                          style={{
+                            width: "100%",
+                            borderRadius: 12,
+                            border: "1px solid var(--input-border)",
+                            background: "var(--input-bg)",
+                            color: "var(--input-text)",
+                            fontSize: 22,
+                            fontWeight: 700,
+                            padding: "10px 12px",
+                            boxSizing: "border-box",
+                          }}
+                        />
                       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                         <button
                           type="button"
@@ -2767,7 +3991,7 @@ export default function ContentsPage() {
                                   text: detailTitleDraft || detailRow.title,
                                   compareText: detailTitleDraft || detailRow.title,
                                   context: buildContentAiContext(detailRow, todayYmd),
-                                  title: "Contents AI",
+                                  title: "コンテンツAI",
                                   applyLabel: "タイトル候補に反映",
                                   applyTarget: "contents_detail_title",
                                   applyTransform: "first_line" as const,
@@ -2841,7 +4065,7 @@ export default function ContentsPage() {
 
               {canEdit ? (
                 <div style={{ border: "1px solid var(--border)", borderRadius: 14, padding: 14, background: "var(--surface-2)" }}>
-                  <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>競合吸収拡張フィールド</div>
+                  <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>詳細項目</div>
                   <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
                     <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
                       案件
@@ -2889,7 +4113,7 @@ export default function ContentsPage() {
                       />
                     </label>
                     <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
-                      Editor
+                      編集担当
                       <select
                         value={detailDraft.assigneeEditorUserId}
                         onChange={(event) => setDetailDraft((prev) => ({ ...prev, assigneeEditorUserId: event.target.value }))}
@@ -2899,63 +4123,6 @@ export default function ContentsPage() {
                         {members.map((member) => (
                           <option key={member.userId} value={member.userId}>
                             {member.displayName || member.email || member.userId}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
-                      Checker
-                      <select
-                        value={detailDraft.assigneeCheckerUserId}
-                        onChange={(event) => setDetailDraft((prev) => ({ ...prev, assigneeCheckerUserId: event.target.value }))}
-                        style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--input-border)", background: "var(--input-bg)", color: "var(--input-text)" }}
-                      >
-                        <option value="">未設定</option>
-                        {members.map((member) => (
-                          <option key={member.userId} value={member.userId}>
-                            {member.displayName || member.email || member.userId}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
-                      素材
-                      <select
-                        value={detailDraft.materialStatus}
-                        onChange={(event) => setDetailDraft((prev) => ({ ...prev, materialStatus: event.target.value }))}
-                        style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--input-border)", background: "var(--input-bg)", color: "var(--input-text)" }}
-                      >
-                        {MATERIAL_STATUS_OPTIONS.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
-                      Draft
-                      <select
-                        value={detailDraft.draftStatus}
-                        onChange={(event) => setDetailDraft((prev) => ({ ...prev, draftStatus: event.target.value }))}
-                        style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--input-border)", background: "var(--input-bg)", color: "var(--input-text)" }}
-                      >
-                        {DRAFT_STATUS_OPTIONS.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text)" }}>
-                      Final
-                      <select
-                        value={detailDraft.finalStatus}
-                        onChange={(event) => setDetailDraft((prev) => ({ ...prev, finalStatus: event.target.value }))}
-                        style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--input-border)", background: "var(--input-bg)", color: "var(--input-text)" }}
-                      >
-                        {FINAL_STATUS_OPTIONS.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
                           </option>
                         ))}
                       </select>
@@ -3080,7 +4247,7 @@ export default function ContentsPage() {
                                   text: detailShareDraft || buildContentShareDraft(detailRow, todayYmd),
                                   compareText: detailShareDraft || buildContentShareDraft(detailRow, todayYmd),
                                    context: buildContentAiContext(detailRow, todayYmd),
-                                   title: "Contents AI",
+                                  title: "コンテンツAI",
                                    applyLabel: "共有文ドラフトに反映",
                                    applyTarget: "contents_detail_share_draft",
                                    meta: buildContentAiMeta(detailRow),
@@ -3112,7 +4279,7 @@ export default function ContentsPage() {
                                     text: detailShareDraft || buildContentShareDraft(detailRow, todayYmd),
                                     compareText: detailShareDraft || buildContentShareDraft(detailRow, todayYmd),
                                      context: buildContentAiContext(detailRow, todayYmd),
-                                     title: "Contents AI",
+                                     title: "コンテンツAI",
                                      applyLabel: "共有文ドラフトに反映",
                                      applyTarget: "contents_detail_share_draft",
                                      meta: buildContentAiMeta(detailRow),
@@ -3144,7 +4311,7 @@ export default function ContentsPage() {
                                   text: detailShareDraft || buildContentShareDraft(detailRow, todayYmd),
                                   compareText: detailShareDraft || buildContentShareDraft(detailRow, todayYmd),
                                   context: buildContentAiContext(detailRow, todayYmd),
-                                  title: "Contents AI",
+                                  title: "コンテンツAI",
                                   applyLabel: "共有文ドラフトに反映",
                                   applyTarget: "contents_detail_share_draft",
                                   meta: buildContentAiMeta(detailRow),
@@ -3238,6 +4405,7 @@ function DetailStat({ label, value }: { label: string; value: string }) {
     </div>
   )
 }
+
 
 
 

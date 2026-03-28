@@ -8,7 +8,7 @@ type OnboardingShellProps = {
   stepCurrent: number
   stepTotal: number
   title: string
-  description: string
+  description: React.ReactNode
   onBack?: () => void
   onClose?: () => void
   children: React.ReactNode
@@ -104,7 +104,7 @@ export default function OnboardingShell({
 
           {footerText ? <p className="onboarding-footer-note">{footerText}</p> : null}
 
-          {(ctaLabel ?? "").length > 0 && (
+          {(ctaLabel ?? "").length > 0 ? (
             <div className="onboarding-actions">
               <PrimaryButton
                 disabled={ctaDisabled}
@@ -116,7 +116,7 @@ export default function OnboardingShell({
                 {ctaLabel}
               </PrimaryButton>
             </div>
-          )}
+          ) : null}
 
           <StepIndicator current={stepCurrent} total={stepTotal} />
         </section>

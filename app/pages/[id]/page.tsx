@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import NextImage from "next/image"
-import { useParams } from "next/navigation"
+import { useParams, useRouter } from "next/navigation"
 import { useEditor, EditorContent, type JSONContent } from "@tiptap/react"
 import { BubbleMenu } from "@tiptap/react/menus"
 import StarterKit from "@tiptap/starter-kit"
@@ -18,6 +18,7 @@ import { Embed } from "@/lib/embedExtension"
 import { CommentHighlightExtension, commentHighlightPluginKey } from "@/lib/commentHighlightExtension"
 import { titleToSlug } from "@/lib/slug"
 import { supabase } from "@/lib/supabase"
+import TemplateInstallDialog from "@/components/pages/TemplateInstallDialog"
 import { useAuthOrg } from "@/hooks/useAuthOrg"
 
 const DEBOUNCE_MS = 1000
@@ -95,6 +96,259 @@ type PageRow = {
   cover_path?: string | null
   slug?: string | null
   updated_by?: string | null
+  template_binding?: {
+    installId: string
+    installName: string
+    templateKey: string
+    templateName: string
+    templateCategory: string
+    templateBadges: string[]
+    integrationTargets: string[]
+    templatePageTitle: string
+    pageType: "doc" | "checklist" | "snippets" | "table_like" | "link_hub"
+    isCustomized: boolean
+    templateVersion: string
+    latestVersion: string
+    updateAvailable: boolean
+    installStatus: "pending" | "completed" | "failed"
+    installedAt: string
+    rootPageId: string | null
+    groupUnderRoot: boolean
+    templateSourceType: "official" | "shared"
+    sharingScope: "official" | "org" | "industry"
+    industryTag: string | null
+  } | null
+}
+
+function getTaskStatsFromJson(node: JSONContent | null | undefined): { total: number; checked: number } {
+  if (!node) return { total: 0, checked: 0 }
+  let total = 0
+  let checked = 0
+  if (node.type === "taskItem") {
+    total += 1
+    if (node.attrs?.checked === true) checked += 1
+  }
+  if (Array.isArray(node.content)) {
+    for (const child of node.content) {
+      const stats = getTaskStatsFromJson(child as JSONContent)
+      total += stats.total
+      checked += stats.checked
+    }
+  }
+  return { total, checked }
+}
+
+function getCodeBlocksFromJson(node: JSONContent | null | undefined): string[] {
+  if (!node) return []
+  const blocks: string[] = []
+  if (node.type === "codeBlock") {
+    const text = getPlainTextFromJson(node).trim()
+    if (text) blocks.push(text)
+  }
+  if (Array.isArray(node.content)) {
+    for (const child of node.content) {
+      blocks.push(...getCodeBlocksFromJson(child as JSONContent))
+    }
+  }
+  return blocks
+}
+
+function getLinksFromJson(node: JSONContent | null | undefined): Array<{ label: string; href: string }> {
+  if (!node) return []
+  const links: Array<{ label: string; href: string }> = []
+  if (node.type === "text" && Array.isArray(node.marks)) {
+    for (const mark of node.marks) {
+      if (mark.type === "link" && typeof mark.attrs?.href === "string" && typeof node.text === "string") {
+        links.push({ label: node.text, href: mark.attrs.href })
+      }
+    }
+  }
+  if (Array.isArray(node.content)) {
+    for (const child of node.content) {
+      links.push(...getLinksFromJson(child as JSONContent))
+    }
+  }
+  return links
+}
+
+function formatTemplatePageType(pageType: string) {
+  switch (pageType) {
+    case "checklist":
+      return "チェックリスト"
+    case "snippets":
+      return "スニペット"
+    case "table_like":
+      return "台帳"
+    case "link_hub":
+      return "導線ハブ"
+    default:
+      return "ドキュメント"
+  }
+}
+
+function templateBadgeTone(label: string): { background: string; color: string; border: string } {
+  switch (label) {
+    case "公式":
+      return { background: "rgba(255,247,237,0.92)", color: "#9a3412", border: "1px solid rgba(251,191,36,0.24)" }
+    case "上級":
+      return { background: "rgba(243,232,255,0.92)", color: "#7c3aed", border: "1px solid rgba(167,139,250,0.2)" }
+    case "編集ディレクション":
+      return { background: "rgba(219,234,254,0.92)", color: "#1d4ed8", border: "1px solid rgba(59,130,246,0.18)" }
+    case "メンバー運用":
+      return { background: "rgba(220,252,231,0.92)", color: "#166534", border: "1px solid rgba(34,197,94,0.18)" }
+    case "修正管理":
+      return { background: "rgba(254,226,226,0.92)", color: "#b91c1c", border: "1px solid rgba(220,38,38,0.16)" }
+    case "通知運用":
+      return { background: "rgba(204,251,241,0.92)", color: "#0f766e", border: "1px solid rgba(45,212,191,0.18)" }
+    case "1クリック導入":
+      return { background: "rgba(254,243,199,0.92)", color: "#92400e", border: "1px solid rgba(245,158,11,0.18)" }
+    default:
+      return { background: "rgba(248,250,252,0.92)", color: "#475569", border: "1px solid rgba(148,163,184,0.18)" }
+  }
+}
+
+function installStatusLabel(status: string) {
+  switch (status) {
+    case "pending":
+      return "準備中"
+    case "failed":
+      return "失敗"
+    default:
+      return "完了"
+  }
+}
+
+type TemplateStarterKind = "doc" | "checklist" | "snippets" | "table_like" | "link_hub"
+type TemplateTextSegment = { text: string; href?: string }
+
+function textNode(text: string, href?: string): JSONContent {
+  return href
+    ? { type: "text", text, marks: [{ type: "link", attrs: { href } }] }
+    : { type: "text", text }
+}
+
+function paragraphNode(segments: TemplateTextSegment[]): JSONContent {
+  if (segments.length === 0) return { type: "paragraph" }
+  return { type: "paragraph", content: segments.map((segment) => textNode(segment.text, segment.href)) }
+}
+
+function headingNode(level: 1 | 2 | 3, text: string): JSONContent {
+  return { type: "heading", attrs: { level }, content: [textNode(text)] }
+}
+
+function codeBlockNode(text: string): JSONContent {
+  return { type: "codeBlock", content: [textNode(text)] }
+}
+
+function bulletListNode(items: TemplateTextSegment[][]): JSONContent {
+  return {
+    type: "bulletList",
+    content: items.map((segments) => ({
+      type: "listItem",
+      content: [paragraphNode(segments)],
+    })),
+  }
+}
+
+function taskListNode(items: string[]): JSONContent {
+  return {
+    type: "taskList",
+    content: items.map((item) => ({
+      type: "taskItem",
+      attrs: { checked: false },
+      content: [paragraphNode([{ text: item }])],
+    })),
+  }
+}
+
+function formatIntegrationTargetLabel(target: string): string {
+  switch (target) {
+    case "/contents":
+      return "進行管理"
+    case "/billing":
+      return "請求"
+    case "/vendors":
+      return "外注"
+    case "/payouts":
+      return "支払い"
+    case "/notifications":
+      return "通知"
+    case "/settings":
+      return "設定"
+    case "/settings/members":
+      return "メンバー設定"
+    default:
+      return target.replace(/^\//, "") || "本体画面"
+  }
+}
+
+function buildTemplateStarterBlocks(pageType: TemplateStarterKind, integrationTargets: string[]): JSONContent[] {
+  const targets = Array.from(
+    new Set(integrationTargets.length > 0 ? integrationTargets : ["/contents", "/notifications", "/settings"])
+  ).slice(0, 4)
+
+  if (pageType === "checklist") {
+    return [
+      headingNode(3, "確認ひな形"),
+      paragraphNode([{ text: "最初の確認項目だけを置く軽量版です。実際の進行データは本体画面で管理します。" }]),
+      taskListNode(["確認対象を1行で書く", "完了条件を短く追記する", "必要なら担当や期限メモを下に足す"]),
+    ]
+  }
+
+  if (pageType === "snippets") {
+    return [
+      headingNode(3, "定型文ひな形"),
+      paragraphNode([{ text: "そのままコピペできる文面だけを先に置けます。" }]),
+      codeBlockNode("ここに定型文を入れる"),
+      paragraphNode([{ text: "前提条件や NG 例があれば、この下に短く追記します。" }]),
+    ]
+  }
+
+  if (pageType === "table_like") {
+    return [
+      headingNode(3, "台帳ひな形"),
+      paragraphNode([{ text: "既存エディタ上で軽く運用するため、列だけを置く簡易版です。" }]),
+      codeBlockNode("項目 | 状態 | メモ\n担当 | 稼働中 | 補足を書く\n締切 | 要確認 | 日付を書く"),
+    ]
+  }
+
+  if (pageType === "link_hub") {
+    return [
+      headingNode(3, "本体導線ひな形"),
+      paragraphNode([{ text: "このページから開きたい本体画面を先に並べます。" }]),
+      bulletListNode(
+        targets.map((target) => [
+          { text: `${formatIntegrationTargetLabel(target)}を開く`, href: target },
+          { text: ` (${target})` },
+        ])
+      ),
+    ]
+  }
+
+  return [
+    headingNode(3, "公式ひな形メモ"),
+    paragraphNode([{ text: "このページは公式テンプレを起点に編集します。判断基準や更新ルールだけをここに残します。" }]),
+    bulletListNode([
+      [{ text: "結論や目的を最初に1行で書く" }],
+      [{ text: "次の更新条件を箇条書きで残す" }],
+      [{ text: `${formatIntegrationTargetLabel(targets[0] ?? "/contents")}の正式データを先に更新する`, href: targets[0] ?? "/contents" }],
+    ]),
+  ]
+}
+
+function templateStarterActionLabel(pageType: TemplateStarterKind): string {
+  switch (pageType) {
+    case "checklist":
+      return "チェック項目を追加"
+    case "snippets":
+      return "文面ひな形を追加"
+    case "table_like":
+      return "台帳ひな形を追加"
+    case "link_hub":
+      return "導線ひな形を追加"
+    default:
+      return "公式ひな形を追加"
+  }
 }
 
 type SlashCommand = {
@@ -145,7 +399,7 @@ function buildPracticalGuide(rawText: string, canUseAccounting: boolean): Practi
         description: "このページは請求手順の文脈が強いため、月次請求と請求書確認の導線を優先しています。",
         actions: [
           { href: "/billing", label: "月次請求を開く", description: "対象月の請求候補と請求依頼台帳を確認します。" },
-          { href: "/invoices", label: "請求書一覧へ", description: "発行済み / 下書き / PDF 出力の状況を見ます。" },
+          { href: "/invoices", label: "請求書へ", description: "発行済み / 下書き / PDF 出力の状況を見ます。" },
           { href: "/help/billing-monthly", label: "請求ヘルプを見る", description: "締め手順と運用ルールをヘルプで確認します。" },
         ],
       }
@@ -219,6 +473,7 @@ function buildPracticalGuide(rawText: string, canUseAccounting: boolean): Practi
 
 export default function PageEditPage() {
   const params = useParams()
+  const router = useRouter()
   const id = typeof params?.id === "string" ? params.id : null
   const { activeOrgId, role, loading: authLoading, needsOnboarding } = useAuthOrg({ redirectToOnboarding: true })
 
@@ -230,6 +485,7 @@ export default function PageEditPage() {
   const [imageError, setImageError] = useState<string | null>(null)
   const [imageUploading, setImageUploading] = useState(false)
   const [toastMessage, setToastMessage] = useState<string | null>(null)
+  const [templateDialogOpen, setTemplateDialogOpen] = useState(false)
   const [charCount, setCharCount] = useState(0)
   const charCountTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [linkModalOpen, setLinkModalOpen] = useState(false)
@@ -486,7 +742,12 @@ export default function PageEditPage() {
         headers: { Authorization: `Bearer ${token}` },
       })
       const json = (await res.json().catch(() => null)) as
-        | { ok?: boolean; page?: PageRow; message?: string }
+        | {
+            ok?: boolean
+            page?: PageRow
+            template_binding?: PageRow["template_binding"]
+            message?: string
+          }
         | null
 
       if (!active) return
@@ -502,7 +763,7 @@ export default function PageEditPage() {
         setPage(null)
         return
       }
-      setPage(row)
+      setPage({ ...row, template_binding: json.template_binding ?? null })
       setTitleInput(row.title?.trim() || "無題")
       setCoverPath(row.cover_path ?? null)
       lastSavedRef.current = { title: row.title || "無題", content: row.content }
@@ -838,6 +1099,16 @@ export default function PageEditPage() {
     () => buildPracticalGuide(`${titleInput || page?.title || ""} ${page?.body_text || ""}`, canEdit),
     [canEdit, page?.body_text, page?.title, titleInput]
   )
+  const templateBinding = page?.template_binding ?? null
+  const templateInsights = useMemo(() => {
+    if (!templateBinding) return null
+    const currentContent = (editor?.getJSON() ?? page?.content ?? null) as JSONContent | null
+    return {
+      taskStats: getTaskStatsFromJson(currentContent),
+      codeBlocks: getCodeBlocksFromJson(currentContent).slice(0, 3),
+      links: getLinksFromJson(currentContent).slice(0, 4),
+    }
+  }, [editor, page?.content, templateBinding])
   const isVisible = useCallback((key?: string) => key !== "__hidden__", [])
 
   const triggerFileInput = () => fileInputRef.current?.click()
@@ -861,33 +1132,38 @@ export default function PageEditPage() {
   }, [])
 
   const insertBlockBelow = useCallback(
-    (kind: "paragraph" | "bulletList" | "taskList") => {
+    (kind: "paragraph" | "bulletList" | "taskList" | "snippets" | "table_like" | "link_hub") => {
       if (!editorInstance || gutterBlockIndex == null || !canEdit) return
       const json = editorInstance.getJSON()
       const content = Array.isArray(json.content) ? ([...json.content] as unknown[]) : []
 
-      let newNode: JSONContent
+      let newNodes: JSONContent[]
       if (kind === "bulletList") {
-        newNode = {
+        newNodes = [{
           type: "bulletList",
           content: [{ type: "listItem", content: [{ type: "paragraph" }] }],
-        }
+        }]
       } else if (kind === "taskList") {
-        newNode = {
+        newNodes = [{
           type: "taskList",
           content: [{ type: "taskItem", attrs: { checked: false }, content: [{ type: "paragraph" }] }],
-        }
+        }]
+      } else if (kind === "snippets" || kind === "table_like" || kind === "link_hub") {
+        newNodes = buildTemplateStarterBlocks(kind, page?.template_binding?.integrationTargets ?? [])
       } else {
-        newNode = { type: "paragraph" }
+        newNodes = [{ type: "paragraph" }]
       }
 
-      content.splice(gutterBlockIndex + 1, 0, newNode as unknown)
+      content.splice(gutterBlockIndex + 1, 0, ...(newNodes as unknown[]))
       const safeDoc = sanitizeJsonContent({ type: "doc", content })
       editorInstance.commands.setContent(safeDoc, { emitUpdate: true })
       editorInstance.commands.focus("end")
       setGutterMenuOpen(false)
+      if (kind === "snippets" || kind === "table_like" || kind === "link_hub") {
+        setToastMessage(`${templateStarterActionLabel(kind)}。`)
+      }
     },
-    [editorInstance, gutterBlockIndex, canEdit]
+    [editorInstance, gutterBlockIndex, canEdit, page?.template_binding?.integrationTargets]
   )
 
   const reorderBlock = useCallback(
@@ -1027,6 +1303,24 @@ export default function PageEditPage() {
       setToastMessage("コピーに失敗しました")
     }
   }
+
+  const insertStarterBlocksAtCursor = useCallback(
+    (pageType: TemplateStarterKind, successMessage = "ひな形ブロックを追加しました") => {
+      if (!editorInstance || !canEdit) return
+      const blocks = buildTemplateStarterBlocks(pageType, page?.template_binding?.integrationTargets ?? [])
+      editorInstance.chain().focus().insertContent(blocks).run()
+      setToastMessage(successMessage)
+    },
+    [canEdit, editorInstance, page?.template_binding?.integrationTargets]
+  )
+
+  const insertCurrentTemplateStarter = useCallback(() => {
+    if (!page?.template_binding) return
+    insertStarterBlocksAtCursor(
+      page.template_binding.pageType,
+      `${templateStarterActionLabel(page.template_binding.pageType)}。`
+    )
+  }, [insertStarterBlocksAtCursor, page?.template_binding])
 
   const closeSlashMenu = useCallback(() => {
     setSlashMenuOpen(false)
@@ -1173,6 +1467,57 @@ export default function PageEditPage() {
         },
       },
       {
+        id: "snippet-starter",
+        token: "snippet",
+        label: "/snippet 文面ひな形",
+        description: "コピペ用の定型文ブロックを差し込みます。",
+        keywords: ["template", "copy", "snippet", "文面"],
+        run: () => {
+          insertStarterBlocksAtCursor("snippets", "文面ひな形を追加しました。")
+          closeSlashMenu()
+        },
+      },
+      {
+        id: "ledger-starter",
+        token: "ledger",
+        label: "/ledger 台帳ひな形",
+        description: "列だけを先に置く軽量な台帳ブロックを差し込みます。",
+        keywords: ["table", "ledger", "grid", "台帳"],
+        run: () => {
+          insertStarterBlocksAtCursor("table_like", "台帳ひな形を追加しました。")
+          closeSlashMenu()
+        },
+      },
+      {
+        id: "hub-starter",
+        token: "hub",
+        label: "/hub 導線ひな形",
+        description: "本体画面へ飛ぶためのリンク集を差し込みます。",
+        keywords: ["link", "hub", "route", "導線"],
+        run: () => {
+          insertStarterBlocksAtCursor("link_hub", "導線ひな形を追加しました。")
+          closeSlashMenu()
+        },
+      },
+      {
+        id: "template-starter",
+        token: "starter",
+        label: "/starter 現在のページ種別ひな形",
+        description: "このテンプレ種別に合う最小構成のひな形を差し込みます。",
+        keywords: ["template", "starter", "公式"],
+        run: () => {
+          if (page?.template_binding) {
+            insertStarterBlocksAtCursor(
+              page.template_binding.pageType,
+              `${templateStarterActionLabel(page.template_binding.pageType)}。`
+            )
+          } else {
+            insertStarterBlocksAtCursor("doc", "公式ひな形を追加しました。")
+          }
+          closeSlashMenu()
+        },
+      },
+      {
         id: "embed",
         token: "embed",
         label: "/embed 埋め込み",
@@ -1187,7 +1532,7 @@ export default function PageEditPage() {
         },
       },
     ],
-    [closeSlashMenu, editor, insertEmbedBlock, openEmbedComposer]
+    [closeSlashMenu, editor, insertEmbedBlock, insertStarterBlocksAtCursor, openEmbedComposer, page?.template_binding]
   )
 
   const filteredSlashCommands = useMemo(() => {
@@ -1275,7 +1620,7 @@ export default function PageEditPage() {
             color: "var(--surface)",
             fontSize: 14,
             fontWeight: 500,
-            boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+            boxShadow: "var(--shadow-md)",
             zIndex: 9999,
           }}
         >
@@ -1305,7 +1650,7 @@ export default function PageEditPage() {
               border: "1px solid var(--border)",
               borderRadius: 18,
               padding: 12,
-              boxShadow: "0 24px 48px rgba(15,23,42,0.16)",
+              boxShadow: "var(--shadow-lg)",
               width: "min(560px, calc(100vw - 32px))",
               maxHeight: "min(520px, calc(100vh - 220px))",
               overflowY: "auto",
@@ -1435,7 +1780,7 @@ export default function PageEditPage() {
               padding: 24,
               maxWidth: 400,
               width: "90%",
-              boxShadow: "0 8px 32px rgba(0,0,0,0.2)",
+              boxShadow: "var(--shadow-lg)",
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -1544,7 +1889,7 @@ export default function PageEditPage() {
               padding: 24,
               maxWidth: 520,
               width: "90%",
-              boxShadow: "0 8px 32px rgba(0,0,0,0.2)",
+              boxShadow: "var(--shadow-lg)",
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -1641,7 +1986,7 @@ export default function PageEditPage() {
               maxWidth: 400,
               maxHeight: "80vh",
               width: "90%",
-              boxShadow: "0 8px 32px rgba(0,0,0,0.2)",
+              boxShadow: "var(--shadow-lg)",
               display: "flex",
               flexDirection: "column",
             }}
@@ -1785,6 +2130,130 @@ export default function PageEditPage() {
           </span>
         </div>
 
+        {templateBinding && (
+          <div
+            style={{
+              marginBottom: 8,
+              border: "1px solid var(--border)",
+              borderRadius: 12,
+              padding: "10px 12px",
+              background: "linear-gradient(135deg, rgba(255,247,237,0.96) 0%, rgba(255,255,255,0.98) 100%)",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+              <span style={{ display: "inline-flex", alignItems: "center", padding: "4px 8px", borderRadius: 999, background: "rgba(255,247,237,0.9)", border: "1px solid rgba(251,191,36,0.24)", color: "#9a3412", fontSize: 11, fontWeight: 700 }}>
+                {templateBinding.templateName}
+              </span>
+              {templateBinding.templateSourceType === "shared" ? (
+                <span style={{ display: "inline-flex", alignItems: "center", padding: "4px 8px", borderRadius: 999, background: "rgba(248,250,252,0.92)", border: "1px solid rgba(148,163,184,0.18)", color: "#475569", fontSize: 11, fontWeight: 700 }}>
+                  {templateBinding.sharingScope === "industry" ? "業界共有" : "共有テンプレ"}
+                </span>
+              ) : null}
+              {templateBinding.industryTag ? (
+                <span style={{ display: "inline-flex", alignItems: "center", padding: "4px 8px", borderRadius: 999, background: "rgba(236,254,255,0.92)", border: "1px solid rgba(34,211,238,0.18)", color: "#155e75", fontSize: 11, fontWeight: 700 }}>
+                  {templateBinding.industryTag}
+                </span>
+              ) : null}
+              {templateBinding.templateBadges.map((badge) => {
+                const tone = templateBadgeTone(badge)
+                return (
+                  <span key={badge} style={{ display: "inline-flex", alignItems: "center", padding: "4px 8px", borderRadius: 999, background: tone.background, border: tone.border, color: tone.color, fontSize: 11, fontWeight: 700 }}>
+                    {badge}
+                  </span>
+                )
+              })}
+              <span style={{ display: "inline-flex", alignItems: "center", padding: "4px 8px", borderRadius: 999, background: "rgba(239,246,255,0.92)", border: "1px solid rgba(59,130,246,0.18)", color: "#1d4ed8", fontSize: 11, fontWeight: 700 }}>
+                {formatTemplatePageType(templateBinding.pageType)}
+              </span>
+              <span style={{ display: "inline-flex", alignItems: "center", padding: "4px 8px", borderRadius: 999, background: templateBinding.isCustomized ? "rgba(254,249,195,0.92)" : "rgba(240,253,244,0.92)", border: templateBinding.isCustomized ? "1px solid rgba(245,158,11,0.18)" : "1px solid rgba(34,197,94,0.18)", color: templateBinding.isCustomized ? "#92400e" : "#166534", fontSize: 11, fontWeight: 700 }}>
+                {templateBinding.isCustomized ? "編集済み" : "公式のまま"}
+              </span>
+              <span style={{ display: "inline-flex", alignItems: "center", padding: "4px 8px", borderRadius: 999, background: "rgba(248,250,252,0.92)", border: "1px solid rgba(148,163,184,0.18)", color: "#475569", fontSize: 11, fontWeight: 700 }}>
+                v{templateBinding.templateVersion}
+              </span>
+              {templateBinding.updateAvailable ? (
+                <span style={{ display: "inline-flex", alignItems: "center", padding: "4px 8px", borderRadius: 999, background: "rgba(254,242,242,0.92)", border: "1px solid rgba(220,38,38,0.16)", color: "#b91c1c", fontSize: 11, fontWeight: 700 }}>
+                  update {templateBinding.latestVersion}
+                </span>
+              ) : null}
+              {templateBinding.installStatus !== "completed" ? (
+                <span style={{ display: "inline-flex", alignItems: "center", padding: "4px 8px", borderRadius: 999, background: "rgba(241,245,249,0.92)", border: "1px solid rgba(148,163,184,0.18)", color: "#475569", fontSize: 11, fontWeight: 700 }}>
+                  {installStatusLabel(templateBinding.installStatus)}
+                </span>
+              ) : null}
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>導入名: {templateBinding.installName}</span>
+            </div>
+
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+              {canEdit ? (
+                <button
+                  type="button"
+                  onClick={() => setTemplateDialogOpen(true)}
+                  style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid rgba(180,83,9,0.2)", background: "rgba(255,255,255,0.9)", color: "#9a3412", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                >
+                  テンプレ管理
+                </button>
+              ) : null}
+              {canEdit ? (
+                <button
+                  type="button"
+                  onClick={insertCurrentTemplateStarter}
+                  style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "rgba(255,255,255,0.9)", color: "var(--text)", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                >
+                  {templateStarterActionLabel(templateBinding.pageType)}
+                </button>
+              ) : null}
+              {templateBinding.integrationTargets.map((target) => (
+                <Link
+                  key={target}
+                  href={target}
+                  style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "rgba(255,255,255,0.88)", color: "var(--text)", fontSize: 12, textDecoration: "none", fontWeight: 700 }}
+                >
+                  {formatIntegrationTargetLabel(target)}へ
+                </Link>
+              ))}
+            </div>
+
+            {templateBinding.pageType === "checklist" && templateInsights?.taskStats.total ? (
+              <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                チェック進捗: {templateInsights.taskStats.checked} / {templateInsights.taskStats.total}
+              </div>
+            ) : null}
+
+            {templateBinding.pageType === "snippets" && templateInsights?.codeBlocks.length ? (
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {templateInsights.codeBlocks.map((snippet, index) => (
+                  <button
+                    key={`${index}-${snippet.slice(0, 16)}`}
+                    type="button"
+                    onClick={async () => {
+                      await navigator.clipboard.writeText(snippet)
+                      setToastMessage(`テンプレ文面 ${index + 1} をコピーしました`)
+                    }}
+                    style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "rgba(255,255,255,0.88)", color: "var(--text)", fontSize: 12, cursor: "pointer" }}
+                  >
+                    文面 {index + 1} をコピー
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            {templateBinding.pageType === "link_hub" && templateInsights?.links.length ? (
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {templateInsights.links.map((link) => (
+                  <Link
+                    key={`${link.href}-${link.label}`}
+                    href={link.href}
+                    style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "rgba(255,255,255,0.88)", color: "var(--text)", fontSize: 12, textDecoration: "none" }}
+                  >
+                    {link.label}
+                  </Link>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        )}
+
         <div
           style={{
             marginBottom: 8,
@@ -1793,12 +2262,12 @@ export default function PageEditPage() {
             padding: "10px 12px",
             background:
               practicalGuide.key === "billing"
-                ? "linear-gradient(135deg, #fff7ed 0%, #ffffff 100%)"
+                ? "linear-gradient(135deg, var(--warning-bg) 0%, #ffffff 100%)"
                 : practicalGuide.key === "payouts"
-                  ? "linear-gradient(135deg, #ecfeff 0%, #ffffff 100%)"
+                  ? "linear-gradient(135deg, var(--info-bg) 0%, #ffffff 100%)"
                   : practicalGuide.key === "notifications"
-                    ? "linear-gradient(135deg, #eff6ff 0%, #ffffff 100%)"
-                    : "linear-gradient(135deg, #f5f3ff 0%, #ffffff 100%)",
+                    ? "linear-gradient(135deg, var(--info-bg) 0%, #ffffff 100%)"
+                    : "linear-gradient(135deg, var(--accent-bg) 0%, #ffffff 100%)",
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
@@ -1813,20 +2282,20 @@ export default function PageEditPage() {
                 letterSpacing: 0.2,
                 color:
                   practicalGuide.key === "billing"
-                    ? "#9a3412"
+                    ? "var(--warning-text)"
                     : practicalGuide.key === "payouts"
-                      ? "#155e75"
+                      ? "var(--info-text)"
                       : practicalGuide.key === "notifications"
-                        ? "#1d4ed8"
-                        : "#6d28d9",
+                        ? "var(--info-text)"
+                        : "var(--accent-text)",
                 background:
                   practicalGuide.key === "billing"
-                    ? "#ffedd5"
+                    ? "var(--warning-bg)"
                     : practicalGuide.key === "payouts"
-                      ? "#cffafe"
+                      ? "var(--info-bg)"
                       : practicalGuide.key === "notifications"
-                        ? "#dbeafe"
-                        : "#ede9fe",
+                        ? "var(--info-bg)"
+                        : "var(--accent-bg)",
               }}
             >
               {practicalGuide.badge}
@@ -1846,7 +2315,7 @@ export default function PageEditPage() {
                   padding: "10px 12px",
                   textDecoration: "none",
                   background: "rgba(255,255,255,0.82)",
-                  boxShadow: "0 8px 20px rgba(15, 23, 42, 0.06)",
+                  boxShadow: "var(--shadow-md)",
                 }}
               >
                 <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text)", marginBottom: 4 }}>{action.label}</div>
@@ -1884,10 +2353,10 @@ export default function PageEditPage() {
         </div>
 
         {saveError && (
-          <div style={{ marginBottom: 8, padding: 10, borderRadius: 10, background: "#fff1f2", color: "#b91c1c", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+          <div style={{ marginBottom: 8, padding: 10, borderRadius: 10, background: "var(--error-bg)", color: "var(--error-text)", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
             <span>{saveError}</span>
             {canEdit && (
-              <button type="button" onClick={handleRetrySave} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #b91c1c", background: "transparent", color: "#b91c1c", fontSize: 13, cursor: "pointer" }}>
+              <button type="button" onClick={handleRetrySave} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid var(--error-text)", background: "transparent", color: "var(--error-text)", fontSize: 13, cursor: "pointer" }}>
                 再試行
               </button>
             )}
@@ -2230,7 +2699,7 @@ export default function PageEditPage() {
                       borderRadius: 8,
                       border: "1px solid var(--border)",
                       background: "var(--surface)",
-                      boxShadow: "0 8px 18px rgba(0,0,0,0.12)",
+                      boxShadow: "var(--shadow-md)",
                       zIndex: 30,
                       display: "grid",
                       gap: 4,
@@ -2353,7 +2822,7 @@ export default function PageEditPage() {
               style={{
                 fontSize: 12,
                 fontWeight: 500,
-                color: saveStatus === "error" ? "#b91c1c" : saveStatus === "saved" ? "#15803d" : "var(--muted)",
+                color: saveStatus === "error" ? "var(--error-text)" : saveStatus === "saved" ? "var(--success-text)" : "var(--muted)",
               }}
             >
               {saveStatus === "saving" && "保存中…"}
@@ -2452,7 +2921,7 @@ export default function PageEditPage() {
       )}
 
       {imageError && (
-        <div style={{ marginBottom: 12, padding: 10, borderRadius: 8, background: "#fff1f2", color: "#b91c1c", fontSize: 13 }}>
+        <div style={{ marginBottom: 12, padding: 10, borderRadius: 8, background: "var(--error-bg)", color: "var(--error-text)", fontSize: 13 }}>
           {imageError}
         </div>
       )}
@@ -2556,13 +3025,16 @@ export default function PageEditPage() {
                   borderRadius: 8,
                   border: "1px solid var(--border)",
                   background: "var(--surface)",
-                  boxShadow: "0 10px 24px rgba(0,0,0,0.14)",
+                  boxShadow: "var(--shadow-md)",
                   padding: 4,
                 }}
               >
                 <button type="button" onClick={() => insertBlockBelow("paragraph")} style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 8px", borderRadius: 6, border: "none", background: "transparent", color: "var(--text)", cursor: "pointer", fontSize: 12 }}>＋ テキスト行</button>
                 <button type="button" onClick={() => insertBlockBelow("bulletList")} style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 8px", borderRadius: 6, border: "none", background: "transparent", color: "var(--text)", cursor: "pointer", fontSize: 12 }}>・ 箇条書き</button>
                 <button type="button" onClick={() => insertBlockBelow("taskList")} style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 8px", borderRadius: 6, border: "none", background: "transparent", color: "var(--text)", cursor: "pointer", fontSize: 12 }}>☑ チェックリスト</button>
+                <button type="button" onClick={() => insertBlockBelow("snippets")} style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 8px", borderRadius: 6, border: "none", background: "transparent", color: "var(--text)", cursor: "pointer", fontSize: 12 }}>✎ 文面ひな形</button>
+                <button type="button" onClick={() => insertBlockBelow("table_like")} style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 8px", borderRadius: 6, border: "none", background: "transparent", color: "var(--text)", cursor: "pointer", fontSize: 12 }}>▦ 台帳ひな形</button>
+                <button type="button" onClick={() => insertBlockBelow("link_hub")} style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 8px", borderRadius: 6, border: "none", background: "transparent", color: "var(--text)", cursor: "pointer", fontSize: 12 }}>↗ 導線ひな形</button>
               </div>
             )}
           </div>
@@ -2577,7 +3049,7 @@ export default function PageEditPage() {
               borderRadius: 8,
               border: "1px solid var(--border)",
               background: "var(--surface)",
-              boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
+              boxShadow: "var(--shadow-md)",
               fontSize: 13,
             }}
           >
@@ -2945,7 +3417,7 @@ export default function PageEditPage() {
                             <span
                               key={i}
                               style={{
-                                backgroundColor: part.added ? "rgba(34,197,94,0.3)" : part.removed ? "rgba(239,68,68,0.3)" : "transparent",
+                                backgroundColor: part.added ? "var(--success-bg)" : part.removed ? "var(--error-bg)" : "transparent",
                                 textDecoration: part.removed ? "line-through" : undefined,
                               }}
                             >
@@ -2981,9 +3453,17 @@ export default function PageEditPage() {
           </div>
         </div>
       )}
+      <TemplateInstallDialog
+        open={templateDialogOpen}
+        initialTemplateKey={templateBinding?.templateKey ?? null}
+        initialInstallName={templateBinding ? `${templateBinding.installName} コピー` : ""}
+        onClose={() => setTemplateDialogOpen(false)}
+        onInstalled={({ rootPageId, pageCount, templateName }) => {
+          setToastMessage(`${templateName} を再追加しました（${pageCount} ページ）`)
+          setTemplateDialogOpen(false)
+          router.push(`/pages/${rootPageId}`)
+        }}
+      />
     </div>
   )
 }
-
-
-

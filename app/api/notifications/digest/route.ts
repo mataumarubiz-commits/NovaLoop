@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
 import { getOrgRole, getUserIdFromToken } from "@/lib/apiAuth"
+import {
+  hasClientSubmissionSignal,
+  isContentClientOverdue,
+  isContentEditorOverdue,
+} from "@/lib/contentWorkflow"
 import type { NotificationType } from "@/lib/notifications"
 
 export const runtime = "nodejs"
@@ -54,7 +59,7 @@ export async function POST(req: NextRequest) {
 
     const contentsPromise = admin
       .from("contents")
-      .select("due_client_at, due_editor_at, status, editor_submitted_at, delivery_month, billable_flag, invoice_id")
+      .select("due_client_at, due_editor_at, status, editor_submitted_at, client_submitted_at, delivery_month, billable_flag, invoice_id")
       .eq("org_id", orgId)
 
     const membersPromise = admin
@@ -98,9 +103,28 @@ export async function POST(req: NextRequest) {
       .map((m) => m.user_id)
 
     const incomplete = contents.filter((row) => !COMPLETED_STATUSES.has(String(row.status ?? "")))
-    const clientOverdueCount = incomplete.filter((row) => String(row.due_client_at) < todayYmd).length
-    const editorOverdueCount = incomplete.filter(
-      (row) => String(row.due_editor_at) < todayYmd && !row.editor_submitted_at
+    const pendingClientSubmitRows = incomplete.filter(
+      (row) =>
+        !hasClientSubmissionSignal(
+          String(row.status ?? ""),
+          typeof row.client_submitted_at === "string" ? row.client_submitted_at : null
+        )
+    )
+    const clientOverdueCount = incomplete.filter((row) =>
+      isContentClientOverdue(
+        String(row.status ?? ""),
+        String(row.due_client_at ?? ""),
+        todayYmd,
+        typeof row.client_submitted_at === "string" ? row.client_submitted_at : null
+      )
+    ).length
+    const editorOverdueCount = incomplete.filter((row) =>
+      isContentEditorOverdue(
+        String(row.status ?? ""),
+        String(row.due_editor_at ?? ""),
+        todayYmd,
+        typeof row.editor_submitted_at === "string" ? row.editor_submitted_at : null
+      )
     ).length
 
     const invoicePendingCount = contents.filter((row) => {
@@ -132,8 +156,8 @@ export async function POST(req: NextRequest) {
             ymd: todayYmd,
             count: clientOverdueCount,
             client_overdue_count: clientOverdueCount,
-            today_count: incomplete.filter((row) => row.due_client_at === todayYmd).length,
-            tomorrow_count: incomplete.filter((row) => row.due_client_at === tomorrowYmd).length,
+            today_count: pendingClientSubmitRows.filter((row) => row.due_client_at === todayYmd).length,
+            tomorrow_count: pendingClientSubmitRows.filter((row) => row.due_client_at === tomorrowYmd).length,
           },
         })
       }

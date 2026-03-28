@@ -1,5 +1,6 @@
 ﻿import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
+import { loadPageTemplateBindings } from "@/lib/pageTemplateCatalogServer"
 import { resolveSlugDuplicate, titleToSlug } from "@/lib/slug"
 import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
 import { writeAuditLog } from "@/lib/auditLog"
@@ -81,7 +82,14 @@ export async function GET(
       .maybeSingle()
 
     if (!primary.error && primary.data) {
-      return NextResponse.json({ ok: true, page: primary.data }, { status: 200 })
+      let templateBinding = null
+      try {
+        const admin = createSupabaseAdmin()
+        templateBinding = (await loadPageTemplateBindings(admin, orgId, [id])).get(id) ?? null
+      } catch {
+        templateBinding = null
+      }
+      return NextResponse.json({ ok: true, page: primary.data, template_binding: templateBinding }, { status: 200 })
     }
 
     const msg = (primary.error?.message || "").toLowerCase()
@@ -119,6 +127,7 @@ export async function GET(
           cover_path: null,
           slug: null,
         },
+        template_binding: null,
       },
       { status: 200 }
     )
@@ -271,6 +280,15 @@ export async function PATCH(
     }
 
     const admin = createSupabaseAdmin()
+    try {
+      await admin
+        .from("page_template_bindings")
+        .update({ is_customized: true })
+        .eq("org_id", orgId)
+        .eq("page_id", id)
+    } catch {
+      // template binding is optional
+    }
     await writeAuditLog(admin, {
       org_id: orgId,
       user_id: userId,

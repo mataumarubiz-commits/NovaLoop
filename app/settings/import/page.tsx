@@ -102,12 +102,12 @@ export default function ImportSettingsPage() {
           </p>
         </header>
 
-        <section style={{ ...cardStyle, background: "#fef3c7", borderColor: "#f59e0b", color: "#92400e" }}>
+        <section style={{ ...cardStyle, background: "var(--warning-bg)", borderColor: "var(--warning-border)", color: "var(--warning-text)" }}>
           PDF や Storage 実ファイルは取り込みません。まずはマスタ・制作・請求・外注の再現を優先しています。
         </section>
 
-        {error && <section style={{ ...cardStyle, background: "#fff1f2", borderColor: "#fecaca", color: "#b91c1c" }}>{error}</section>}
-        {success && <section style={{ ...cardStyle, background: "#f0fdf4", borderColor: "#bbf7d0", color: "#166534" }}>{success}</section>}
+        {error && <section style={{ ...cardStyle, background: "var(--error-bg)", borderColor: "var(--error-border)", color: "var(--error-text)" }}>{error}</section>}
+        {success && <section style={{ ...cardStyle, background: "var(--success-bg)", borderColor: "var(--success-border)", color: "var(--success-text)" }}>{success}</section>}
 
         <section style={cardStyle}>
           <div style={{ fontWeight: 700, color: "var(--text)", marginBottom: 12 }}>1. ファイルを選ぶ</div>

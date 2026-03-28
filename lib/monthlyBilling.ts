@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
+import { buildWorkItemDescription, isBillableWorkItemStatus } from "@/lib/workItems"
 
 export type BillingDuplicateMode = "skip_existing" | "allow_additional"
 
@@ -7,7 +8,12 @@ export type BillingContentRow = {
   client_id: string
   project_name: string
   title: string
+  service_name: string
+  quantity: number
   unit_price: number
+  amount: number
+  billing_model: string | null
+  service_category: string | null
   status: string
   due_client_at: string
   delivery_month: string
@@ -52,6 +58,17 @@ export type BillingPreviewResult = {
 type ClientRow = { id: string; name: string }
 type ExistingInvoiceRow = BillingExistingInvoice
 
+const WORK_ITEM_SELECT =
+  "id, client_id, project_name, title, service_name, quantity, amount, billing_model, service_category, unit_price, status, due_client_at, delivery_month, invoice_id"
+const LEGACY_SELECT = "id, client_id, project_name, title, unit_price, status, due_client_at, delivery_month, invoice_id"
+
+const isMissingWorkItemColumnsError = (message?: string | null) =>
+  message?.includes("column contents.service_name does not exist") ||
+  message?.includes("column contents.quantity does not exist") ||
+  message?.includes("column contents.amount does not exist") ||
+  message?.includes("column contents.billing_model does not exist") ||
+  message?.includes("column contents.service_category does not exist")
+
 export function issueDateYmd(date = new Date()): string {
   return date.toISOString().slice(0, 10)
 }
@@ -74,7 +91,7 @@ export async function loadBillingPreview(params: {
 
   let contentsQuery = admin
     .from("contents")
-    .select("id, client_id, project_name, title, unit_price, status, due_client_at, delivery_month, invoice_id")
+    .select(WORK_ITEM_SELECT)
     .eq("org_id", orgId)
     .eq("delivery_month", billingMonth)
     .eq("billable_flag", true)
@@ -85,22 +102,53 @@ export async function loadBillingPreview(params: {
     contentsQuery = contentsQuery.eq("client_id", clientId)
   }
 
-  const { data: contentsData, error: contentsError } = await contentsQuery
+  const { data: contentsData, error: initialContentsError } = await contentsQuery
+  let contentsError = initialContentsError
+  let normalizedContentsData = (contentsData ?? null) as Array<Record<string, unknown>> | null
+  let usedLegacyShape = false
+  if (contentsError && isMissingWorkItemColumnsError(contentsError.message)) {
+    usedLegacyShape = true
+    let legacyQuery = admin
+      .from("contents")
+      .select(LEGACY_SELECT)
+      .eq("org_id", orgId)
+      .eq("delivery_month", billingMonth)
+      .eq("billable_flag", true)
+      .is("invoice_id", null)
+      .order("due_client_at", { ascending: true })
+
+    if (clientId) {
+      legacyQuery = legacyQuery.eq("client_id", clientId)
+    }
+
+    const legacyResult = await legacyQuery
+    normalizedContentsData = (legacyResult.data ?? null) as Array<Record<string, unknown>> | null
+    contentsError = legacyResult.error
+  }
+
   if (contentsError) {
     throw new Error(`請求対象コンテンツの取得に失敗しました: ${contentsError.message}`)
   }
 
-  const contents = ((contentsData ?? []) as Array<Record<string, unknown>>).map((row) => ({
-    id: String(row.id),
-    client_id: String(row.client_id),
-    project_name: String(row.project_name ?? ""),
-    title: String(row.title ?? ""),
-    unit_price: Number(row.unit_price ?? 0),
-    status: String(row.status ?? ""),
-    due_client_at: String(row.due_client_at ?? ""),
-    delivery_month: String(row.delivery_month ?? ""),
-    invoice_id: row.invoice_id ? String(row.invoice_id) : null,
-  }))
+  const contents = (normalizedContentsData ?? [])
+    .map((row) => ({
+      id: String(row.id),
+      client_id: String(row.client_id),
+      project_name: String(row.project_name ?? ""),
+      title: String(row.title ?? ""),
+      service_name: String(row.service_name ?? row.title ?? row.project_name ?? ""),
+      quantity: Number(row.quantity ?? 1),
+      unit_price: Number(row.unit_price ?? 0),
+      amount: Number(row.amount ?? Number(row.quantity ?? 1) * Number(row.unit_price ?? 0)),
+      billing_model: typeof row.billing_model === "string" ? row.billing_model : usedLegacyShape ? "per_unit" : null,
+      service_category:
+        typeof row.service_category === "string" ? row.service_category : usedLegacyShape ? "video_editing" : null,
+      status: String(row.status ?? ""),
+      due_client_at: String(row.due_client_at ?? ""),
+      delivery_month: String(row.delivery_month ?? ""),
+      invoice_id: row.invoice_id ? String(row.invoice_id) : null,
+    }))
+    .filter((row) => isBillableWorkItemStatus(row.status, row.billing_model))
 
   const contentClientIds = Array.from(new Set(contents.map((row) => row.client_id)))
 
@@ -153,11 +201,11 @@ export async function loadBillingPreview(params: {
 
   const previewClients: BillingPreviewClient[] = Array.from(grouped.entries())
     .map(([groupClientId, rows]) => {
-      const subtotal = rows.reduce((sum, row) => sum + Number(row.unit_price), 0)
+      const subtotal = rows.reduce((sum, row) => sum + Number(row.amount), 0)
       const existing = existingByClient.get(groupClientId) ?? []
       const warning =
         existing.length > 0
-          ? `同じ月の請求書が ${existing.length} 件あります。通常はスキップし、必要な場合だけ追加請求として作成してください。`
+          ? `同月の請求書が ${existing.length} 件あります。通常はスキップし、必要時のみ追加発行してください。`
           : null
 
       return {
@@ -187,9 +235,9 @@ export async function loadBillingPreview(params: {
 }
 
 export function buildInvoiceTitle(billingMonth: string): string {
-  return `${billingMonth}分 ご請求書`
+  return `${billingMonth}分ご請求書`
 }
 
 export function buildInvoiceLineDescription(content: BillingContentRow): string {
-  return content.title?.trim() || content.project_name?.trim() || "コンテンツ制作費"
+  return buildWorkItemDescription(content.service_name, content.title, content.project_name)
 }

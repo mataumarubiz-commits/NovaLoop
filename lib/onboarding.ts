@@ -51,7 +51,7 @@ export const ONBOARDING_ITEMS: OnboardingItemDefinition[] = [
   },
   {
     key: "first_content",
-    title: "最初のコンテンツ追加",
+    title: "最初のタスク追加",
     description: "運用中の案件を最初の1本だけ登録します。",
     href: withChecklistSource("/contents"),
     helpHref: "/help/contents-daily",

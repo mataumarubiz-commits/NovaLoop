@@ -177,8 +177,8 @@ export default function MaterialsPage() {
     <ProjectShell title="素材管理" description="raw / script / draft / final などの素材とレビュー状況を横断管理します。">
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
         <ProjectInfoCard label="素材数" value={`${summary.total}件`} />
-        <ProjectInfoCard label="承認済み" value={`${summary.approved}件`} accent={summary.approved > 0 ? "#166534" : undefined} />
-        <ProjectInfoCard label="差し戻し" value={`${summary.rejected}件`} accent={summary.rejected > 0 ? "#b91c1c" : undefined} />
+        <ProjectInfoCard label="承認済み" value={`${summary.approved}件`} accent={summary.approved > 0 ? "var(--success-text)" : undefined} />
+        <ProjectInfoCard label="差し戻し" value={`${summary.rejected}件`} accent={summary.rejected > 0 ? "var(--error-text)" : undefined} />
         <ProjectInfoCard label="final" value={`${summary.final}件`} />
       </div>
 
@@ -286,15 +286,15 @@ export default function MaterialsPage() {
             <button type="button" onClick={() => void createAsset()} disabled={busy} style={buttonPrimaryStyle}>
               {busy ? "保存中..." : "素材を登録"}
             </button>
-            {uiError ? <span style={{ color: "#b91c1c", fontSize: 13 }}>{uiError}</span> : null}
-            {uiSuccess ? <span style={{ color: "#166534", fontSize: 13 }}>{uiSuccess}</span> : null}
+            {uiError ? <span style={{ color: "var(--error-text)", fontSize: 13 }}>{uiError}</span> : null}
+            {uiSuccess ? <span style={{ color: "var(--success-text)", fontSize: 13 }}>{uiSuccess}</span> : null}
           </div>
         </ProjectSection>
       ) : null}
 
       <ProjectSection title="素材一覧" description="同一タイトル・同一種別で再登録した場合は、版数を自動で繰り上げます。">
         {loading ? <div>読み込み中...</div> : null}
-        {error ? <div style={{ color: "#b91c1c" }}>{error}</div> : null}
+        {error ? <div style={{ color: "var(--error-text)" }}>{error}</div> : null}
         {!loading ? (
           <div style={{ overflowX: "auto" }}>
             <table style={{ ...tableStyle, minWidth: 1200 }}>

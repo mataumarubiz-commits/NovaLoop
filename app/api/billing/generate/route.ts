@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
   try {
     const userId = await getUserIdFromToken(req)
     if (!userId) {
-      return NextResponse.json({ ok: false, message: "ログインし直してください。" }, { status: 401 })
+      return NextResponse.json({ ok: false, message: "ログインしてください。" }, { status: 401 })
     }
 
     const body = (await req.json().catch(() => ({}))) as GenerateBody
@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
         ? body.billing_month
         : null
     if (!billingMonth) {
-      return NextResponse.json({ ok: false, message: "対象月は YYYY-MM 形式で指定してください。" }, { status: 400 })
+      return NextResponse.json({ ok: false, message: "billing_month は YYYY-MM 形式で指定してください。" }, { status: 400 })
     }
     const duplicateMode: BillingDuplicateMode =
       body.duplicate_mode === "allow_additional" ? "allow_additional" : "skip_existing"
@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
     )
 
     if (targetClients.length === 0) {
-      return NextResponse.json({ ok: false, message: "生成対象のクライアントがありません。" }, { status: 400 })
+      return NextResponse.json({ ok: false, message: "対象クライアントがありません。" }, { status: 400 })
     }
 
     const issueDate =
@@ -116,53 +116,68 @@ export async function POST(req: NextRequest) {
         (settings as Record<string, unknown> | null)?.invoice_note_fixed ?? null,
     }
 
-    const generated: Array<{ client_id: string; client_name: string; invoice_id: string; invoice_no: string; content_count: number }> = []
+    const generated: Array<{
+      client_id: string
+      client_name: string
+      invoice_id: string
+      invoice_no: string
+      content_count: number
+    }> = []
     const skipped: Array<{ client_id: string; client_name: string; reason: string }> = []
     const monthlyInvoiceSourceType = normalizeInvoiceSourceTypeForWrite("billing_monthly")
     let seq = initialSeq
 
     for (const client of targetClients) {
       if (client.target_count === 0) {
-        skipped.push({ client_id: client.client_id, client_name: client.client_name, reason: "請求対象コンテンツがありません。" })
+        skipped.push({
+          client_id: client.client_id,
+          client_name: client.client_name,
+          reason: "請求対象の work item がありません。",
+        })
         continue
       }
       if (client.existing_invoice_count > 0 && duplicateMode === "skip_existing") {
         skipped.push({
           client_id: client.client_id,
           client_name: client.client_name,
-          reason: "同月請求書があるためスキップしました。",
+          reason: "既存請求書があるためスキップしました。",
         })
         continue
       }
 
-      const { data: freshContents, error: freshContentsError } = await admin
-        .from("contents")
-        .select("id, client_id, project_name, title, unit_price, status, due_client_at, delivery_month, invoice_id")
-        .eq("org_id", orgId)
-        .in("id", client.content_ids)
-        .is("invoice_id", null)
-        .order("due_client_at", { ascending: true })
-      if (freshContentsError) {
-        skipped.push({ client_id: client.client_id, client_name: client.client_name, reason: "最新の請求対象取得に失敗しました。" })
+      let rows = client.contents
+      try {
+        const refreshedPreview = await loadBillingPreview({
+          admin,
+          orgId,
+          billingMonth,
+          clientId: client.client_id,
+        })
+        rows = refreshedPreview.clients.find((row) => row.client_id === client.client_id)?.contents ?? []
+      } catch (refreshError) {
+        skipped.push({
+          client_id: client.client_id,
+          client_name: client.client_name,
+          reason:
+            refreshError instanceof Error
+              ? `最新の請求対象取得に失敗しました: ${refreshError.message}`
+              : "最新の請求対象取得に失敗しました。",
+        })
         continue
       }
-      const rows = ((freshContents ?? []) as Array<Record<string, unknown>>).map((row) => ({
-        id: String(row.id),
-        project_name: String(row.project_name ?? ""),
-        title: String(row.title ?? ""),
-        unit_price: Number(row.unit_price ?? 0),
-        status: String(row.status ?? ""),
-        due_client_at: String(row.due_client_at ?? ""),
-        delivery_month: String(row.delivery_month ?? ""),
-      }))
+
       if (rows.length === 0) {
-        skipped.push({ client_id: client.client_id, client_name: client.client_name, reason: "未請求の対象コンテンツがありません。" })
+        skipped.push({
+          client_id: client.client_id,
+          client_name: client.client_name,
+          reason: "未請求の対象 work item がありません。",
+        })
         continue
       }
 
       const invoiceId = crypto.randomUUID()
       const invoiceNo = buildInvoiceNo(issueDate, seq)
-      const subtotal = rows.reduce((sum, row) => sum + Number(row.unit_price), 0)
+      const subtotal = rows.reduce((sum, row) => sum + Number(row.amount), 0)
       const now = new Date().toISOString()
 
       const { error: invoiceError } = await admin.from("invoices").insert({
@@ -190,7 +205,11 @@ export async function POST(req: NextRequest) {
         issued_at: now,
       })
       if (invoiceError) {
-        skipped.push({ client_id: client.client_id, client_name: client.client_name, reason: `請求書の作成に失敗しました: ${invoiceError.message}` })
+        skipped.push({
+          client_id: client.client_id,
+          client_name: client.client_name,
+          reason: `請求書作成に失敗しました: ${invoiceError.message}`,
+        })
         continue
       }
 
@@ -198,20 +217,10 @@ export async function POST(req: NextRequest) {
         id: crypto.randomUUID(),
         invoice_id: invoiceId,
         content_id: row.id,
-        description: buildInvoiceLineDescription({
-          id: row.id,
-          client_id: client.client_id,
-          project_name: row.project_name,
-          title: row.title,
-          unit_price: row.unit_price,
-          status: row.status,
-          due_client_at: row.due_client_at,
-          delivery_month: row.delivery_month,
-          invoice_id: null,
-        }),
-        quantity: 1,
+        description: buildInvoiceLineDescription(row),
+        quantity: row.quantity,
         unit_price: row.unit_price,
-        amount: row.unit_price,
+        amount: row.amount,
         sort_order: index + 1,
         project_name: row.project_name,
         title: row.title,
@@ -219,7 +228,11 @@ export async function POST(req: NextRequest) {
       const { error: lineError } = await admin.from("invoice_lines").insert(lineRows)
       if (lineError) {
         await admin.from("invoices").delete().eq("id", invoiceId).eq("org_id", orgId)
-        skipped.push({ client_id: client.client_id, client_name: client.client_name, reason: `明細作成に失敗しました: ${lineError.message}` })
+        skipped.push({
+          client_id: client.client_id,
+          client_name: client.client_name,
+          reason: `請求明細作成に失敗しました: ${lineError.message}`,
+        })
         continue
       }
 
@@ -231,7 +244,11 @@ export async function POST(req: NextRequest) {
       if (contentUpdateError) {
         await admin.from("invoice_lines").delete().eq("invoice_id", invoiceId)
         await admin.from("invoices").delete().eq("id", invoiceId).eq("org_id", orgId)
-        skipped.push({ client_id: client.client_id, client_name: client.client_name, reason: `元コンテンツの関連付けに失敗しました: ${contentUpdateError.message}` })
+        skipped.push({
+          client_id: client.client_id,
+          client_name: client.client_name,
+          reason: `work item の請求関連付けに失敗しました: ${contentUpdateError.message}`,
+        })
         continue
       }
 
@@ -306,6 +323,6 @@ export async function POST(req: NextRequest) {
     })
   } catch (error) {
     console.error("[api/billing/generate]", error)
-    return NextResponse.json({ ok: false, message: "月次請求の生成に失敗しました。" }, { status: 500 })
+    return NextResponse.json({ ok: false, message: "請求生成に失敗しました。" }, { status: 500 })
   }
 }

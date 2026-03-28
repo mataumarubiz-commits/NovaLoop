@@ -31,7 +31,7 @@ const cardStyle: React.CSSProperties = {
   borderRadius: 18,
   padding: 18,
   background: "linear-gradient(180deg, rgba(255,255,255,0.96), rgba(248,244,255,0.96))",
-  boxShadow: "0 16px 36px rgba(76, 29, 149, 0.08)",
+  boxShadow: "var(--shadow-lg)",
 }
 
 export default function SettingsDashboardPage() {
@@ -151,7 +151,7 @@ export default function SettingsDashboardPage() {
         </header>
 
         {error ? (
-          <section style={{ ...cardStyle, borderColor: "#fecaca", background: "#fff1f2", color: "#b91c1c" }}>{error}</section>
+          <section style={{ ...cardStyle, borderColor: "var(--error-border)", background: "var(--error-bg)", color: "var(--error-text)" }}>{error}</section>
         ) : null}
 
         {data ? (
@@ -234,7 +234,7 @@ export default function SettingsDashboardPage() {
               >
                 {sending ? "送信中..." : "送信する"}
               </button>
-              {feedbackDone ? <div style={{ fontSize: 13, color: "#166534" }}>{feedbackDone}</div> : null}
+              {feedbackDone ? <div style={{ fontSize: 13, color: "var(--success-text)" }}>{feedbackDone}</div> : null}
             </div>
           </div>
         </section>

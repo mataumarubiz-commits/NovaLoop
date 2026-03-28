@@ -108,8 +108,8 @@ export default function ExportSettingsPage() {
           </p>
         </header>
 
-        {error && <section style={{ ...cardStyle, background: "#fff1f2", borderColor: "#fecaca", color: "#b91c1c" }}>{error}</section>}
-        {success && <section style={{ ...cardStyle, background: "#f0fdf4", borderColor: "#bbf7d0", color: "#166534" }}>{success}</section>}
+        {error && <section style={{ ...cardStyle, background: "var(--error-bg)", borderColor: "var(--error-border)", color: "var(--error-text)" }}>{error}</section>}
+        {success && <section style={{ ...cardStyle, background: "var(--success-bg)", borderColor: "var(--success-border)", color: "var(--success-text)" }}>{success}</section>}
 
         <section style={cardStyle}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "center" }}>

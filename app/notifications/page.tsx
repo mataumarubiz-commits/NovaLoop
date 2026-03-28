@@ -297,7 +297,7 @@ export default function NotificationsPage() {
       </div>
 
       {error ? (
-        <div style={{ ...cardStyle, borderColor: "#fca5a5", background: "#fff1f2", color: "#991b1b", marginBottom: 16, fontSize: 13 }}>
+        <div style={{ ...cardStyle, borderColor: "var(--error-border)", background: "var(--error-bg)", color: "var(--error-text)", marginBottom: 16, fontSize: 13 }}>
           {error}
         </div>
       ) : null}
@@ -326,7 +326,7 @@ export default function NotificationsPage() {
             const severity = notificationSeverity(n)
 
             return (
-              <div key={n.id} style={{ ...cardStyle, borderColor: !n.read_at ? "#c4b5fd" : "var(--border)", boxShadow: !n.read_at ? "0 0 0 1px rgba(124,58,237,0.14)" : undefined }}>
+              <div key={n.id} style={{ ...cardStyle, borderColor: !n.read_at ? "#c4b5fd" : "var(--border)", boxShadow: !n.read_at ? "var(--shadow-sm)" : undefined }}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 4 }}>
@@ -339,7 +339,7 @@ export default function NotificationsPage() {
                         </span>
                       ) : null}
                       {resolved ? (
-                        <span style={{ fontSize: 10, borderRadius: 999, padding: "2px 6px", background: "#dcfce7", color: "#166534", fontWeight: 700 }}>
+                        <span style={{ fontSize: 10, borderRadius: 999, padding: "2px 6px", background: "var(--success-bg)", color: "var(--success-text)", fontWeight: 700 }}>
                           対応済み
                         </span>
                       ) : null}

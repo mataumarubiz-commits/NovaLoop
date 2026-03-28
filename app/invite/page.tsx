@@ -122,7 +122,7 @@ function InviteContent() {
             maxLength={100}
             style={inputStyle}
           />
-          {errorMessage ? <p style={{ color: "#b91c1c", fontSize: 13, margin: "12px 0 0" }}>{errorMessage}</p> : null}
+          {errorMessage ? <p style={{ color: "var(--error-text)", fontSize: 13, margin: "12px 0 0" }}>{errorMessage}</p> : null}
           <button type="submit" disabled={submitting} style={submitStyle}>
             {submitting ? "参加処理中..." : "参加する"}
           </button>
@@ -177,7 +177,7 @@ const panelStyle = {
   background: "var(--surface)",
   borderRadius: 16,
   border: "1px solid var(--border)",
-  boxShadow: "0 4px 20px rgba(0,0,0,0.06)",
+  boxShadow: "var(--shadow-md)",
 }
 
 const inputStyle = {

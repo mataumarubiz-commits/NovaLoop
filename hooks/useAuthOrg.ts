@@ -86,9 +86,10 @@ const normalizeMemberships = (memberships: OrgMembership[]) =>
     .filter((membership): membership is OrgMembership => Boolean(membership))
 
 async function fetchAuthOrgSnapshot(): Promise<AuthOrgSnapshot> {
-  const fetchMyOrgs = async (): Promise<{ profile: { display_name: string; active_org_id: string | null }; orgs: OrgMembership[] } | null> => {
-    const { data } = await supabase.auth.getSession()
-    const token = data.session?.access_token
+  const fetchMyOrgs = async (
+    accessToken?: string | null
+  ): Promise<{ profile: { display_name: string; active_org_id: string | null }; orgs: OrgMembership[] } | null> => {
+    const token = accessToken ?? (await supabase.auth.getSession()).data.session?.access_token
     if (!token) return null
     try {
       const res = await fetch("/api/auth/my-orgs", { headers: { Authorization: `Bearer ${token}` } })
@@ -104,10 +105,11 @@ async function fetchAuthOrgSnapshot(): Promise<AuthOrgSnapshot> {
     }
   }
 
-  let u = (await supabase.auth.getUser()).data.user
+  const { data: sessionData } = await supabase.auth.getSession()
+  const accessToken = sessionData.session?.access_token ?? null
+  let u = sessionData.session?.user ?? null
   if (!u) {
-    const { data: sessionData } = await supabase.auth.getSession()
-    u = sessionData?.session?.user ?? null
+    u = (await supabase.auth.getUser()).data.user
   }
 
   if (!u) {
@@ -123,6 +125,19 @@ async function fetchAuthOrgSnapshot(): Promise<AuthOrgSnapshot> {
   }
 
   const user = { id: u.id, email: u.email }
+  const apiSnapshot = await fetchMyOrgs(accessToken)
+  if (apiSnapshot) {
+    const activeOrgId = apiSnapshot.profile?.active_org_id ?? apiSnapshot.orgs[0]?.org_id ?? null
+    return {
+      user,
+      profile: apiSnapshot.profile ?? null,
+      activeOrgId,
+      role: apiSnapshot.orgs.find((org) => org.org_id === activeOrgId)?.role ?? apiSnapshot.orgs[0]?.role ?? null,
+      memberships: apiSnapshot.orgs,
+      needsOnboarding: apiSnapshot.orgs.length === 0,
+      loading: false,
+    }
+  }
 
   const { data: profileData, error: profileError } = await supabase
     .from("user_profiles")
@@ -158,7 +173,7 @@ async function fetchAuthOrgSnapshot(): Promise<AuthOrgSnapshot> {
   }
 
   if (!prof) {
-    const fallback = await fetchMyOrgs()
+    const fallback = await fetchMyOrgs(accessToken)
     if (fallback?.orgs && fallback.orgs.length > 0) {
       const activeOrgId = fallback.profile?.active_org_id ?? fallback.orgs[0].org_id
       return {
@@ -207,7 +222,7 @@ async function fetchAuthOrgSnapshot(): Promise<AuthOrgSnapshot> {
   rows = rows.filter((row) => Boolean(normalizeAppOrgRole(row.role)))
 
   if (rows.length === 0) {
-    const fallback = await fetchMyOrgs()
+    const fallback = await fetchMyOrgs(accessToken)
     if (fallback?.orgs && fallback.orgs.length > 0) {
       const activeOrgId = fallback.profile?.active_org_id ?? fallback.orgs[0].org_id
       return {

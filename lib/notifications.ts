@@ -2,6 +2,9 @@ export const NOTIFICATION_TYPES = [
   "membership.requested",
   "membership.approved",
   "membership.rejected",
+  "platform.payment_pending",
+  "platform.license_activated",
+  "platform.transfer_completed",
   "contents.client_due_overdue",
   "contents.editor_due_overdue",
   "billing.month_close_ready",
@@ -47,8 +50,14 @@ export function notificationPriority(n: NotificationLike): number {
       return 90
     case "membership.requested":
       return 85
+    case "platform.payment_pending":
+      return 82
+    case "platform.license_activated":
+      return 81
     case "billing.month_close_ready":
       return 80
+    case "platform.transfer_completed":
+      return 79
     case "billing.request_overdue":
       return 78
     case "billing.request_due_soon":
@@ -88,10 +97,16 @@ export function notificationSeverity(n: NotificationLike): { label: string; bg: 
       return { label: "外注遅延", bg: "#fff7ed", text: "#9a3412" }
     case "membership.requested":
       return { label: "承認待ち", bg: "#eef2ff", text: "#3730a3" }
+    case "platform.payment_pending":
+      return { label: "支払確認", bg: "#eff6ff", text: "#1d4ed8" }
+    case "platform.license_activated":
+      return { label: "ライセンス有効", bg: "#f0fdf4", text: "#166534" }
+    case "platform.transfer_completed":
+      return { label: "移行完了", bg: "#ecfeff", text: "#155e75" }
     case "billing.month_close_ready":
       return { label: "月次請求", bg: "#fffbeb", text: "#92400e" }
     case "billing.request_sent":
-      return { label: "送信済み", bg: "#eff6ff", text: "#1d4ed8" }
+      return { label: "請求送信済み", bg: "#eff6ff", text: "#1d4ed8" }
     case "billing.request_due_soon":
       return { label: "期限接近", bg: "#fff7ed", text: "#9a3412" }
     case "billing.request_overdue":
@@ -136,6 +151,12 @@ export function notificationTitle(n: NotificationLike): string {
       const orgName = String(payload.org_name ?? "")
       return orgName ? `参加申請が却下されました: ${orgName}` : "参加申請が却下されました"
     }
+    case "platform.payment_pending":
+      return "支払確認が必要です"
+    case "platform.license_activated":
+      return "ライセンスが有効になりました"
+    case "platform.transfer_completed":
+      return "ライセンス移行が完了しました"
     case "contents.client_due_overdue":
       return `先方提出日を過ぎた案件: ${Number(payload.client_overdue_count ?? payload.count ?? 0)}件`
     case "contents.editor_due_overdue":
@@ -147,11 +168,7 @@ export function notificationTitle(n: NotificationLike): string {
     case "billing.request_sent": {
       const email = String(payload.recipient_email ?? "")
       const guestName = String(payload.guest_name ?? "")
-      return email
-        ? `請求依頼を送信しました: ${email}`
-        : guestName
-          ? `請求依頼を送信しました: ${guestName}`
-          : "請求依頼を送信しました"
+      return email ? `請求依頼を送信しました: ${email}` : guestName ? `請求依頼を送信しました: ${guestName}` : "請求依頼を送信しました"
     }
     case "billing.request_due_soon": {
       const deadline = String(payload.request_deadline ?? "")
@@ -213,6 +230,11 @@ export function notificationActionHref(n: NotificationLike): string {
     case "membership.approved":
     case "membership.rejected":
       return "/settings/members"
+    case "platform.payment_pending":
+      return "/pending-payment"
+    case "platform.license_activated":
+    case "platform.transfer_completed":
+      return "/settings/license"
     case "contents.client_due_overdue":
       return "/contents?filter=client_overdue"
     case "contents.editor_due_overdue":
@@ -245,5 +267,11 @@ export function notificationActionHref(n: NotificationLike): string {
 export function notificationResolved(n: NotificationLike): boolean {
   if (n.payload?.resolved === true) return true
   const normalized = normalizeNotificationType(n.type)
-  return normalized === "membership.approved" || normalized === "membership.rejected" || normalized === "vendor_invoice.approved"
+  return (
+    normalized === "membership.approved" ||
+    normalized === "membership.rejected" ||
+    normalized === "vendor_invoice.approved" ||
+    normalized === "platform.license_activated" ||
+    normalized === "platform.transfer_completed"
+  )
 }

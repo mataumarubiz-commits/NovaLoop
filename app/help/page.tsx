@@ -1,248 +1,397 @@
-"use client"
+"use client";
 
-import Link from "next/link"
-import { useMemo, useState } from "react"
-import { HELP_ARTICLES, HELP_CATEGORIES, type HelpArticle } from "@/lib/helpCenter"
+import React from "react";
+import {
+  BookOpen,
+  Command,
+  LayoutGrid,
+  CreditCard,
+  Receipt,
+  Users,
+  Bell,
+  FileText,
+  ChevronRight,
+  ShieldCheck,
+  Bot,
+  FolderOpen,
+  Search,
+  type LucideIcon,
+} from "lucide-react";
 
-const QUICK_LINKS = [
-  { href: "/home", label: "Home", description: "今日の優先対応、締め状況、通知を確認します。" },
-  { href: "/pages", label: "Pages", description: "社内マニュアル、運用ルール、手順書を整備します。" },
-  { href: "/contents", label: "Contents", description: "案件進行、納期、単価、請求対象を管理します。" },
-  { href: "/billing", label: "Billing", description: "月次請求、請求依頼、PDF 出力を進めます。" },
-  { href: "/notifications", label: "Notifications", description: "未読通知と対応待ちタスクを確認します。" },
-] as const
+type StarterArticle = {
+  title: string;
+  meta: string;
+};
 
-export default function HelpCenterPage() {
-  const [query, setQuery] = useState("")
-  const normalizedQuery = query.trim().toLowerCase()
+type CategoryCard = {
+  title: string;
+  desc: string;
+  icon: LucideIcon;
+  accent: string;
+  iconAccent: string;
+  items: string[];
+};
 
-  const filteredArticles = useMemo(() => {
-    if (!normalizedQuery) return HELP_ARTICLES
-    return HELP_ARTICLES.filter((article) => {
-      const category = HELP_CATEGORIES.find((item) => item.id === article.category)
-      const haystack = [article.title, article.description, category?.label, ...(article.highlights ?? [])]
-        .join(" ")
-        .toLowerCase()
-      return haystack.includes(normalizedQuery)
-    })
-  }, [normalizedQuery])
+type FaqItem = {
+  title: string;
+  meta: string;
+};
 
-  const recommended = useMemo(
-    () =>
-      filteredArticles
-        .filter((article) => typeof article.recommended_order === "number")
-        .sort((a, b) => (a.recommended_order ?? 99) - (b.recommended_order ?? 99))
-        .slice(0, 3),
-    [filteredArticles]
-  )
+type FaqGroup = {
+  title: string;
+  items: FaqItem[];
+};
 
-  const grouped = useMemo(() => {
-    const byCategory = new Map<string, HelpArticle[]>()
-    for (const category of HELP_CATEGORIES) byCategory.set(category.id, [])
-    for (const article of filteredArticles) byCategory.get(article.category)?.push(article)
-    for (const [key, list] of byCategory.entries()) {
-      byCategory.set(key, [...list].sort((a, b) => a.order - b.order || a.title.localeCompare(b.title, "ja")))
-    }
-    return byCategory
-  }, [filteredArticles])
+type RoleCard = {
+  role: string;
+  desc: string;
+  icon: LucideIcon;
+};
 
-  const sortedCategories = useMemo(() => [...HELP_CATEGORIES].sort((a, b) => a.order - b.order), [])
+const starterArticles: StarterArticle[] = [
+  {
+    title: "最初のセットアップ",
+    meta: "ログイン、組織作成、表示名の設定までを最短で進める",
+  },
+  {
+    title: "最初のクライアントと案件を登録",
+    meta: "運用を始める前に、請求先と案件の土台を整える",
+  },
+  {
+    title: "Contents で進行を回し始める",
+    meta: "納期・担当・ステータスを一つの画面で追えるようにする",
+  },
+];
 
+const categoryCards: CategoryCard[] = [
+  {
+    title: "Contents / 制作進行のこと",
+    desc: "納期・ステータス・テンプレなど、進行管理まわりの答えを探す",
+    icon: LayoutGrid,
+    accent: "rgba(124, 58, 237, 0.08)",
+    iconAccent: "#7c3aed",
+    items: ["納期はどこで見る？", "ステータスの意味は？", "テンプレはどう使う？"],
+  },
+  {
+    title: "Clients / 案件・クライアントのこと",
+    desc: "案件名・請求先・単価など、案件登録まわりの答えを探す",
+    icon: FolderOpen,
+    accent: "rgba(99, 102, 241, 0.08)",
+    iconAccent: "#6366f1",
+    items: ["クライアントを追加するには？", "案件名はどこで管理する？", "単価はどこに入れる？"],
+  },
+  {
+    title: "Billing / 請求のこと",
+    desc: "請求生成・対象条件・PDF・締め処理の答えを探す",
+    icon: CreditCard,
+    accent: "rgba(59, 130, 246, 0.08)",
+    iconAccent: "#3b82f6",
+    items: ["請求書が生成されないのはなぜ？", "請求対象になる条件は？", "PDFはどこに保存される？"],
+  },
+  {
+    title: "Vendors / Payouts のこと",
+    desc: "外注請求・証憑・支払い・CSV出力の答えを探す",
+    icon: Receipt,
+    accent: "rgba(234, 88, 12, 0.07)",
+    iconAccent: "#ea580c",
+    items: ["外注の証憑はどこ？", "支払い記録はどこで見る？", "CSVは出せる？"],
+  },
+  {
+    title: "組織 / ロールのこと",
+    desc: "owner・assistant・member の違いと権限の答えを探す",
+    icon: ShieldCheck,
+    accent: "rgba(107, 114, 128, 0.08)",
+    iconAccent: "#6b7280",
+    items: ["member が編集できない理由は？", "誰が請求を見れる？", "メンバー追加はどうする？"],
+  },
+  {
+    title: "Pages / ナレッジのこと",
+    desc: "社内マニュアル・ページ作成・AI活用の答えを探す",
+    icon: BookOpen,
+    accent: "rgba(22, 163, 74, 0.07)",
+    iconAccent: "#16a34a",
+    items: ["ページはどこで作る？", "並び替えはできる？", "AIで要約できる？"],
+  },
+  {
+    title: "通知 / 遅延のこと",
+    desc: "通知センター・未読・遅延検知の答えを探す",
+    icon: Bell,
+    accent: "rgba(139, 92, 246, 0.08)",
+    iconAccent: "#8b5cf6",
+    items: ["通知はどこで見る？", "遅延はどう判定される？", "未読管理はできる？"],
+  },
+  {
+    title: "AI活用のこと",
+    desc: "マニュアル化・テンプレ化・要約の使い方を探す",
+    icon: Bot,
+    accent: "rgba(168, 85, 247, 0.08)",
+    iconAccent: "#a855f7",
+    items: ["AIでマニュアル化するには？", "テンプレ化できる？", "請求文の下書きは作れる？"],
+  },
+];
+
+const groupedFaq: FaqGroup[] = [
+  {
+    title: "Contents / 制作進行",
+    items: [
+      { title: "納期はどこで確認できる？", meta: "先方提出日 / 編集者提出日の見方" },
+      { title: "ステータスの意味がわからない", meta: "未着手 / 先方修正中 / 納品完了 など" },
+      { title: "テンプレを追加するには？", meta: "月次生成・クライアント別テンプレ" },
+    ],
+  },
+  {
+    title: "Billing / 請求",
+    items: [
+      { title: "請求書が生成されないのはなぜ？", meta: "対象月 / billable / ステータス条件を確認" },
+      { title: "請求対象になる条件は？", meta: "delivery_month と billable_flag の考え方" },
+      { title: "PDFはどこに保存される？", meta: "請求書生成後の保管場所を確認" },
+    ],
+  },
+  {
+    title: "Vendors / Payouts",
+    items: [
+      { title: "外注の証憑はどこで確認できる？", meta: "vendor invoice と証憑の見方" },
+      { title: "支払い記録はどこで見る？", meta: "Payouts 一覧と支払済みの確認" },
+      { title: "外注CSVは出力できる？", meta: "回収・支払い記録・CSVの流れ" },
+    ],
+  },
+  {
+    title: "組織 / ロール / Pages",
+    items: [
+      { title: "member が Pages を編集できないのはなぜ？", meta: "ロールと権限の仕様を確認" },
+      { title: "owner と assistant の違いは？", meta: "請求・支払い・設定の権限差" },
+      { title: "ページはどこから作る？", meta: "Pages 作成と並び替えの方法" },
+    ],
+  },
+];
+
+const roleCards: RoleCard[] = [
+  {
+    role: "Owner",
+    desc: "請求・支払い・メンバー管理・設定まで全体を管理",
+    icon: ShieldCheck,
+  },
+  {
+    role: "Executive Assistant",
+    desc: "締め処理や運用補助を担当。経理まわりにもアクセス",
+    icon: FileText,
+  },
+  {
+    role: "Member",
+    desc: "制作進行の閲覧中心。Pagesは基本閲覧のみ",
+    icon: Users,
+  },
+];
+
+const __componentSanityChecks = {
+  starterArticles: starterArticles.length === 3,
+  categoryCards: categoryCards.every((card) => card.items.length >= 3),
+  groupedFaq: groupedFaq.every((group) => group.items.length > 0),
+  roleCards: roleCards.length === 3,
+};
+
+void __componentSanityChecks;
+
+type SectionHeaderProps = {
+  eyebrow: string;
+  title: string;
+  description?: string;
+};
+
+function SectionHeader({ eyebrow, title, description }: SectionHeaderProps) {
   return (
-    <div className="help-page">
-      <div className="help-wrap">
-        <aside className="help-side">
-          <div className="help-side-card">
-            <p className="help-side-label">Help Center</p>
-            <h2 className="help-side-heading">カテゴリから探す</h2>
-            <nav className="help-category-nav" aria-label="ヘルプカテゴリ">
-              {sortedCategories.map((category) => {
-                const count = grouped.get(category.id)?.length ?? 0
-                return (
-                  <a key={category.id} href={`#section-${category.id}`} className={`help-category-link ${count === 0 ? "is-muted" : ""}`}>
-                    <div>
-                      <strong>{category.label}</strong>
-                      <span>{category.description}</span>
-                    </div>
-                    <span className="help-count">{count}</span>
-                  </a>
-                )
-              })}
-            </nav>
-          </div>
+    <div style={{ borderBottom: "1px solid var(--help-accent-border)", paddingBottom: 14 }}>
+      <p className="help-section-kicker" style={{ margin: 0 }}>{eyebrow}</p>
+      <h2 style={{ margin: "8px 0 0", fontSize: 20, fontWeight: 600, letterSpacing: "-0.01em", color: "var(--help-heading)" }}>{title}</h2>
+      {description ? <p style={{ margin: "8px 0 0", fontSize: 13, lineHeight: 1.7, color: "var(--help-body)" }}>{description}</p> : null}
+    </div>
+  );
+}
 
-          <div className="help-side-card">
-            <p className="help-side-label">おすすめ</p>
-            <h2 className="help-side-heading">最初に見る 3 記事</h2>
-            {recommended.length === 0 ? (
-              <div className="help-empty compact">検索条件に一致するおすすめ記事はありません。</div>
-            ) : (
-              <div className="help-steps">
-                {recommended.map((article) => (
-                  <Link key={article.id} href={article.href} className="help-step-link">
-                    <span className="help-step-badge">{article.recommended_order}</span>
-                    <span>{article.title}</span>
-                  </Link>
+type ArticleRowProps = {
+  title: string;
+  meta: string;
+};
+
+function ArticleRow({ title, meta }: ArticleRowProps) {
+  return (
+    <button className="help-idx-article-row">
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <p style={{ margin: 0, fontSize: 15, fontWeight: 500, color: "var(--help-heading)" }}>{title}</p>
+        <p style={{ margin: "6px 0 0", fontSize: 14, lineHeight: 1.8, color: "var(--help-body)" }}>{meta}</p>
+      </div>
+      <ChevronRight style={{ width: 16, height: 16, flexShrink: 0, color: "var(--help-body-light)", marginTop: 2 }} />
+    </button>
+  );
+}
+
+function HeroSection() {
+  return (
+    <section className="hlp-hero">
+      <div className="hlp-hero-content">
+        <h1 className="hlp-hero-title">
+          どこを見ればいいか、<br />すぐわかる。
+        </h1>
+        <p className="hlp-hero-sub">
+          NovaLoop のヘルプセンターです。機能ごと・よくある質問・ロール別、好きな切り口で探せます。
+        </p>
+      </div>
+      <button type="button" className="hlp-search-trigger">
+        <Search style={{ width: 16, height: 16, opacity: 0.5 }} />
+        <span>キーワードで探す…</span>
+        <kbd className="hlp-kbd">⌘K</kbd>
+      </button>
+    </section>
+  );
+}
+
+function ProductAreaGrid() {
+  return (
+    <div className="help-idx-card">
+      <SectionHeader
+        eyebrow="Browse by product area"
+        title="機能ごとに探す"
+        description="どの画面・どの機能で迷っているかがわかっていれば、ここから最短で入れます。"
+      />
+      <div className="help-idx-area-grid">
+        {categoryCards.map((item) => {
+          const Icon = item.icon;
+          return (
+            <button
+              key={item.title}
+              className="help-idx-area-card"
+              style={{ background: item.accent }}
+            >
+              <div className="help-idx-area-icon" style={{ background: `${item.iconAccent}14`, color: item.iconAccent }}>
+                <Icon style={{ width: 16, height: 16 }} />
+              </div>
+              <p style={{ margin: 0, fontSize: 14, fontWeight: 600, color: "var(--help-heading)" }}>{item.title}</p>
+              <p style={{ margin: "4px 0 0", fontSize: 13, lineHeight: 1.6, color: "var(--help-body)" }}>{item.desc}</p>
+              <div style={{ marginTop: 10, display: "grid", gap: 4 }}>
+                {item.items.map((question) => (
+                  <div key={question} style={{ fontSize: 13, lineHeight: 1.6, color: "var(--help-body-light)" }}>
+                    ・{question}
+                  </div>
                 ))}
               </div>
-            )}
-          </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
-          <div className="help-side-card">
-            <p className="help-side-label">主要画面</p>
-            <div className="help-quick-links">
-              {QUICK_LINKS.map((item) => (
-                <Link key={item.href} href={item.href} className="help-quick-link">
-                  <strong>{item.label}</strong>
-                  <span>{item.description}</span>
-                </Link>
+function FaqGrid() {
+  return (
+    <div className="help-idx-card">
+      <SectionHeader
+        eyebrow="Questions by area"
+        title="よくある質問を、迷う場所ごとに見る"
+        description="『この機能でよく詰まるのは何か』がひと目でわかるようにまとめています。"
+      />
+      <div className="help-idx-faq-grid">
+        {groupedFaq.map((group) => (
+          <div key={group.title} className="help-idx-faq-group">
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+              <div style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--help-accent)" }} />
+              <p style={{ margin: 0, fontSize: 14, fontWeight: 600, color: "var(--help-heading)" }}>{group.title}</p>
+            </div>
+            <div style={{ display: "grid", gap: 0 }}>
+              {group.items.map((item, idx) => (
+                <React.Fragment key={item.title}>
+                  {idx > 0 && <div style={{ height: 1, background: "var(--help-accent-border)" }} />}
+                  <ArticleRow title={item.title} meta={item.meta} />
+                </React.Fragment>
               ))}
             </div>
           </div>
-        </aside>
-
-        <main className="help-main">
-          <header className="help-hero">
-            <div className="help-hero-copy">
-              <p className="help-overline">使い方ページ / ヘルプセンター</p>
-              <h1>迷ったら、ここを見れば進められます</h1>
-              <p className="help-sub">
-                NovaLoop の日次運用、案件進行、請求、外注支払い、マニュアル運用を横断して確認できます。
-                <br />
-                Pages に載せる社内手順のたたき台としても、そのまま使える構成にしています。
-              </p>
-            </div>
-            <div className="help-hero-panel">
-              <label className="help-search-label" htmlFor="help-search">
-                キーワード検索
-              </label>
-              <input
-                id="help-search"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="請求、通知、外注、マニュアル など"
-                aria-label="ヘルプ記事を検索"
-                className="help-search"
-              />
-              <p className="help-search-meta">
-                {normalizedQuery ? `${filteredArticles.length} 件の記事が見つかりました` : "タイトル、カテゴリ、要点から検索できます"}
-              </p>
-            </div>
-          </header>
-
-          <section className="help-recommended">
-            <div className="help-section-head">
-              <div>
-                <p className="help-section-kicker">導入直後に見る順番</p>
-                <h2>まず読む 3 記事</h2>
-                <p className="help-section-copy">
-                  初期設定、初週の運用、Pages のマニュアル整備から始めると、NovaLoop の運用が安定します。
-                </p>
-              </div>
-              <span>おすすめ 3 件</span>
-            </div>
-            {recommended.length === 0 ? (
-              <div className="help-empty">検索条件に一致するおすすめ記事はありません。</div>
-            ) : (
-              <div className="help-recommended-grid">
-                {recommended.map((article) => (
-                  <Link key={article.id} href={article.href} className="help-recommended-card">
-                    <div className="help-step">{article.recommended_order}</div>
-                    <div className="help-recommended-copy">
-                      <p className="help-recommended-title">{article.title}</p>
-                      <p className="help-recommended-desc">{article.description}</p>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            )}
-          </section>
-
-          {sortedCategories.map((category) => {
-            const items = grouped.get(category.id) ?? []
-            return (
-              <section key={category.id} id={`section-${category.id}`} className="help-section">
-                <div className="help-section-head">
-                  <div>
-                    <p className="help-section-kicker">{category.description}</p>
-                    <h2>{category.label}</h2>
-                  </div>
-                  <span>{items.length} 件</span>
-                </div>
-                {items.length === 0 ? (
-                  <div className="help-empty">このカテゴリにはまだ記事がありません。</div>
-                ) : (
-                  <div className="help-grid">
-                    {items.map((article) => (
-                      <Link key={article.id} href={article.href} className="help-card">
-                        <p className="help-card-title">
-                          <span className="help-icon">{article.icon}</span>
-                          {article.title}
-                        </p>
-                        <p className="help-card-desc">{article.description}</p>
-                      </Link>
-                    ))}
-                  </div>
-                )}
-              </section>
-            )
-          })}
-        </main>
+        ))}
       </div>
-      <style jsx>{`
-        .help-page {
-          min-height: 100%;
-          background:
-            radial-gradient(circle at top left, rgba(168, 85, 247, 0.16), transparent 24%),
-            radial-gradient(circle at top right, rgba(196, 181, 253, 0.28), transparent 22%),
-            linear-gradient(180deg, #fcf7ff 0%, #f7f2ff 38%, #ffffff 100%);
-          padding: 28px 18px 48px;
-        }
-        .help-wrap { max-width: 1240px; margin: 0 auto; display: grid; grid-template-columns: 290px minmax(0, 1fr); gap: 24px; align-items: start; }
-        .help-side { position: sticky; top: 16px; display: grid; gap: 12px; }
-        .help-side-card, .help-hero, .help-recommended, .help-section { border: 1px solid rgba(167, 139, 250, 0.22); background: rgba(255, 255, 255, 0.9); box-shadow: 0 18px 48px rgba(76, 29, 149, 0.08); backdrop-filter: blur(10px); }
-        .help-side-card { border-radius: 20px; padding: 16px; }
-        .help-side-label, .help-overline, .help-section-kicker { margin: 0 0 8px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; color: #7c3aed; text-transform: uppercase; }
-        .help-side-heading, .help-section-head h2 { margin: 0; color: #27113d; }
-        .help-side-heading { font-size: 18px; line-height: 1.35; margin-bottom: 12px; }
-        .help-category-nav, .help-steps, .help-main, .help-quick-links { display: grid; gap: 10px; }
-        .help-category-link, .help-step-link, .help-quick-link { text-decoration: none; color: inherit; border-radius: 14px; border: 1px solid transparent; background: linear-gradient(180deg, #fcfbff 0%, #f5efff 100%); padding: 12px; transition: transform .15s ease, border-color .15s ease, background .15s ease; }
-        .help-category-link { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; }
-        .help-quick-link strong, .help-category-link strong { display: block; color: #27113d; font-size: 14px; margin-bottom: 4px; }
-        .help-category-link span:last-child, .help-category-link div span, .help-quick-link span { color: #5b4b73; font-size: 12px; line-height: 1.5; }
-        .help-category-link:hover, .help-step-link:hover, .help-card:hover, .help-recommended-card:hover, .help-quick-link:hover { transform: translateY(-1px); border-color: rgba(139, 92, 246, .32); background: #fff; }
-        .help-category-link.is-muted { opacity: .52; }
-        .help-count, .help-step-badge { min-width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; background: rgba(124,58,237,.1); color: #6d28d9; font-size: 12px; font-weight: 700; flex-shrink: 0; }
-        .help-step-link { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: center; font-size: 13px; color: #3b2a53; }
-        .help-main { gap: 18px; }
-        .help-hero, .help-recommended, .help-section { border-radius: 26px; padding: 24px; }
-        .help-hero { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(280px, 0.8fr); gap: 18px; align-items: end; }
-        .help-hero-copy h1 { margin: 0 0 12px; font-size: clamp(30px, 4vw, 42px); line-height: 1.08; color: #27113d; }
-        .help-sub { margin: 0; color: #5b4b73; font-size: 14px; line-height: 1.8; }
-        .help-hero-panel { border-radius: 20px; background: linear-gradient(180deg, #fbf7ff 0%, #f2eaff 100%); border: 1px solid rgba(167,139,250,.25); padding: 16px; }
-        .help-search-label { display: block; margin-bottom: 8px; color: #47315f; font-size: 13px; font-weight: 600; }
-        .help-search { width: 100%; border-radius: 14px; border: 1px solid rgba(167,139,250,.35); background: #fff; padding: 14px 16px; font-size: 15px; color: #27113d; }
-        .help-search-meta { margin: 8px 0 0; color: #7c3aed; font-size: 13px; }
-        .help-section-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 16px; }
-        .help-section-head span { color: #7b6d90; font-size: 13px; white-space: nowrap; padding-top: 6px; }
-        .help-section-copy { margin: 8px 0 0; color: #5b4b73; font-size: 13px; line-height: 1.7; max-width: 680px; }
-        .help-recommended-grid, .help-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
-        .help-recommended-card, .help-card { display: grid; grid-template-columns: auto 1fr; gap: 12px; border-radius: 18px; border: 1px solid rgba(167,139,250,.18); background: linear-gradient(180deg, #ffffff 0%, #faf6ff 100%); padding: 16px; text-decoration: none; color: inherit; transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease; }
-        .help-recommended-card { gap: 14px; padding: 18px 18px 16px; align-items: start; }
-        .help-step, .help-icon { width: 34px; height: 34px; border-radius: 12px; display: inline-flex; align-items: center; justify-content: center; background: rgba(124,58,237,.1); color: #6d28d9; font-size: 14px; font-weight: 700; flex-shrink: 0; }
-        .help-recommended-card .help-step { width: 30px; height: 30px; border-radius: 10px; font-size: 13px; margin-top: 2px; }
-        .help-recommended-copy { min-width: 0; }
-        .help-recommended-title { margin: 0 0 6px; color: #27113d; font-size: 16px; line-height: 1.45; font-weight: 700; }
-        .help-recommended-desc { margin: 0; color: #5b4b73; font-size: 13px; line-height: 1.65; }
-        .help-card-title { margin: 0 0 8px; font-size: 15px; color: #27113d; display: flex; gap: 10px; align-items: center; }
-        .help-card-desc { margin: 0; color: #5b4b73; font-size: 13px; line-height: 1.7; }
-        .help-empty { border-radius: 18px; background: #fbf7ff; border: 1px dashed rgba(167,139,250,.42); padding: 18px; color: #5b4b73; font-size: 14px; }
-        .help-empty.compact { padding: 14px; font-size: 13px; }
-        @media (max-width: 980px) {
-          .help-wrap, .help-hero { grid-template-columns: 1fr; }
-          .help-side { position: static; }
-        }
-      `}</style>
     </div>
-  )
+  );
+}
+
+function StarterArticlesCard() {
+  return (
+    <div className="help-idx-card">
+      <SectionHeader
+        eyebrow="First time only"
+        title="はじめて使うときだけ見る3記事"
+        description="最初に必要な案内だけをここにまとめています。運用中に何度も見返す前提ではありません。"
+      />
+      <div style={{ marginTop: 20, display: "grid", gap: 12 }}>
+        {starterArticles.map((item, idx) => (
+          <button
+            key={item.title}
+            className={`help-idx-starter-card ${idx === 0 ? "is-primary" : ""}`}
+          >
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 14 }}>
+              <div className={`help-idx-starter-num ${idx === 0 ? "is-primary" : ""}`}>
+                {idx + 1}
+              </div>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <p style={{ margin: 0, fontSize: 15, fontWeight: 500, color: "var(--help-heading)" }}>{item.title}</p>
+                <p style={{ margin: "6px 0 0", fontSize: 14, lineHeight: 1.8, color: "var(--help-body)" }}>{item.meta}</p>
+              </div>
+              <ChevronRight style={{ width: 16, height: 16, flexShrink: 0, color: "var(--help-body-light)", marginTop: 2 }} />
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RoleCardsCard() {
+  return (
+    <div className="help-idx-card">
+      <SectionHeader
+        eyebrow="By role"
+        title="権限まわりから探す"
+        description="誰が何を見られるか・どこまで操作できるかを、役割ごとに確認できます。"
+      />
+      <div style={{ marginTop: 20, display: "grid", gap: 12 }}>
+        {roleCards.map((item) => {
+          const Icon = item.icon;
+          return (
+            <button
+              key={item.role}
+              className="help-idx-role-card"
+            >
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 14, minWidth: 0, flex: 1 }}>
+                <div className="help-idx-role-icon">
+                  <Icon style={{ width: 16, height: 16 }} />
+                </div>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <p style={{ margin: 0, fontSize: 15, fontWeight: 500, color: "var(--help-heading)" }}>{item.role}</p>
+                  <p style={{ margin: "6px 0 0", fontSize: 14, lineHeight: 1.8, color: "var(--help-body)" }}>{item.desc}</p>
+                </div>
+              </div>
+              <ChevronRight style={{ width: 16, height: 16, flexShrink: 0, color: "var(--help-body-light)", marginTop: 2 }} />
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+export default function HelpCenterPage() {
+  return (
+    <div className="help-page">
+      <div className="help-idx-main">
+        <HeroSection />
+        <ProductAreaGrid />
+
+        <div className="help-idx-bottom-grid">
+          <FaqGrid />
+          <div style={{ display: "grid", gap: 14, alignContent: "start" }}>
+            <StarterArticlesCard />
+            <RoleCardsCard />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }

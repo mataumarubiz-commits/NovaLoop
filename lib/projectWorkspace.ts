@@ -1,4 +1,11 @@
-import { buildContentHealthScore, normalizeContentLinks, type ContentLinks } from "@/lib/contentWorkflow"
+﻿import {
+  buildContentHealthScore,
+  isBillableDoneStatus,
+  isContentClientOverdue,
+  isContentClosedStatus,
+  normalizeContentLinks,
+  type ContentLinks,
+} from "@/lib/contentWorkflow"
 
 export type ProjectMember = {
   userId: string
@@ -296,10 +303,8 @@ export const CHANGE_TYPE_LABELS: Record<string, string> = {
   extra_deliverable: "追加納品",
 }
 
-const CLOSED_CONTENT_STATUSES = new Set(["delivered", "published", "canceled", "cancelled"])
-
 export function isContentClosed(status: string) {
-  return CLOSED_CONTENT_STATUSES.has(status)
+  return isContentClosedStatus(status)
 }
 
 export function toYmd(date: Date) {
@@ -387,7 +392,10 @@ export function buildProjectSummaries(params: {
     )
     const monthlyExpenses = projectExpenses.reduce((sum, expense) => sum + safeNumber(expense.amount), 0)
     const grossProfit = monthlySales - monthlyVendorCost - monthlyExpenses
-    const delayCount = projectContents.filter((content) => !isContentClosed(content.status) && content.due_client_at < todayYmd).length
+    const delayCount = projectContents.filter(
+      (content) =>
+        isContentClientOverdue(content.status, content.due_client_at, todayYmd, content.client_submitted_at)
+    ).length
     const revisionHeavyCount = projectContents.filter((content) => safeNumber(content.revision_count) >= 3).length
     const stagnationCount = projectContents.filter(
       (content) => !isContentClosed(content.status) && !String(content.next_action ?? "").trim()
@@ -481,8 +489,6 @@ export function buildRuntimeExceptionCandidates(params: {
     const unitPrice = safeNumber(content.unit_price)
     const revisionCount = safeNumber(content.revision_count)
     const materialStatus = content.material_status ?? "not_ready"
-    const links = normalizeContentLinks(content.links_json)
-
     if (!content.assignee_editor_user_id) {
       pushCandidate({
         key: `${contentId}:missing_editor`,
@@ -539,7 +545,9 @@ export function buildRuntimeExceptionCandidates(params: {
       })
     }
 
-    if (!isContentClosed(content.status) && content.due_client_at < todayYmd) {
+    if (
+      isContentClientOverdue(content.status, content.due_client_at, todayYmd, content.client_submitted_at)
+    ) {
       pushCandidate({
         key: `${contentId}:client_overdue`,
         projectId,
@@ -567,7 +575,7 @@ export function buildRuntimeExceptionCandidates(params: {
       })
     }
 
-    if (content.billable_flag && (content.status === "delivered" || content.status === "published") && !content.invoice_id && content.delivery_month <= month) {
+    if (content.billable_flag && isBillableDoneStatus(content.status) && !content.invoice_id && content.delivery_month <= month) {
       pushCandidate({
         key: `${contentId}:invoice_missing`,
         projectId,
@@ -609,19 +617,6 @@ export function buildRuntimeExceptionCandidates(params: {
       })
     }
 
-    if ((content.status === "submitted_to_client" || content.status === "delivered" || content.status === "published") && Object.keys(links).length === 0) {
-      pushCandidate({
-        key: `${contentId}:link_missing`,
-        projectId,
-        contentId,
-        exceptionType: "required_link_missing",
-        severity: "medium",
-        title: "主要リンク不足",
-        description: `${content.project_name} / ${content.title} は提出系ステータスですが主要リンクが未設定です。`,
-        sourceType: "system",
-        status: "runtime",
-      })
-    }
   }
 
   for (const project of projects) {
@@ -649,3 +644,6 @@ export function buildRuntimeExceptionCandidates(params: {
 
   return candidates
 }
+
+
+

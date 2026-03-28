@@ -1,0 +1,4 @@
+
+> my-app@0.1.0 typecheck
+> next typegen && tsc -p tsconfig.typecheck.json --noEmit --incremental false
+

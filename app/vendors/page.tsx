@@ -1,9 +1,10 @@
-"use client"
+﻿"use client"
 
 import Link from "next/link"
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react"
 import ChecklistReturnButton from "@/components/home/ChecklistReturnButton"
 import GuideEmptyState from "@/components/shared/GuideEmptyState"
+import VendorSubmitLinkDialog from "@/components/vendor/VendorSubmitLinkDialog"
 import { useAuthOrg } from "@/hooks/useAuthOrg"
 import { supabase } from "@/lib/supabase"
 
@@ -89,6 +90,12 @@ const secondaryButtonStyle: CSSProperties = {
   cursor: "pointer",
 }
 
+const dangerButtonStyle: CSSProperties = {
+  ...secondaryButtonStyle,
+  border: "1px solid var(--error-border)",
+  color: "var(--error-text)",
+}
+
 function currentMonth() {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`
@@ -161,6 +168,7 @@ export default function VendorsPage() {
   const [vendorSearch, setVendorSearch] = useState("")
   const [ledgerStatusFilter, setLedgerStatusFilter] = useState<VendorLedgerStatusFilter>("all")
   const [ledgerDeadlineFilter, setLedgerDeadlineFilter] = useState<VendorLedgerDeadlineFilter>("all")
+  const [submitLinkVendor, setSubmitLinkVendor] = useState<{ id: string; name: string } | null>(null)
 
   const canAccess = role === "owner" || role === "executive_assistant"
 
@@ -174,6 +182,7 @@ export default function VendorsPage() {
         .from("vendors")
         .select("id, name, email, notes, is_active, vendor_portal_invited_at, vendor_portal_invited_email")
         .eq("org_id", orgId)
+        .eq("is_active", true)
         .order("name"),
       supabase.from("vendor_users").select("vendor_id").eq("org_id", orgId),
       supabase.from("vendor_profiles").select("vendor_id").eq("org_id", orgId),
@@ -300,6 +309,18 @@ export default function VendorsPage() {
     return json
   }
 
+  const callAdminApiDelete = async (path: string) => {
+    const token = (await supabase.auth.getSession()).data.session?.access_token
+    if (!token) throw new Error("ログイン状態を確認してください")
+    const res = await fetch(path, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    const json = await res.json().catch(() => null)
+    if (!res.ok) throw new Error(json?.error ?? "外注先の削除に失敗しました")
+    return json
+  }
+
   const handleAdd = async () => {
     if (!orgId || !name.trim()) return
     setAdding(true)
@@ -348,6 +369,23 @@ export default function VendorsPage() {
   const handleCopyPortal = async () => {
     if (!navigator.clipboard?.writeText) return
     await navigator.clipboard.writeText(`${window.location.origin}/vendor`)
+  }
+
+  const handleDeleteVendor = async (vendor: VendorRow) => {
+    if (!orgId) return
+    if (!window.confirm(`${vendor.name} を一覧から非表示にしますか？`)) return
+    setBusyKey(`delete:${vendor.id}`)
+    setError(null)
+    setRequestMessage(null)
+    try {
+      await callAdminApiDelete(`/api/vendors/${vendor.id}?vendorId=${vendor.id}`)
+      setRequestMessage(`${vendor.name} を一覧から非表示にしました。`)
+      await load()
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "外注先の削除に失敗しました")
+    } finally {
+      setBusyKey(null)
+    }
   }
 
   const handleRequestInvoice = async (vendorId: string) => {
@@ -420,8 +458,16 @@ export default function VendorsPage() {
   return (
     <div style={{ padding: "32px 40px 60px", minHeight: "100vh", background: "var(--bg-grad)" }}>
       <div style={{ maxWidth: 1220, margin: "0 auto", display: "grid", gap: 16 }}>
-        <div>
+        <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
           <ChecklistReturnButton />
+          <nav className="page-tab-bar">
+            <Link href="/vendors" data-active="true">
+              外注管理
+            </Link>
+            <Link href="/payouts" data-active="false">
+              振込
+            </Link>
+          </nav>
         </div>
         <header style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "end" }}>
           <div>
@@ -432,6 +478,9 @@ export default function VendorsPage() {
             </p>
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <Link href="/vendors/submissions" style={{ ...secondaryButtonStyle, textDecoration: "none" }}>
+              提出一覧
+            </Link>
             <Link href="/payouts" style={{ ...secondaryButtonStyle, textDecoration: "none" }}>
               Payouts を開く
             </Link>
@@ -575,6 +624,17 @@ export default function VendorsPage() {
                             <button type="button" onClick={() => void handleRequestInvoice(vendor.id)} disabled={busyKey === `request:${vendor.id}`} style={secondaryButtonStyle}>
                               請求依頼
                             </button>
+                            <button type="button" onClick={() => setSubmitLinkVendor({ id: vendor.id, name: vendor.name })} style={secondaryButtonStyle}>
+                              提出URL
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleDeleteVendor(vendor)}
+                              disabled={busyKey === `delete:${vendor.id}`}
+                              style={dangerButtonStyle}
+                            >
+                              非表示
+                            </button>
                             <Link href={`/vendors/${vendor.id}`} style={{ ...secondaryButtonStyle, textDecoration: "none" }}>
                               詳細
                             </Link>
@@ -711,6 +771,14 @@ export default function VendorsPage() {
           )}
         </section>
       </div>
+      {submitLinkVendor && orgId ? (
+        <VendorSubmitLinkDialog
+          orgId={orgId}
+          vendorId={submitLinkVendor.id}
+          vendorName={submitLinkVendor.name}
+          onClose={() => setSubmitLinkVendor(null)}
+        />
+      ) : null}
     </div>
   )
 }

@@ -5,15 +5,16 @@ import HelpArticleTracker from "@/components/help/HelpArticleTracker"
 import { HELP_ARTICLES, getCategoryLabel } from "@/lib/helpCenter"
 
 type Props = {
-  params: { slug: string }
+  params: Promise<{ slug: string }>
 }
 
 export function generateStaticParams() {
   return HELP_ARTICLES.map((article) => ({ slug: article.slug }))
 }
 
-export default function HelpArticlePage({ params }: Props) {
-  const article = HELP_ARTICLES.find((item) => item.slug === params.slug)
+export default async function HelpArticlePage({ params }: Props) {
+  const { slug } = await params
+  const article = HELP_ARTICLES.find((item) => item.slug === slug)
   if (!article) notFound()
 
   const related = HELP_ARTICLES.filter((item) => item.category === article.category && item.id !== article.id)
@@ -150,14 +151,7 @@ const wrapStyle: CSSProperties = {
 
 const columnStyle: CSSProperties = { display: "grid", gap: 16 }
 const backLinkStyle: CSSProperties = { display: "inline-flex", width: "fit-content", color: "#6d28d9", textDecoration: "none", fontSize: 14, fontWeight: 600 }
-const cardStyle: CSSProperties = {
-  border: "1px solid rgba(167, 139, 250, 0.22)",
-  background: "rgba(255, 255, 255, 0.92)",
-  boxShadow: "0 18px 48px rgba(76, 29, 149, 0.08)",
-  backdropFilter: "blur(10px)",
-  borderRadius: 24,
-  padding: 24,
-}
+const cardStyle: CSSProperties = { border: "1px solid rgba(167, 139, 250, 0.22)", background: "rgba(255, 255, 255, 0.92)", boxShadow: "0 18px 48px rgba(76, 29, 149, 0.08)", backdropFilter: "blur(10px)", borderRadius: 24, padding: 24 }
 const metaStyle: CSSProperties = { display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }
 const chipStyle: CSSProperties = { display: "inline-flex", alignItems: "center", borderRadius: 999, padding: "6px 10px", background: "rgba(124, 58, 237, 0.1)", color: "#6d28d9", fontSize: 12, fontWeight: 700 }
 const chipMutedStyle: CSSProperties = { background: "#f5f3ff", color: "#5b4b73" }

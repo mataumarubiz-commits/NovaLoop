@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
     if (!orgId || !email) {
       return NextResponse.json({ error: "orgId and email are required" }, { status: 400 })
     }
-    const allowedRoles = ["owner", "executive_assistant", "member"]
+    const allowedRoles = ["executive_assistant", "member"]
     const role = allowedRoles.includes(roleKey) ? roleKey : "member"
 
     const admin = createSupabaseAdmin()

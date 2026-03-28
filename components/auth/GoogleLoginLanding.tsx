@@ -19,6 +19,7 @@ function normalizeRedirectTarget(value: string | null) {
 const NON_HOME_LOGIN_TARGET = "/onboarding"
 const AUTH_FINISH_PATH = "/auth/finish"
 const SHOW_LP_QUERY_VALUE = "1"
+const INITIAL_AUTH_CHECK_TIMEOUT_MS = 1500
 
 function getAuthRedirectOrigin() {
   const configured = process.env.NEXT_PUBLIC_APP_URL?.trim()
@@ -310,17 +311,22 @@ export default function GoogleLoginLanding() {
 
   useEffect(() => {
     let active = true
+    const timeoutId = setTimeout(() => {
+      if (!active) return
+      setAuthState((current) => (current === "checking" ? "ready" : current))
+    }, INITIAL_AUTH_CHECK_TIMEOUT_MS)
 
     void supabase.auth
-      .getUser()
+      .getSession()
       .then(({ data, error }) => {
         if (!active) return
+        clearTimeout(timeoutId)
         if (error) {
           setAuthState("ready")
           setErrorMessage(null)
           return
         }
-        if (data.user) {
+        if (data.session?.user) {
           setViewerHasSession(true)
           if (showLp) {
             setAuthState("ready")
@@ -333,6 +339,7 @@ export default function GoogleLoginLanding() {
       })
       .catch(() => {
         if (!active) return
+        clearTimeout(timeoutId)
         setAuthState("ready")
         setErrorMessage(null)
       })
@@ -356,6 +363,7 @@ export default function GoogleLoginLanding() {
 
     return () => {
       active = false
+      clearTimeout(timeoutId)
       subscription.unsubscribe()
     }
   }, [redirectTarget, router, showLp])
@@ -1355,12 +1363,12 @@ export default function GoogleLoginLanding() {
 
         .shot-sidebar-count-alert {
           background: rgba(239, 68, 68, 0.12);
-          color: #b91c1c;
+          color: var(--error-text);
         }
 
         .shot-sidebar-count-warn {
           background: rgba(245, 158, 11, 0.14);
-          color: #b45309;
+          color: var(--warning-text);
         }
 
         .shot-sidebar-status {
@@ -1392,12 +1400,12 @@ export default function GoogleLoginLanding() {
 
         .shot-sidebar-badge-warn {
           background: rgba(245, 158, 11, 0.12);
-          color: #b45309;
+          color: var(--warning-text);
         }
 
         .shot-sidebar-badge-alert {
           background: rgba(239, 68, 68, 0.1);
-          color: #b91c1c;
+          color: var(--error-text);
         }
 
         .shot-main {
@@ -1672,12 +1680,12 @@ export default function GoogleLoginLanding() {
 
         .shot-home-notification-severity-danger {
           background: rgba(239, 68, 68, 0.14);
-          color: #b91c1c;
+          color: var(--error-text);
         }
 
         .shot-home-notification-severity-warn {
           background: rgba(245, 158, 11, 0.18);
-          color: #b45309;
+          color: var(--warning-text);
         }
 
         .shot-home-notification-copy {
@@ -2010,7 +2018,7 @@ export default function GoogleLoginLanding() {
 
         .shot-row-pill-warn {
           background: rgba(245, 158, 11, 0.12);
-          color: #b45309;
+          color: var(--warning-text);
         }
 
         .shot-row-pill-info {
@@ -2020,7 +2028,7 @@ export default function GoogleLoginLanding() {
 
         .shot-row-pill-alert {
           background: rgba(239, 68, 68, 0.12);
-          color: #b91c1c;
+          color: var(--error-text);
         }
 
         .shot-line-row-title {

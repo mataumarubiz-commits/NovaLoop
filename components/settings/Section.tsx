@@ -1,48 +1,32 @@
 "use client"
 
-export default function Section({
-  title,
-  children,
-  action,
-  style,
-}: {
+type SectionProps = {
   title: string
-  children: React.ReactNode
+  description?: string
   action?: React.ReactNode
-  style?: React.CSSProperties
-}) {
+  children: React.ReactNode
+}
+
+export default function Section({ title, description, action, children }: SectionProps) {
   return (
-    <section style={{ marginBottom: 32, ...style }}>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 12,
-          marginBottom: 10,
-        }}
-      >
-        <h2
-          style={{
-            fontSize: 18,
-            fontWeight: 700,
-            color: "var(--text)",
-            margin: 0,
-          }}
-        >
-          {title}
-        </h2>
-        {action}
+    <section style={{ display: "grid", gap: 12 }}>
+      <div style={{ display: "flex", alignItems: "end", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+        <div style={{ minWidth: 0 }}>
+          <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "var(--text)", letterSpacing: "-0.01em" }}>{title}</h2>
+          {description ? <p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: 1.7, color: "var(--muted)" }}>{description}</p> : null}
+        </div>
+        {action ? <div style={{ flexShrink: 0 }}>{action}</div> : null}
       </div>
       <div
         style={{
-          borderBottom: "1px solid var(--border)",
-          marginBottom: 16,
-          opacity: 0.6,
+          border: "1px solid var(--border)",
+          borderRadius: 16,
+          background: "var(--surface)",
+          boxShadow: "var(--shadow-sm)",
+          overflow: "hidden",
         }}
-      />
-      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        {children}
+      >
+        <div style={{ display: "grid" }}>{children}</div>
       </div>
     </section>
   )

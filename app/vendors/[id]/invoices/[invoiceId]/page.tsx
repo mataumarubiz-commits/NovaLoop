@@ -54,7 +54,7 @@ const cardStyle: CSSProperties = {
   borderRadius: 14,
   padding: 18,
   background: "var(--surface)",
-  boxShadow: "0 2px 10px rgba(15,23,42,0.04)",
+  boxShadow: "var(--shadow-sm)",
 }
 
 const inputStyle: CSSProperties = {
@@ -245,7 +245,7 @@ export default function VendorInvoiceDetailPage() {
           </button>
         </header>
 
-        {error ? <section style={{ ...cardStyle, borderColor: "#fecaca", background: "#fff1f2", color: "#b91c1c" }}>{error}</section> : null}
+        {error ? <section style={{ ...cardStyle, borderColor: "var(--error-border)", background: "var(--error-bg)", color: "var(--error-text)" }}>{error}</section> : null}
 
         <section style={{ ...cardStyle, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
           <Info title="ベンダー" value={vendor.name} sub={vendor.email || "メール未登録"} />
@@ -255,9 +255,9 @@ export default function VendorInvoiceDetailPage() {
         </section>
 
         {invoice.status === "rejected" ? (
-          <section style={{ ...cardStyle, borderColor: "#fdba74", background: "#fff7ed" }}>
-            <h2 style={{ margin: 0, fontSize: 18, color: "#9a3412" }}>現在の差し戻し内容</h2>
-            <div style={{ display: "grid", gap: 8, marginTop: 14, color: "#9a3412" }}>
+          <section style={{ ...cardStyle, borderColor: "var(--warning-border)", background: "var(--warning-bg)" }}>
+            <h2 style={{ margin: 0, fontSize: 18, color: "var(--warning-text)" }}>現在の差し戻し内容</h2>
+            <div style={{ display: "grid", gap: 8, marginTop: 14, color: "var(--warning-text)" }}>
               <div>カテゴリ: {categoryLabel(invoice.rejected_category)}</div>
               <div>理由: {invoice.rejected_reason || "-"}</div>
             </div>
@@ -426,7 +426,7 @@ export default function VendorInvoiceDetailPage() {
             <button type="button" onClick={() => void review("approve")} disabled={busy || invoice.status === "approved" || invoice.status === "paid"} style={{ padding: "9px 14px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface-2)" }}>
               承認する
             </button>
-            <button type="button" onClick={() => void review("reject")} disabled={busy || !rejectReason.trim()} style={{ padding: "9px 14px", borderRadius: 10, border: "1px solid #fdba74", background: "#fff7ed", color: "#9a3412" }}>
+            <button type="button" onClick={() => void review("reject")} disabled={busy || !rejectReason.trim()} style={{ padding: "9px 14px", borderRadius: 10, border: "1px solid var(--warning-border)", background: "var(--warning-bg)", color: "var(--warning-text)" }}>
               差し戻す
             </button>
           </div>

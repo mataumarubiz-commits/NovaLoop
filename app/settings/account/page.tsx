@@ -121,7 +121,7 @@ export default function AccountSettingsPage() {
             borderRadius: 16,
             border: "1px solid var(--border)",
             padding: "28px 24px",
-            boxShadow: "0 4px 20px rgba(0,0,0,0.06)",
+            boxShadow: "var(--shadow-md)",
           }}
         >
           <form onSubmit={handleSubmit}>
@@ -161,9 +161,9 @@ export default function AccountSettingsPage() {
                   borderRadius: 10,
                   fontSize: 13,
                   background:
-                    message.type === "success" ? "#f0fdf4" : "#fff1f2",
-                  color: message.type === "success" ? "#166534" : "#b91c1c",
-                  border: `1px solid ${message.type === "success" ? "#bbf7d0" : "#fecaca"}`,
+                    message.type === "success" ? "var(--success-bg)" : "var(--error-bg)",
+                  color: message.type === "success" ? "var(--success-text)" : "var(--error-text)",
+                  border: `1px solid ${message.type === "success" ? "var(--success-border)" : "var(--error-border)"}`,
                 }}
               >
                 {message.text}

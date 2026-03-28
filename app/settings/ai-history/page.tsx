@@ -201,7 +201,7 @@ export default function AiHistoryPage() {
         </section>
 
         <section style={{ border: "1px solid var(--border)", borderRadius: 14, padding: 16, background: "var(--surface)", display: "grid", gap: 12 }}>
-          {error ? <div style={{ color: "#b91c1c" }}>{error}</div> : null}
+          {error ? <div style={{ color: "var(--error-text)" }}>{error}</div> : null}
 
           {items.length === 0 ? (
             <div style={{ color: "var(--muted)" }}>該当する履歴はありません。</div>

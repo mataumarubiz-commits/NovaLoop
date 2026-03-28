@@ -7,7 +7,7 @@ import { type AppOrgRole, updateOrgMembershipRole } from "@/lib/orgRoles"
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
-const ALLOWED_ROLES = ["owner", "executive_assistant", "member"] as const satisfies readonly AppOrgRole[]
+const ALLOWED_ROLES = ["executive_assistant", "member"] as const satisfies readonly AppOrgRole[]
 
 export async function POST(req: NextRequest) {
   try {

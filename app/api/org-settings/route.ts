@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getBearerToken, createUserClient } from "@/lib/userClient"
+import {
+  DRAFT_STATUS_OPTIONS,
+  FINAL_STATUS_OPTIONS,
+  MATERIAL_STATUS_OPTIONS,
+  WORKFLOW_STATUS_OPTIONS,
+  normalizeContentWorkflowOptions,
+} from "@/lib/contentWorkflow"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -49,6 +56,10 @@ export async function GET(req: NextRequest) {
             org_id: orgId,
             business_entity_type: "corporate",
             invoice_seq: 1,
+            content_status_options: normalizeContentWorkflowOptions(undefined, WORKFLOW_STATUS_OPTIONS),
+            content_material_status_options: normalizeContentWorkflowOptions(undefined, MATERIAL_STATUS_OPTIONS),
+            content_draft_status_options: normalizeContentWorkflowOptions(undefined, DRAFT_STATUS_OPTIONS),
+            content_final_status_options: normalizeContentWorkflowOptions(undefined, FINAL_STATUS_OPTIONS),
           },
       },
       { status: 200 }
@@ -99,6 +110,19 @@ export async function PATCH(req: NextRequest) {
         typeof body.payout_csv_company_name_kana === "string" ? body.payout_csv_company_name_kana.trim() : null,
       payout_csv_notes:
         typeof body.payout_csv_notes === "string" ? body.payout_csv_notes.trim() : null,
+      content_status_options: normalizeContentWorkflowOptions(body.content_status_options, WORKFLOW_STATUS_OPTIONS),
+      content_material_status_options: normalizeContentWorkflowOptions(
+        body.content_material_status_options,
+        MATERIAL_STATUS_OPTIONS
+      ),
+      content_draft_status_options: normalizeContentWorkflowOptions(
+        body.content_draft_status_options,
+        DRAFT_STATUS_OPTIONS
+      ),
+      content_final_status_options: normalizeContentWorkflowOptions(
+        body.content_final_status_options,
+        FINAL_STATUS_OPTIONS
+      ),
     }
 
     if (workspaceName) {

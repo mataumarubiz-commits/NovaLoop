@@ -36,7 +36,8 @@ export async function POST(req: NextRequest) {
     }
 
     const orgId = row.org_id
-    const roleKey = normalizeAppOrgRole(row.role_key) ?? "member"
+    const normalizedRole = normalizeAppOrgRole(row.role_key)
+    const roleKey = normalizedRole === "owner" ? "member" : normalizedRole ?? "member"
 
     const membershipWrite = await upsertOrgMembership(admin, {
       userId,

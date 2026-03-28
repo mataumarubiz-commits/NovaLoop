@@ -8,16 +8,26 @@ const PATH_LABELS: Record<string, string> = {
   "/home": "ホーム",
   "/pages": "ページ",
   "/members": "メンバー",
-  "/contents": "コンテンツ",
+  "/contents": "タスク",
   "/billing": "請求",
   "/invoices": "請求書",
   "/notifications": "通知",
   "/onboarding": "オンボーディング",
+  "/join-request": "組織参加申請",
+  "/request-org": "新規組織作成",
+  "/purchase-license": "ライセンス購入",
+  "/pending-payment": "支払い待ち",
+  "/recover-license": "ライセンス再付与",
   "/vendors": "外注",
-  "/payouts": "支払",
+  "/payouts": "振込",
   "/settings": "設定",
   "/settings/account": "アカウント設定",
+  "/settings/license": "ライセンス設定",
   "/settings/workspace": "ワークスペース設定",
+  "/platform/purchases": "Platform 購入申請",
+  "/platform/payments": "Platform 入金確認",
+  "/platform/transfers": "Platform 再付与",
+  "/platform/billing-settings": "Platform 請求元設定",
 }
 
 const MOBILE_BREAKPOINT = 768
@@ -89,37 +99,37 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               fontSize: 18,
             }}
           >
-            ≡
+            ☰
           </button>
           <span style={{ fontSize: 16, fontWeight: 600, color: "var(--text)" }}>{pageLabel}</span>
         </header>
-        {drawerOpen && (
-          <>
-            <div
-              role="presentation"
-              style={{
-                position: "fixed",
-                inset: 0,
-                background: "rgba(0,0,0,0.4)",
-                zIndex: 40,
-              }}
-              onClick={() => setDrawerOpen(false)}
-            />
-            <div
-              style={{
-                position: "fixed",
-                top: 0,
-                left: 0,
-                bottom: 0,
-                width: Math.min(SIDEBAR_WIDTH, 280),
-                zIndex: 50,
-                boxShadow: "4px 0 20px rgba(0,0,0,0.15)",
-              }}
-            >
-              <Sidebar isMobile onNavigate={() => setDrawerOpen(false)} />
-            </div>
-          </>
-        )}
+        <div
+          role="presentation"
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: drawerOpen ? "rgba(0,0,0,0.4)" : "rgba(0,0,0,0)",
+            zIndex: 40,
+            pointerEvents: drawerOpen ? "auto" : "none",
+            transition: "background 0.25s ease",
+          }}
+          onClick={() => setDrawerOpen(false)}
+        />
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            bottom: 0,
+            width: Math.min(SIDEBAR_WIDTH, 280),
+            zIndex: 50,
+            boxShadow: drawerOpen ? "var(--shadow-lg)" : "none",
+            transform: drawerOpen ? "translateX(0)" : "translateX(-100%)",
+            transition: "transform 0.25s ease",
+          }}
+        >
+          <Sidebar isMobile onNavigate={() => setDrawerOpen(false)} />
+        </div>
         <main style={{ flex: 1, overflow: "auto" }}>{children}</main>
       </div>
     )
@@ -130,7 +140,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       <button
         type="button"
         onClick={() => setSidebarHidden((value) => !value)}
-        aria-label={sidebarHidden ? "メニューを表示" : "メニューを非表示"}
+        aria-label={sidebarHidden ? "メニューを表示" : "メニューを隠す"}
         style={{
           position: "fixed",
           top: 10,
@@ -145,7 +155,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           cursor: "pointer",
           fontSize: 12,
           lineHeight: 1,
-          boxShadow: "0 4px 10px rgba(0,0,0,0.1)",
+          boxShadow: "var(--shadow-md)",
         }}
       >
         {sidebarHidden ? ">" : "<"}

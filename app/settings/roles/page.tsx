@@ -320,8 +320,8 @@ export default function RolesSettingsPage() {
             marginBottom: 16,
             padding: 10,
             borderRadius: 8,
-            background: "#fef2f2",
-            color: "#b91c1c",
+            background: "var(--error-bg)",
+            color: "var(--error-text)",
             fontSize: 13,
           }}
         >

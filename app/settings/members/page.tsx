@@ -36,7 +36,6 @@ type InviteRow = {
 }
 
 const ROLE_OPTIONS = [
-  { key: "owner", label: "オーナー" },
   { key: "executive_assistant", label: "経営補佐" },
   { key: "member", label: "メンバー" },
 ] as const
@@ -314,8 +313,8 @@ export default function MembersSettingsPage() {
           </div>
         </section>
 
-        {error ? <section style={{ ...cardStyle, background: "#fff1f2", borderColor: "#fecaca", color: "#b91c1c" }}>{error}</section> : null}
-        {success ? <section style={{ ...cardStyle, background: "#f0fdf4", borderColor: "#bbf7d0", color: "#166534" }}>{success}</section> : null}
+        {error ? <section style={{ ...cardStyle, background: "var(--error-bg)", borderColor: "var(--error-border)", color: "var(--error-text)" }}>{error}</section> : null}
+        {success ? <section style={{ ...cardStyle, background: "var(--success-bg)", borderColor: "var(--success-border)", color: "var(--success-text)" }}>{success}</section> : null}
 
         <section style={{ ...cardStyle, display: "flex", gap: 8, flexWrap: "wrap" }}>
           {[
@@ -368,7 +367,7 @@ export default function MembersSettingsPage() {
                     type="button"
                     disabled={!canEdit || member.role === "owner" || busyKey === `remove:${member.userId}`}
                     onClick={() => void handleRemoveMember(member.userId)}
-                    style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #fecaca", background: "#fff1f2", color: "#b91c1c" }}
+                    style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid var(--error-border)", background: "var(--error-bg)", color: "var(--error-text)" }}
                   >
                     削除
                   </button>
@@ -398,7 +397,7 @@ export default function MembersSettingsPage() {
                         onChange={(event) => setApproveRole((prev) => ({ ...prev, [request.id]: event.target.value }))}
                         style={{ padding: "8px 10px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)" }}
                       >
-                        {ROLE_OPTIONS.filter((option) => option.key !== "owner").map((option) => (
+                        {ROLE_OPTIONS.map((option) => (
                           <option key={option.key} value={option.key}>
                             {option.label}
                           </option>
@@ -408,7 +407,7 @@ export default function MembersSettingsPage() {
                         type="button"
                         disabled={busyKey === `approve:${request.id}`}
                         onClick={() => void handleApprove(request.id)}
-                        style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #bbf7d0", background: "#f0fdf4", color: "#166534" }}
+                        style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid var(--success-border)", background: "var(--success-bg)", color: "var(--success-text)" }}
                       >
                         承認
                       </button>
@@ -416,7 +415,7 @@ export default function MembersSettingsPage() {
                         type="button"
                         disabled={busyKey === `reject:${request.id}`}
                         onClick={() => void handleReject(request.id)}
-                        style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #fecaca", background: "#fff1f2", color: "#b91c1c" }}
+                        style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid var(--error-border)", background: "var(--error-bg)", color: "var(--error-text)" }}
                       >
                         却下
                       </button>
@@ -449,7 +448,7 @@ export default function MembersSettingsPage() {
                   onChange={(event) => setInviteRoleKey(event.target.value)}
                   style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)" }}
                 >
-                  {ROLE_OPTIONS.filter((option) => option.key !== "owner").map((option) => (
+                  {ROLE_OPTIONS.map((option) => (
                     <option key={option.key} value={option.key}>
                       {option.label}
                     </option>
@@ -491,7 +490,7 @@ export default function MembersSettingsPage() {
                         type="button"
                         disabled={busyKey === `invite:cancel:${invite.id}`}
                         onClick={() => void handleCancelInvite(invite.id)}
-                        style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #fecaca", background: "#fff1f2", color: "#b91c1c" }}
+                        style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid var(--error-border)", background: "var(--error-bg)", color: "var(--error-text)" }}
                       >
                         取り消し
                       </button>

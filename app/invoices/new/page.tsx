@@ -12,7 +12,7 @@ const cardStyle: CSSProperties = {
   borderRadius: 12,
   padding: 16,
   background: "var(--surface)",
-  boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
+  boxShadow: "var(--shadow-sm)",
 }
 
 type ClientRow = {
@@ -288,7 +288,7 @@ export default function NewInvoicePage() {
       <div style={{ padding: 32 }}>
         <div style={cardStyle}>
           <p>owner / executive_assistant のみアクセスできます。</p>
-          <Link href="/invoices" style={{ color: "var(--primary)", fontWeight: 600 }}>請求書一覧へ戻る</Link>
+          <Link href="/invoices" style={{ color: "var(--primary)", fontWeight: 600 }}>請求書へ戻る</Link>
         </div>
       </div>
     )
@@ -297,15 +297,15 @@ export default function NewInvoicePage() {
   return (
     <div style={{ padding: "32px 40px 60px", background: "var(--bg-grad)", minHeight: "100vh" }}>
       <header style={{ marginBottom: 24 }}>
-        <Link href="/invoices" style={{ color: "var(--primary)", fontWeight: 600, textDecoration: "none" }}>← 請求書一覧</Link>
+        <Link href="/invoices" style={{ color: "var(--primary)", fontWeight: 600, textDecoration: "none" }}>← 請求書</Link>
         <h1 style={{ margin: "12px 0 6px", fontSize: 28, color: "var(--text)" }}>手動で請求書作成</h1>
         <p style={{ color: "var(--muted)", margin: 0 }}>既存UIを変えずに、Bill Change 相当の手動発行だけを追加しています。</p>
       </header>
 
       {requestPrefill ? (
-        <section style={{ ...cardStyle, marginBottom: 16, borderColor: "#bfdbfe", background: "#eff6ff" }}>
-          <strong style={{ color: "#1d4ed8" }}>請求依頼から下書きを作成中</strong>
-          <p style={{ margin: "6px 0 0", color: "#1e3a8a" }}>
+        <section style={{ ...cardStyle, marginBottom: 16, borderColor: "var(--info-border)", background: "var(--info-bg)" }}>
+          <strong style={{ color: "var(--info-text)" }}>請求依頼から下書きを作成中</strong>
+          <p style={{ margin: "6px 0 0", color: "var(--info-text)" }}>
             依頼タイトル、宛先、期限を引き継いでいます。作成後は依頼台帳から請求書へリンクされます。
           </p>
         </section>
@@ -503,7 +503,7 @@ export default function NewInvoicePage() {
             <div>源泉徴収: {formatCurrency(totals.withholding)}</div>
             <div style={{ fontWeight: 700 }}>合計: {formatCurrency(totals.total)}</div>
           </div>
-          {error && <p style={{ color: "#b91c1c", marginBottom: 0 }}>{error}</p>}
+          {error && <p style={{ color: "var(--error-text)", marginBottom: 0 }}>{error}</p>}
           <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}>
             <button type="submit" disabled={saving} style={{ padding: "10px 18px", borderRadius: 10, border: "none", background: "var(--button-primary-bg)", color: "var(--primary-contrast)", fontWeight: 600, cursor: saving ? "not-allowed" : "pointer" }}>
               {saving ? "作成中..." : "請求書を作成"}

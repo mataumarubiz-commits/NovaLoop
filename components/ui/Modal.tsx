@@ -52,7 +52,7 @@ export default function Modal({
           background: "var(--surface)",
           border: "1px solid var(--border)",
           borderRadius: 16,
-          boxShadow: "0 12px 40px rgba(0,0,0,0.15)",
+          boxShadow: "var(--shadow-xl)",
           zIndex: 51,
           padding: 24,
         }}

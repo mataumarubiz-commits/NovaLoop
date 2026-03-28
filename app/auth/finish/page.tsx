@@ -30,14 +30,6 @@ export default function AuthFinishPage() {
         return
       }
 
-      const { data: userData } = await supabase.auth.getUser()
-      if (!active) return
-
-      if (userData.user) {
-        router.replace(nextTarget)
-        return
-      }
-
       timeoutId = setTimeout(() => {
         if (!active) return
         setFailed(true)

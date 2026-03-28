@@ -94,9 +94,9 @@ export default function SqlAssistantPage() {
             marginBottom: 12,
             padding: "8px 10px",
             borderRadius: 10,
-            border: "1px solid #fecaca",
-            background: "#fff1f2",
-            color: "#b91c1c",
+            border: "1px solid var(--error-border)",
+            background: "var(--error-bg)",
+            color: "var(--error-text)",
             fontSize: 13,
           }}
         >

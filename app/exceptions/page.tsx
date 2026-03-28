@@ -45,9 +45,16 @@ type CombinedException =
     }
 
 const SEVERITY_LABELS: Record<string, string> = {
-  low: "low",
-  medium: "medium",
-  high: "high",
+  low: "低",
+  medium: "中",
+  high: "高",
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  runtime: "実行時",
+  open: "未対応",
+  resolved: "解消済み",
+  ignored: "無視",
 }
 
 const EXCEPTION_TYPE_LABELS: Record<string, string> = {
@@ -69,8 +76,12 @@ function exceptionLabel(type: string, title: string) {
   return EXCEPTION_TYPE_LABELS[type] ?? title ?? type
 }
 
+function looksMojibake(text: string) {
+  return text.includes("\uFFFD") || text.includes("\u7E3A") || text.includes("\u7E67") || text.includes("\u8B5B")
+}
+
 function cleanRuntimeDescription(type: string, description: string) {
-  if (description && !description.includes("縺") && !description.includes("譛")) return description
+  if (description && !looksMojibake(description)) return description
   return `${exceptionLabel(type, type)} を確認してください。`
 }
 
@@ -252,13 +263,13 @@ export default function ExceptionsPage() {
   return (
     <ProjectShell title="例外一覧" description="未設定、停滞、納期逆転、原価超過、請求漏れなどの例外を案件横断で確認します。">
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
-        <ProjectInfoCard label="total" value={`${summary.total}`} />
-        <ProjectInfoCard label="high severity" value={`${summary.high}`} accent={summary.high > 0 ? "#b91c1c" : undefined} />
-        <ProjectInfoCard label="runtime" value={`${summary.runtime}`} accent={summary.runtime > 0 ? "#b45309" : undefined} />
-        <ProjectInfoCard label="resolved" value={`${summary.resolved}`} accent={summary.resolved > 0 ? "#166534" : undefined} />
+        <ProjectInfoCard label="件数" value={`${summary.total}`} />
+        <ProjectInfoCard label="高優先度" value={`${summary.high}`} accent={summary.high > 0 ? "var(--error-text)" : undefined} />
+        <ProjectInfoCard label="実行時" value={`${summary.runtime}`} accent={summary.runtime > 0 ? "var(--warning-text)" : undefined} />
+        <ProjectInfoCard label="解消済み" value={`${summary.resolved}`} accent={summary.resolved > 0 ? "var(--success-text)" : undefined} />
       </div>
 
-      <ProjectSection title="Filters">
+      <ProjectSection title="絞り込み">
         <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" }}>
           <label style={{ display: "grid", gap: 6 }}>
             <span>案件</span>
@@ -272,7 +283,7 @@ export default function ExceptionsPage() {
             </select>
           </label>
           <label style={{ display: "grid", gap: 6 }}>
-            <span>severity</span>
+            <span>重要度</span>
             <select value={severityFilter} onChange={(event) => setSeverityFilter(event.target.value)} style={inputStyle}>
               <option value="">すべて</option>
               {Object.entries(SEVERITY_LABELS).map(([value, label]) => (
@@ -283,28 +294,28 @@ export default function ExceptionsPage() {
             </select>
           </label>
           <label style={{ display: "grid", gap: 6 }}>
-            <span>status</span>
+            <span>ステータス</span>
             <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)} style={inputStyle}>
               <option value="">すべて</option>
-              <option value="runtime">runtime</option>
-              <option value="open">open</option>
-              <option value="resolved">resolved</option>
-              <option value="ignored">ignored</option>
+              <option value="runtime">実行時</option>
+              <option value="open">未対応</option>
+              <option value="resolved">解消済み</option>
+              <option value="ignored">無視</option>
             </select>
           </label>
         </div>
       </ProjectSection>
 
       {(uiError || uiSuccess || error) ? (
-        <ProjectSection title="Notice">
-          {error ? <div style={{ color: "#b91c1c" }}>{error}</div> : null}
-          {uiError ? <div style={{ color: "#b91c1c" }}>{uiError}</div> : null}
-          {uiSuccess ? <div style={{ color: "#166534" }}>{uiSuccess}</div> : null}
+        <ProjectSection title="お知らせ">
+          {error ? <div style={{ color: "var(--error-text)" }}>{error}</div> : null}
+          {uiError ? <div style={{ color: "var(--error-text)" }}>{uiError}</div> : null}
+          {uiSuccess ? <div style={{ color: "var(--success-text)" }}>{uiSuccess}</div> : null}
         </ProjectSection>
       ) : null}
 
       {canEdit ? (
-        <ProjectSection title="Manual Exception" description="運用上の気付きも手動で例外テーブルに残せます。">
+        <ProjectSection title="手動例外登録" description="運用上の気付きも手動で例外テーブルに残せます。">
           <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
             <label style={{ display: "grid", gap: 6 }}>
               <span>案件</span>
@@ -333,7 +344,7 @@ export default function ExceptionsPage() {
               <input value={form.exceptionType} onChange={(event) => setForm((prev) => ({ ...prev, exceptionType: event.target.value }))} style={inputStyle} />
             </label>
             <label style={{ display: "grid", gap: 6 }}>
-              <span>severity</span>
+              <span>重要度</span>
               <select value={form.severity} onChange={(event) => setForm((prev) => ({ ...prev, severity: event.target.value }))} style={inputStyle}>
                 {Object.entries(SEVERITY_LABELS).map(([value, label]) => (
                   <option key={value} value={value}>
@@ -353,49 +364,49 @@ export default function ExceptionsPage() {
           </div>
           <div style={{ marginTop: 12 }}>
             <button type="button" onClick={() => void createManualException()} disabled={busy} style={buttonPrimaryStyle}>
-              {busy ? "Saving..." : "Create exception"}
+              {busy ? "保存中..." : "例外を登録"}
             </button>
           </div>
         </ProjectSection>
       ) : null}
 
-      <ProjectSection title="Exception List">
+      <ProjectSection title="例外一覧">
         {loading ? <div>読み込み中...</div> : null}
         {!loading ? (
           <div style={{ overflowX: "auto" }}>
             <table style={{ ...tableStyle, minWidth: 1300 }}>
               <thead>
                 <tr>
-                  <th style={thStyle}>type</th>
-                  <th style={thStyle}>severity</th>
-                  <th style={thStyle}>title</th>
-                  <th style={thStyle}>description</th>
-                  <th style={thStyle}>project</th>
-                  <th style={thStyle}>content</th>
-                  <th style={thStyle}>status</th>
-                  <th style={thStyle}>detected</th>
-                  <th style={thStyle}>action</th>
+                  <th style={thStyle}>種別</th>
+                  <th style={thStyle}>重要度</th>
+                  <th style={thStyle}>タイトル</th>
+                  <th style={thStyle}>内容</th>
+                  <th style={thStyle}>案件</th>
+                  <th style={thStyle}>コンテンツ</th>
+                  <th style={thStyle}>ステータス</th>
+                  <th style={thStyle}>検知日時</th>
+                  <th style={thStyle}>操作</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((row) => (
                   <tr key={`${row.kind}:${row.id}`}>
-                    <td style={tdStyle}>{row.exceptionType}</td>
-                    <td style={tdStyle}>{row.severity}</td>
+                    <td style={tdStyle}>{exceptionLabel(row.exceptionType, row.title)}</td>
+                    <td style={tdStyle}>{SEVERITY_LABELS[row.severity] ?? row.severity}</td>
                     <td style={tdStyle}>{row.title}</td>
                     <td style={tdStyle}>{textOrDash(row.description)}</td>
                     <td style={tdStyle}>{projectNameById.get(row.projectId ?? "") ?? "-"}</td>
                     <td style={tdStyle}>{contentTitleById.get(row.contentId ?? "") ?? "-"}</td>
-                    <td style={tdStyle}>{row.status}</td>
+                    <td style={tdStyle}>{STATUS_LABELS[row.status] ?? row.status}</td>
                     <td style={tdStyle}>{row.kind === "runtime" ? todayYmd : formatDateTime(row.detectedAt)}</td>
                     <td style={tdStyle}>
                       {row.kind === "runtime" ? (
                         canEdit ? (
                           <button type="button" onClick={() => void materializeRuntime(row)} style={buttonPrimaryStyle}>
-                            open として保存
+                            未対応で保存
                           </button>
                         ) : (
-                          <span style={{ color: "var(--muted)" }}>view only</span>
+                          <span style={{ color: "var(--muted)" }}>閲覧のみ</span>
                         )
                       ) : canEdit ? (
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -412,7 +423,7 @@ export default function ExceptionsPage() {
                                 color: row.status === status ? "var(--primary-contrast)" : "var(--button-secondary-text)",
                               }}
                             >
-                              {status}
+                              {STATUS_LABELS[status]}
                             </button>
                           ))}
                         </div>

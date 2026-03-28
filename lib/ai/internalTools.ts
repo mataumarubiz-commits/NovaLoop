@@ -1,5 +1,6 @@
 import { getHelpAnswerCandidates as getRealHelpAnswerCandidates } from "@/lib/helpCenter"
 import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
+import { hasEditorSubmissionSignal } from "@/lib/contentWorkflow"
 import type { ExternalActorContext, ExternalActorRole, InternalToolName, ToolExecutionResult } from "./externalTypes"
 
 type JsonRow = Record<string, unknown>
@@ -135,15 +136,31 @@ export async function runInternalTool(params: {
     case "get_org_dashboard_summary": {
       const { data } = await admin
         .from("contents")
-        .select("id, due_client_at, due_editor_at, status")
+        .select("id, due_client_at, due_editor_at, status, editor_submitted_at")
         .eq("org_id", actor.orgId)
         .neq("status", "published")
         .neq("status", "canceled")
 
-      const rows = (data ?? []) as Array<{ due_client_at: string | null; due_editor_at: string | null; status: string }>
+      const rows = (data ?? []) as Array<{
+        due_client_at: string | null
+        due_editor_at: string | null
+        status: string
+        editor_submitted_at?: string | null
+      }>
       const todayCount = rows.filter((row) => row.due_client_at === today).length
-      const delayed = rows.filter((row) => row.due_client_at && row.due_client_at < today && row.status !== "delivered").length
-      const editorDelayed = rows.filter((row) => row.due_editor_at && row.due_editor_at < today && row.status !== "delivered").length
+      const delayed = rows.filter(
+        (row) =>
+          row.due_client_at &&
+          row.due_client_at < today &&
+          !["submitted_to_client", "client_revision", "scheduling", "delivered", "published"].includes(row.status)
+      ).length
+      const editorDelayed = rows.filter(
+        (row) =>
+          row.due_editor_at &&
+          row.due_editor_at < today &&
+          row.status !== "delivered" &&
+          !hasEditorSubmissionSignal(row.status, row.editor_submitted_at ?? null)
+      ).length
 
       return {
         tool,

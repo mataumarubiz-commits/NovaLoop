@@ -1,4 +1,4 @@
-export type ContentLinks = Record<string, string>
+﻿export type ContentLinks = Record<string, string>
 
 export type ContentRuleInput = {
   dueClientAt: string
@@ -16,6 +16,13 @@ export type ContentRuleInput = {
   estimatedCost?: number | null
   links?: ContentLinks
   todayYmd?: string | null
+  integrationMissing?: boolean | null
+}
+
+export type ContentWorkflowOption = {
+  value: string
+  label: string
+  enabled?: boolean
 }
 
 export const MATERIAL_STATUS_OPTIONS = [
@@ -41,7 +48,7 @@ export const FINAL_STATUS_OPTIONS = [
 
 export const WORKFLOW_STATUS_OPTIONS = [
   { value: "not_started", label: "未着手" },
-  { value: "materials_checked", label: "素材確認" },
+  { value: "materials_checked", label: "進行中" },
   { value: "editing", label: "編集中" },
   { value: "internal_revision", label: "内部確認" },
   { value: "editing_revision", label: "修正対応" },
@@ -53,42 +60,164 @@ export const WORKFLOW_STATUS_OPTIONS = [
   { value: "canceled", label: "キャンセル" },
 ] as const
 
-const STATUS_REQUIRING_EDITOR = new Set([
-  "editing",
+const EDITOR_SUBMITTED_STATUSES = new Set([
   "internal_revision",
   "editing_revision",
   "submitted_to_client",
   "client_revision",
   "scheduling",
+  "completed",
+  "approved",
+  "launched",
+  "invoiced",
   "delivered",
   "published",
 ])
 
-const STATUS_REQUIRING_CHECKER = new Set([
+const CLIENT_SUBMITTED_STATUSES = new Set([
   "submitted_to_client",
   "client_revision",
   "scheduling",
+  "completed",
+  "approved",
+  "launched",
+  "invoiced",
   "delivered",
   "published",
 ])
 
-const STATUS_REQUIRING_MATERIALS = new Set([
-  "editing",
-  "internal_revision",
-  "editing_revision",
-  "submitted_to_client",
-  "client_revision",
-  "scheduling",
+export const CLOSED_WORKFLOW_STATUSES = new Set([
+  "completed",
+  "approved",
+  "launched",
+  "invoiced",
+  "delivered",
+  "published",
+  "canceled",
+  "cancelled",
+])
+
+export const BILLABLE_DONE_WORKFLOW_STATUSES = new Set([
+  "completed",
+  "approved",
+  "launched",
+  "invoiced",
   "delivered",
   "published",
 ])
 
-const STATUS_REQUIRING_LINKS = new Set([
-  "submitted_to_client",
-  "scheduling",
-  "delivered",
-  "published",
-])
+const normalizeWorkflowStatusValue = (status: string | null | undefined) => {
+  const normalized = typeof status === "string" ? status.trim() : ""
+  return normalized === "cancelled" ? "canceled" : normalized
+}
+
+export function hasEditorSubmissionSignal(status: string | null | undefined, editorSubmittedAt?: string | null) {
+  if (typeof editorSubmittedAt === "string" && editorSubmittedAt.trim().length > 0) return true
+  return EDITOR_SUBMITTED_STATUSES.has(normalizeWorkflowStatusValue(status))
+}
+
+export function hasClientSubmissionSignal(status: string | null | undefined, clientSubmittedAt?: string | null) {
+  if (typeof clientSubmittedAt === "string" && clientSubmittedAt.trim().length > 0) return true
+  return CLIENT_SUBMITTED_STATUSES.has(normalizeWorkflowStatusValue(status))
+}
+
+export function isContentClosedStatus(status: string | null | undefined) {
+  return CLOSED_WORKFLOW_STATUSES.has(normalizeWorkflowStatusValue(status))
+}
+
+export function isBillableDoneStatus(status: string | null | undefined) {
+  return BILLABLE_DONE_WORKFLOW_STATUSES.has(normalizeWorkflowStatusValue(status))
+}
+
+export function isContentClientOverdue(
+  status: string | null | undefined,
+  dueClientAt: string | null | undefined,
+  todayYmd: string,
+  clientSubmittedAt?: string | null
+) {
+  if (!dueClientAt) return false
+  if (hasClientSubmissionSignal(status, clientSubmittedAt)) return false
+  return dueClientAt < todayYmd
+}
+
+export function isContentEditorOverdue(
+  status: string | null | undefined,
+  dueEditorAt: string | null | undefined,
+  todayYmd: string,
+  editorSubmittedAt?: string | null
+) {
+  if (!dueEditorAt) return false
+  if (hasEditorSubmissionSignal(status, editorSubmittedAt)) return false
+  return dueEditorAt < todayYmd
+}
+
+const cloneWorkflowOptions = (options: ReadonlyArray<ContentWorkflowOption>) =>
+  options.map((option) => ({ ...option }))
+
+export function normalizeContentWorkflowOptions(
+  raw: unknown,
+  fallback: ReadonlyArray<ContentWorkflowOption>
+) {
+  const fallbackMap = new Map(fallback.map((option) => [option.value, option]))
+  if (!Array.isArray(raw)) return cloneWorkflowOptions(fallback)
+
+  const seen = new Set<string>()
+  const normalized: ContentWorkflowOption[] = []
+
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue
+
+    const value = typeof entry.value === "string" ? entry.value.trim() : ""
+    if (!value || seen.has(value) || !fallbackMap.has(value)) continue
+
+    const base = fallbackMap.get(value)!
+    normalized.push({
+      value,
+      label: typeof entry.label === "string" && entry.label.trim() ? entry.label.trim() : base.label,
+      enabled: typeof entry.enabled === "boolean" ? entry.enabled : true,
+    })
+    seen.add(value)
+  }
+
+  for (const option of fallback) {
+    if (seen.has(option.value)) continue
+    normalized.push({ ...option })
+  }
+
+  return normalized
+}
+
+export function buildContentWorkflowLabelMap(options: ReadonlyArray<ContentWorkflowOption>) {
+  return Object.fromEntries(options.map((option) => [option.value, option.label])) as Record<string, string>
+}
+
+export function getVisibleContentWorkflowOptions(options: ReadonlyArray<ContentWorkflowOption>) {
+  const visible = options.filter((option) => option.enabled !== false)
+  return visible.length > 0 ? visible : cloneWorkflowOptions(options)
+}
+
+export function getRenderableContentWorkflowOptions(
+  options: ReadonlyArray<ContentWorkflowOption>,
+  currentValue?: string | null
+) {
+  const visible = getVisibleContentWorkflowOptions(options)
+  const normalizedCurrentValue = typeof currentValue === "string" ? currentValue.trim() : ""
+  if (!normalizedCurrentValue) return visible
+
+  const current =
+    options.find((option) => option.value === normalizedCurrentValue) ??
+    visible.find((option) => option.value === normalizedCurrentValue)
+
+  if (!current) {
+    return [{ value: normalizedCurrentValue, label: normalizedCurrentValue, enabled: true }, ...visible]
+  }
+
+  if (current.enabled === false) {
+    return [{ ...current, enabled: true }, ...visible]
+  }
+
+  return visible
+}
 
 export function normalizeContentLinks(raw: unknown): ContentLinks {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {}
@@ -106,8 +235,6 @@ export function hasAnyContentLink(links: ContentLinks | undefined | null) {
 
 export function validateContentRules(input: ContentRuleInput) {
   const errors: string[] = []
-  const materialStatus = input.materialStatus ?? "not_ready"
-  const links = input.links ?? {}
   const revisionCount = Number(input.revisionCount ?? 0)
   const estimatedCost = Number(input.estimatedCost ?? 0)
 
@@ -125,26 +252,6 @@ export function validateContentRules(input: ContentRuleInput) {
     errors.push("請求対象のコンテンツには単価が必要です。")
   }
 
-  if (STATUS_REQUIRING_MATERIALS.has(input.status) && materialStatus === "not_ready") {
-    errors.push("素材が未準備のままでは進行ステータスへ進められません。")
-  }
-
-  if (STATUS_REQUIRING_EDITOR.has(input.status) && !input.assigneeEditorUserId) {
-    errors.push("編集担当が未設定のままでは進行ステータスへ進められません。")
-  }
-
-  if (STATUS_REQUIRING_CHECKER.has(input.status) && !input.assigneeCheckerUserId) {
-    errors.push("確認担当が未設定のままでは提出以降のステータスへ進められません。")
-  }
-
-  if (STATUS_REQUIRING_LINKS.has(input.status) && !hasAnyContentLink(links)) {
-    errors.push("提出・公開系ステータスには必須リンクが必要です。")
-  }
-
-  if ((input.status === "editing" || input.status === "internal_revision") && !input.nextAction?.trim()) {
-    errors.push("編集中または内部確認中の行には次アクションが必要です。")
-  }
-
   if (Number(input.unitPrice) > 0 && estimatedCost > Number(input.unitPrice)) {
     errors.push("想定原価が売上を上回っています。利益条件を確認してください。")
   }
@@ -159,27 +266,20 @@ export function validateContentRules(input: ContentRuleInput) {
 export function buildContentHealthScore(input: ContentRuleInput) {
   let score = 100
   const todayYmd = input.todayYmd ?? null
-  const materialStatus = input.materialStatus ?? "not_ready"
   const revisionCount = Number(input.revisionCount ?? 0)
   const estimatedCost = Number(input.estimatedCost ?? 0)
-  const links = input.links ?? {}
 
   if (Number(input.unitPrice) <= 0) score -= 25
   if (input.dueEditorAt && input.dueClientAt && input.dueEditorAt > input.dueClientAt) score -= 35
-  if (!input.assigneeEditorUserId) score -= 15
-  if (!input.assigneeCheckerUserId) score -= 10
-  if (!input.nextAction?.trim()) score -= 10
-  if (materialStatus === "not_ready") score -= 10
-  if (!hasAnyContentLink(links)) score -= 5
   if (revisionCount >= 3) score -= 10
   if (Number(input.unitPrice) > 0 && estimatedCost > Number(input.unitPrice)) score -= 20
+  if (input.integrationMissing) score -= 10
   if (
     todayYmd &&
     input.dueClientAt &&
     input.dueClientAt < todayYmd &&
-    input.status !== "delivered" &&
-    input.status !== "published" &&
-    input.status !== "canceled"
+    !hasClientSubmissionSignal(input.status) &&
+    !isContentClosedStatus(input.status)
   ) {
     score -= 15
   }

@@ -3,6 +3,7 @@ import { Suspense } from "react";
 import "./globals.css";
 import ConditionalAppShell from "@/components/ConditionalAppShell";
 import AIPalette from "@/components/AIPalette";
+import RouteLoadingShell from "@/components/RouteLoadingShell";
 
 export const metadata: Metadata = {
   title: "NovaLoop",
@@ -27,7 +28,7 @@ export default function RootLayout({
           }}
         />
         <ConditionalAppShell>
-          <Suspense fallback={<div style={{ padding: 24, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted)" }}>読み込み中…</div>}>
+          <Suspense fallback={<RouteLoadingShell />}>
             {children}
           </Suspense>
         </ConditionalAppShell>

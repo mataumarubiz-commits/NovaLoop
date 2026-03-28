@@ -14,7 +14,7 @@ const cardStyle: CSSProperties = {
   borderRadius: 12,
   padding: 24,
   background: "var(--surface)",
-  boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
+  boxShadow: "var(--shadow-sm)",
   maxWidth: 1080,
   margin: "0 auto",
 }
@@ -183,7 +183,7 @@ export default function InvoiceDetailPage() {
   }
 
   if (!canAccess) {
-    return <div style={{ padding: 32, color: "#b91c1c" }}>403: owner / executive_assistant のみアクセスできます。</div>
+    return <div style={{ padding: 32, color: "var(--error-text)" }}>403: owner / executive_assistant のみアクセスできます。</div>
   }
 
   if (!invoice) {
@@ -192,7 +192,7 @@ export default function InvoiceDetailPage() {
         <div style={cardStyle}>
           <p style={{ marginTop: 0, color: "var(--muted)" }}>{error ?? "請求書データが見つかりません。"}</p>
           <Link href="/invoices" style={{ color: "var(--primary)", fontWeight: 600 }}>
-            請求書一覧に戻る
+            請求書に戻る
           </Link>
         </div>
       </div>
@@ -243,7 +243,7 @@ export default function InvoiceDetailPage() {
           </div>
         </div>
 
-        {error ? <p style={{ color: "#b91c1c", marginTop: 0 }}>{error}</p> : null}
+        {error ? <p style={{ color: "var(--error-text)", marginTop: 0 }}>{error}</p> : null}
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10, marginBottom: 16 }}>
           <div><strong>請求先:</strong> {counterparty}</div>

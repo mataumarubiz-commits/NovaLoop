@@ -20,6 +20,11 @@ function formatPercent(value: number | null) {
   return value == null ? "-" : `${Math.round(value * 100)}%`
 }
 
+function safeNumber(value: unknown) {
+  const num = Number(value ?? 0)
+  return Number.isFinite(num) ? num : 0
+}
+
 export default function FinanceLitePage() {
   const searchParams = useSearchParams()
   const initialProjectId = searchParams.get("projectId") ?? ""
@@ -34,6 +39,10 @@ export default function FinanceLitePage() {
     contents,
     expenses,
     rateCards,
+    invoices,
+    invoiceLines,
+    vendorInvoices,
+    vendorInvoiceLines,
     projectSummaries,
     refresh,
   } = useProjectWorkspace()
@@ -93,6 +102,26 @@ export default function FinanceLitePage() {
     [contents, expenseForm.projectId]
   )
 
+  const contentSalesById = useMemo(() => {
+    const validInvoiceIds = new Set(invoices.filter((invoice) => invoice.status !== "void").map((invoice) => invoice.id))
+    const map = new Map<string, number>()
+    for (const line of invoiceLines) {
+      if (!line.content_id || !validInvoiceIds.has(line.invoice_id)) continue
+      map.set(line.content_id, (map.get(line.content_id) ?? 0) + safeNumber(line.amount))
+    }
+    return map
+  }, [invoiceLines, invoices])
+
+  const contentCostById = useMemo(() => {
+    const validVendorInvoiceIds = new Set(vendorInvoices.filter((invoice) => invoice.status !== "void").map((invoice) => invoice.id))
+    const map = new Map<string, number>()
+    for (const line of vendorInvoiceLines) {
+      if (!line.content_id || !validVendorInvoiceIds.has(line.vendor_invoice_id)) continue
+      map.set(line.content_id, (map.get(line.content_id) ?? 0) + safeNumber(line.amount))
+    }
+    return map
+  }, [vendorInvoiceLines, vendorInvoices])
+
   const totals = useMemo(
     () =>
       filteredSummaries.reduce(
@@ -127,17 +156,25 @@ export default function FinanceLitePage() {
   const costOverContents = useMemo(
     () =>
       filteredContents
-        .filter((content) => Number(content.unit_price ?? 0) > 0 && Number(content.estimated_cost ?? 0) > Number(content.unit_price ?? 0))
-        .sort((a, b) => Number(b.estimated_cost ?? 0) - Number(a.estimated_cost ?? 0)),
-    [filteredContents]
+        .filter((content) => {
+          const sales = contentSalesById.get(content.id) ?? safeNumber(content.unit_price)
+          const cost = contentCostById.get(content.id) ?? safeNumber(content.estimated_cost)
+          return sales > 0 && cost > sales
+        })
+        .sort((a, b) => {
+          const aCost = contentCostById.get(a.id) ?? safeNumber(a.estimated_cost)
+          const bCost = contentCostById.get(b.id) ?? safeNumber(b.estimated_cost)
+          return bCost - aCost
+        }),
+    [contentCostById, contentSalesById, filteredContents]
   )
 
   const contentProfitability = useMemo(
     () =>
       filteredContents
         .map((content) => {
-          const sales = Number(content.unit_price ?? 0)
-          const cost = Number(content.estimated_cost ?? 0)
+          const sales = contentSalesById.get(content.id) ?? safeNumber(content.unit_price)
+          const cost = contentCostById.get(content.id) ?? safeNumber(content.estimated_cost)
           const gross = sales - cost
           return {
             ...content,
@@ -148,7 +185,7 @@ export default function FinanceLitePage() {
           }
         })
         .sort((a, b) => (a.marginRate ?? -1) - (b.marginRate ?? -1)),
-    [filteredContents]
+    [contentCostById, contentSalesById, filteredContents]
   )
 
   const monthlyTrend = useMemo(() => {
@@ -157,15 +194,15 @@ export default function FinanceLitePage() {
     for (const content of filteredContents) {
       const targetMonth = content.delivery_month || content.due_client_at.slice(0, 7)
       const current = monthMap.get(targetMonth) ?? { sales: 0, vendorCost: 0, expense: 0 }
-      current.sales += Number(content.unit_price ?? 0)
-      current.vendorCost += Number(content.estimated_cost ?? 0)
+      current.sales += contentSalesById.get(content.id) ?? safeNumber(content.unit_price)
+      current.vendorCost += contentCostById.get(content.id) ?? safeNumber(content.estimated_cost)
       monthMap.set(targetMonth, current)
     }
 
     for (const expense of filteredExpenses) {
       const targetMonth = expense.occurred_on.slice(0, 7)
       const current = monthMap.get(targetMonth) ?? { sales: 0, vendorCost: 0, expense: 0 }
-      current.expense += Number(expense.amount ?? 0)
+      current.expense += safeNumber(expense.amount)
       monthMap.set(targetMonth, current)
     }
 
@@ -178,7 +215,7 @@ export default function FinanceLitePage() {
         gross: values.sales - values.vendorCost - values.expense,
       }))
       .sort((a, b) => b.month.localeCompare(a.month))
-  }, [filteredContents, filteredExpenses])
+  }, [contentCostById, contentSalesById, filteredContents, filteredExpenses])
 
   const createExpense = async () => {
     if (!canViewFinance || !orgId) return
@@ -274,10 +311,10 @@ export default function FinanceLitePage() {
         <ProjectInfoCard label="売上" value={formatCurrency(totals.sales)} />
         <ProjectInfoCard label="外注原価" value={formatCurrency(totals.vendorCost)} />
         <ProjectInfoCard label="経費" value={formatCurrency(totals.expense)} />
-        <ProjectInfoCard label="粗利" value={formatCurrency(totals.gross)} accent={totals.gross < 0 ? "#b91c1c" : undefined} />
-        <ProjectInfoCard label="低粗利案件" value={`${lowMarginProjects.length}件`} accent={lowMarginProjects.length > 0 ? "#b45309" : undefined} />
-        <ProjectInfoCard label="修正過多" value={`${revisionHeavyContents.length}本`} accent={revisionHeavyContents.length > 0 ? "#b45309" : undefined} />
-        <ProjectInfoCard label="原価超過" value={`${costOverContents.length}本`} accent={costOverContents.length > 0 ? "#b91c1c" : undefined} />
+        <ProjectInfoCard label="粗利" value={formatCurrency(totals.gross)} accent={totals.gross < 0 ? "var(--error-text)" : undefined} />
+        <ProjectInfoCard label="低粗利案件" value={`${lowMarginProjects.length}件`} accent={lowMarginProjects.length > 0 ? "var(--warning-text)" : undefined} />
+        <ProjectInfoCard label="修正過多" value={`${revisionHeavyContents.length}本`} accent={revisionHeavyContents.length > 0 ? "var(--warning-text)" : undefined} />
+        <ProjectInfoCard label="原価超過" value={`${costOverContents.length}本`} accent={costOverContents.length > 0 ? "var(--error-text)" : undefined} />
       </div>
 
       <ProjectSection title="絞り込み" description="案件単位で収支を確認できます。">
@@ -296,8 +333,8 @@ export default function FinanceLitePage() {
 
       {(uiError || uiSuccess) ? (
         <ProjectSection title="通知">
-          {uiError ? <div style={{ color: "#b91c1c" }}>{uiError}</div> : null}
-          {uiSuccess ? <div style={{ color: "#166534" }}>{uiSuccess}</div> : null}
+          {uiError ? <div style={{ color: "var(--error-text)" }}>{uiError}</div> : null}
+          {uiSuccess ? <div style={{ color: "var(--success-text)" }}>{uiSuccess}</div> : null}
         </ProjectSection>
       ) : null}
 
@@ -326,8 +363,8 @@ export default function FinanceLitePage() {
                     <td style={tdStyle}>{formatCurrency(summary.monthlySales)}</td>
                     <td style={tdStyle}>{formatCurrency(summary.monthlyVendorCost)}</td>
                     <td style={tdStyle}>{formatCurrency(summary.monthlyExpenses)}</td>
-                    <td style={{ ...tdStyle, color: summary.grossProfit < 0 ? "#b91c1c" : tdStyle.color }}>{formatCurrency(summary.grossProfit)}</td>
-                    <td style={{ ...tdStyle, color: (summary.marginRate ?? 1) < 0.35 ? "#b45309" : tdStyle.color }}>{formatPercent(summary.marginRate)}</td>
+                    <td style={{ ...tdStyle, color: summary.grossProfit < 0 ? "var(--error-text)" : tdStyle.color }}>{formatCurrency(summary.grossProfit)}</td>
+                    <td style={{ ...tdStyle, color: (summary.marginRate ?? 1) < 0.35 ? "var(--warning-text)" : tdStyle.color }}>{formatPercent(summary.marginRate)}</td>
                   </tr>
                 ))}
                 {lowMarginProjects.length === 0 ? (
@@ -389,7 +426,7 @@ export default function FinanceLitePage() {
                         <td style={tdStyle}>{projectNameById.get(content.project_id ?? "") ?? "-"}</td>
                         <td style={tdStyle}>{content.title}</td>
                         <td style={tdStyle}>{formatCurrency(Number(content.unit_price ?? 0))}</td>
-                        <td style={{ ...tdStyle, color: "#b91c1c" }}>{formatCurrency(Number(content.estimated_cost ?? 0))}</td>
+                        <td style={{ ...tdStyle, color: "var(--error-text)" }}>{formatCurrency(Number(content.estimated_cost ?? 0))}</td>
                       </tr>
                     ))}
                     {costOverContents.length === 0 ? (
@@ -407,7 +444,7 @@ export default function FinanceLitePage() {
 
       <ProjectSection title="案件別収支" description="既存の請求・外注データがあればそれを優先し、なければ contents の単価 / 想定原価を使います。">
         {loading ? <div>読み込み中...</div> : null}
-        {error ? <div style={{ color: "#b91c1c" }}>{error}</div> : null}
+        {error ? <div style={{ color: "var(--error-text)" }}>{error}</div> : null}
         {!loading ? (
           <div style={{ overflowX: "auto" }}>
             <table style={{ ...tableStyle, minWidth: 1200 }}>
@@ -435,8 +472,8 @@ export default function FinanceLitePage() {
                     <td style={tdStyle}>{formatCurrency(summary.monthlySales)}</td>
                     <td style={tdStyle}>{formatCurrency(summary.monthlyVendorCost)}</td>
                     <td style={tdStyle}>{formatCurrency(summary.monthlyExpenses)}</td>
-                    <td style={{ ...tdStyle, color: summary.grossProfit < 0 ? "#b91c1c" : tdStyle.color }}>{formatCurrency(summary.grossProfit)}</td>
-                    <td style={{ ...tdStyle, color: (summary.marginRate ?? 1) < 0.35 ? "#b45309" : tdStyle.color }}>{formatPercent(summary.marginRate)}</td>
+                    <td style={{ ...tdStyle, color: summary.grossProfit < 0 ? "var(--error-text)" : tdStyle.color }}>{formatCurrency(summary.grossProfit)}</td>
+                    <td style={{ ...tdStyle, color: (summary.marginRate ?? 1) < 0.35 ? "var(--warning-text)" : tdStyle.color }}>{formatPercent(summary.marginRate)}</td>
                     <td style={tdStyle}>{summary.openExceptionCount}</td>
                   </tr>
                 ))}
@@ -471,7 +508,7 @@ export default function FinanceLitePage() {
                     <td style={tdStyle}>{formatCurrency(row.sales)}</td>
                     <td style={tdStyle}>{formatCurrency(row.vendorCost)}</td>
                     <td style={tdStyle}>{formatCurrency(row.expense)}</td>
-                    <td style={{ ...tdStyle, color: row.gross < 0 ? "#b91c1c" : tdStyle.color }}>{formatCurrency(row.gross)}</td>
+                    <td style={{ ...tdStyle, color: row.gross < 0 ? "var(--error-text)" : tdStyle.color }}>{formatCurrency(row.gross)}</td>
                   </tr>
                 ))}
                 {monthlyTrend.length === 0 ? (
@@ -504,8 +541,8 @@ export default function FinanceLitePage() {
                     <td style={tdStyle}>{content.title}</td>
                     <td style={tdStyle}>{formatCurrency(content.sales)}</td>
                     <td style={tdStyle}>{formatCurrency(content.cost)}</td>
-                    <td style={{ ...tdStyle, color: content.gross < 0 ? "#b91c1c" : tdStyle.color }}>{formatCurrency(content.gross)}</td>
-                    <td style={{ ...tdStyle, color: (content.marginRate ?? 1) < 0.35 ? "#b45309" : tdStyle.color }}>{formatPercent(content.marginRate)}</td>
+                    <td style={{ ...tdStyle, color: content.gross < 0 ? "var(--error-text)" : tdStyle.color }}>{formatCurrency(content.gross)}</td>
+                    <td style={{ ...tdStyle, color: (content.marginRate ?? 1) < 0.35 ? "var(--warning-text)" : tdStyle.color }}>{formatPercent(content.marginRate)}</td>
                   </tr>
                 ))}
                 {contentProfitability.length === 0 ? (

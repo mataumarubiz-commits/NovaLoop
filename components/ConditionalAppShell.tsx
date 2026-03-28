@@ -8,6 +8,15 @@ export default function ConditionalAppShell({ children }: { children: React.Reac
   const isOnboarding = pathname === "/onboarding" || (pathname?.startsWith("/onboarding/") ?? false)
   const isAuthFinish = pathname === "/auth/finish" || (pathname?.startsWith("/auth/finish/") ?? false)
   const isPageEmbed = /^\/pages\/[^/]+\/embed$/.test(pathname ?? "")
-  if (isOnboarding || isAuthFinish || isPageEmbed) return <>{children}</>
+  const isVendorSubmit = pathname?.startsWith("/vendor-submit") ?? false
+  const isPlatformFlow =
+    pathname === "/join-request" ||
+    pathname === "/request-org" ||
+    pathname === "/purchase-license" ||
+    pathname === "/pending-payment" ||
+    pathname === "/recover-license" ||
+    pathname === "/settings/license" ||
+    (pathname?.startsWith("/platform/") ?? false)
+  if (isOnboarding || isAuthFinish || isPageEmbed || isVendorSubmit || isPlatformFlow) return <>{children}</>
   return <AppShell>{children}</AppShell>
 }

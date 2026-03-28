@@ -407,7 +407,7 @@ export default function AIPalette() {
           borderRadius: 16,
           border: "1px solid var(--border)",
           background: "var(--surface)",
-          boxShadow: "0 24px 80px rgba(15,23,42,0.4)",
+          boxShadow: "var(--shadow-lg)",
           padding: 16,
           display: "flex",
           flexDirection: "column",
@@ -576,9 +576,9 @@ export default function AIPalette() {
             style={{
               padding: "6px 8px",
               borderRadius: 8,
-              border: "1px solid #fecaca",
-              background: "#fff1f2",
-              color: "#b91c1c",
+              border: "1px solid var(--error-border)",
+              background: "var(--error-bg)",
+              color: "var(--error-text)",
               fontSize: 12,
             }}
           >
@@ -658,8 +658,8 @@ export default function AIPalette() {
                         <span
                           key={`${part.value}-${index}`}
                           style={{
-                            background: part.added ? "#dcfce7" : part.removed ? "#fee2e2" : "transparent",
-                            color: part.removed ? "#991b1b" : "inherit",
+                            background: part.added ? "var(--success-bg)" : part.removed ? "var(--error-bg)" : "transparent",
+                            color: part.removed ? "var(--error-text)" : "inherit",
                             textDecoration: part.removed ? "line-through" : "none",
                           }}
                         >

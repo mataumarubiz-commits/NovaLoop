@@ -1,6 +1,6 @@
 ﻿"use client"
 
-import { useState, useCallback, useEffect, useMemo, useRef } from "react"
+import { useState, useCallback, useEffect, useMemo } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import {
@@ -14,24 +14,23 @@ import {
 } from "@dnd-kit/core"
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
+import TemplateInstallDialog from "@/components/pages/TemplateInstallDialog"
 import { supabase } from "@/lib/supabase"
 import { useAuthOrg } from "@/hooks/useAuthOrg"
-import { PAGE_TEMPLATES, type PageTemplateKey } from "@/lib/pageTemplates"
+import { hasClientSubmissionSignal, isContentClientOverdue, isContentEditorOverdue } from "@/lib/contentWorkflow"
 import { notificationActionHref, notificationPriority, notificationTitle } from "@/lib/notifications"
 
 const SIDEBAR_NAV_ORDER_KEY = "sidebar_nav_order"
 
 const SIDEBAR_WIDTH = 260
-const PRIMARY_NAV_HREFS = ["/home", "/contents", "/projects", "/billing", "/invoices", "/vendors", "/payouts"] as const
-const NAV_ITEMS: { href: string; label: string; locked?: boolean }[] = [
+const PRIMARY_NAV_HREFS = ["/home", "/contents", "/projects", "/billing", "/vendors"] as const
+const NAV_ITEMS: { href: string; label: string; locked?: boolean; childPaths?: string[] }[] = [
   { href: "/home", label: "ホーム" },
   { href: "/members", label: "メンバー" },
-  { href: "/contents", label: "コンテンツ" },
+  { href: "/contents", label: "タスク" },
   { href: "/projects", label: "案件" },
-  { href: "/billing", label: "請求", locked: true },
-  { href: "/invoices", label: "請求書" },
-  { href: "/vendors", label: "外注", locked: true },
-  { href: "/payouts", label: "支払", locked: true },
+  { href: "/billing", label: "請求", locked: true, childPaths: ["/invoices"] },
+  { href: "/vendors", label: "外注", locked: true, childPaths: ["/payouts"] },
   { href: "/settings", label: "設定" },
   { href: "/notifications", label: "通知" },
 ]
@@ -54,6 +53,11 @@ type SidebarNavBadge = {
   tone: "danger" | "warn" | "info"
 }
 
+type SidebarPageSummary = {
+  id: string
+  title: string
+}
+
 const EMPTY_STATUS_SNAPSHOT = {
   todaySubmitCount: 0,
   overdueCount: 0,
@@ -66,6 +70,12 @@ const SIDEBAR_FETCH_TTL_MS = 15_000
 
 const COMPLETED_CONTENT_STATUSES = new Set(["delivered", "published", "canceled", "cancelled"])
 const BILLABLE_DONE_STATUSES = new Set(["delivered", "published"])
+
+let sidebarPagesCache: { orgId: string; loadedAt: number; pages: SidebarPageSummary[] } | null = null
+let sidebarUnreadCache: { orgId: string; loadedAt: number; notifications: UnreadNotification[] } | null = null
+let sidebarStatusCache:
+  | { orgId: string; month: string; loadedAt: number; snapshot: typeof EMPTY_STATUS_SNAPSHOT }
+  | null = null
 
 function toYmd(date: Date) {
   const year = date.getFullYear()
@@ -83,24 +93,24 @@ function toYm(date: Date) {
 function badgeStyle(tone: SidebarNavBadge["tone"]): React.CSSProperties {
   if (tone === "danger") {
     return {
-      background: "#fff1f2",
-      border: "1px solid #fecdd3",
-      color: "#be123c",
+      background: "var(--error-bg)",
+      border: "1px solid var(--error-border)",
+      color: "var(--error-text)",
     }
   }
 
   if (tone === "warn") {
     return {
-      background: "#fff7ed",
-      border: "1px solid #fed7aa",
-      color: "#9a3412",
+      background: "var(--warning-bg)",
+      border: "1px solid var(--warning-border)",
+      color: "var(--warning-text)",
     }
   }
 
   return {
-    background: "#eef2ff",
-    border: "1px solid #c7d2fe",
-    color: "#4338ca",
+    background: "var(--chip-bg)",
+    border: "1px solid var(--chip-border)",
+    color: "var(--chip-text)",
   }
 }
 
@@ -116,7 +126,7 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
 
   const [creatingPage, setCreatingPage] = useState(false)
   const [toastMessage, setToastMessage] = useState<string | null>(null)
-  const [sidebarPages, setSidebarPages] = useState<{ id: string; title: string }[]>([])
+  const [sidebarPages, setSidebarPages] = useState<SidebarPageSummary[]>([])
   const [pagesMenuOpen, setPagesMenuOpen] = useState(true)
   const [navDndReady, setNavDndReady] = useState(false)
   const [templateModalOpen, setTemplateModalOpen] = useState(false)
@@ -130,9 +140,6 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
   const [mainFlowOpen, setMainFlowOpen] = useState(true)
   const [knowledgeOpen, setKnowledgeOpen] = useState(true)
   const [statusSnapshot, setStatusSnapshot] = useState(EMPTY_STATUS_SNAPSHOT)
-  const unreadCacheRef = useRef<{ orgId: string; loadedAt: number; notifications: UnreadNotification[] } | null>(null)
-  const statusCacheRef = useRef<{ orgId: string; month: string; loadedAt: number; snapshot: typeof EMPTY_STATUS_SNAPSHOT } | null>(null)
-
   const todayYmd = useMemo(() => toYmd(new Date()), [])
   const thisMonth = useMemo(() => toYm(new Date()), [])
 
@@ -193,8 +200,18 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
     setNavOrder((prev) => arrayMove(prev, oldIndex, newIndex))
   }, [navOrder])
 
-  const fetchSidebarPages = useCallback(async () => {
+  const fetchSidebarPages = useCallback(async (options?: { force?: boolean }) => {
     if (!activeOrgId) return
+    const force = options?.force === true
+    if (
+      !force &&
+      sidebarPagesCache &&
+      sidebarPagesCache.orgId === activeOrgId &&
+      Date.now() - sidebarPagesCache.loadedAt < SIDEBAR_FETCH_TTL_MS
+    ) {
+      setSidebarPages(sidebarPagesCache.pages)
+      return
+    }
     const { data: auth } = await supabase.auth.getSession()
     const token = auth.session?.access_token
     if (!token) return
@@ -205,20 +222,20 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
       | { ok?: boolean; pages?: { id: string; title?: string | null }[] }
       | null
     if (!res.ok || !json?.ok) return
-    setSidebarPages(
-      (json.pages ?? [])
-        .slice(0, 30)
-        .map((r) => ({ id: r.id, title: (r.title ?? "無題").trim() || "無題" }))
-    )
+    const pages = (json.pages ?? [])
+      .slice(0, 30)
+      .map((r) => ({ id: r.id, title: (r.title ?? "無題").trim() || "無題" }))
+    setSidebarPages(pages)
+    sidebarPagesCache = {
+      orgId: activeOrgId,
+      loadedAt: Date.now(),
+      pages,
+    }
   }, [activeOrgId])
 
   useEffect(() => {
-    fetchSidebarPages()
+    void fetchSidebarPages()
   }, [fetchSidebarPages])
-
-  useEffect(() => {
-    if (pathname?.startsWith("/pages")) fetchSidebarPages()
-  }, [pathname, fetchSidebarPages])
 
   useEffect(() => {
     if (!activeOrgId) {
@@ -227,7 +244,7 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
       return
     }
 
-    const cached = unreadCacheRef.current
+    const cached = sidebarUnreadCache
     if (
       cached &&
       cached.orgId === activeOrgId &&
@@ -256,7 +273,7 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
       })
       setUnreadNotifications(sorted)
       setUnreadNotificationCount(list.length)
-      unreadCacheRef.current = {
+      sidebarUnreadCache = {
         orgId: activeOrgId,
         loadedAt: Date.now(),
         notifications: sorted,
@@ -266,7 +283,7 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
     return () => {
       active = false
     }
-  }, [activeOrgId, pathname])
+  }, [activeOrgId])
 
   useEffect(() => {
     if (!activeOrgId) {
@@ -274,7 +291,7 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
       return
     }
 
-    const cached = statusCacheRef.current
+    const cached = sidebarStatusCache
     if (
       cached &&
       cached.orgId === activeOrgId &&
@@ -289,7 +306,7 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
     const loadStatusSnapshot = async () => {
       const contentsPromise = supabase
         .from("contents")
-        .select("due_client_at, due_editor_at, status, editor_submitted_at, billable_flag, delivery_month, invoice_id")
+        .select("due_client_at, due_editor_at, status, editor_submitted_at, client_submitted_at, billable_flag, delivery_month, invoice_id")
         .eq("org_id", activeOrgId)
 
       const invoicesPromise = canAccessBilling
@@ -314,6 +331,7 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
           due_editor_at: string
           status: string
           editor_submitted_at: string | null
+          client_submitted_at: string | null
           billable_flag: boolean
           delivery_month: string | null
           invoice_id: string | null
@@ -329,11 +347,18 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
       const vendorRows =
         (vendorInvoicesRes.data as Array<{ status: string | null }> | null) ?? []
 
+      const dueTodayRows = openRows.filter(
+        (row) =>
+          row.due_client_at === todayYmd &&
+          !hasClientSubmissionSignal(row.status, row.client_submitted_at)
+      )
+
       const nextSnapshot = {
-        todaySubmitCount: openRows.filter((row) => row.due_client_at === todayYmd).length,
+        todaySubmitCount: dueTodayRows.length,
         overdueCount: openRows.filter(
           (row) =>
-            row.due_client_at < todayYmd || (row.due_editor_at < todayYmd && !row.editor_submitted_at)
+            isContentClientOverdue(row.status, row.due_client_at, todayYmd, row.client_submitted_at) ||
+            isContentEditorOverdue(row.status, row.due_editor_at, todayYmd, row.editor_submitted_at)
         ).length,
         unissuedCount: invoiceTargets.filter((row) => !row.invoice_id).length,
         vendorReviewCount: vendorRows.filter((row) => row.status === "draft" || row.status === "rejected").length,
@@ -341,7 +366,7 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
       }
 
       setStatusSnapshot(nextSnapshot)
-      statusCacheRef.current = {
+      sidebarStatusCache = {
         orgId: activeOrgId,
         month: thisMonth,
         loadedAt: Date.now(),
@@ -363,7 +388,7 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
     return () => {
       active = false
     }
-  }, [activeOrgId, canAccessBilling, thisMonth, todayYmd, pathname])
+  }, [activeOrgId, canAccessBilling, thisMonth, todayYmd])
 
   useEffect(() => {
     if (!notificationMenuOpen) return
@@ -402,10 +427,9 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
     return badges
   }, [canAccessBilling, statusSnapshot])
 
-  const createPageWithTemplate = useCallback(
-    async (template: PageTemplateKey | "blank") => {
+  const createBlankPage = useCallback(
+    async () => {
       if (!activeOrgId || !canCreatePage || creatingPage) return
-      setTemplateModalOpen(false)
       setCreatingPage(true)
       setToastMessage(null)
       try {
@@ -415,18 +439,16 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
           setToastMessage("ログイン状態を確認してください")
           return
         }
-        const body = template !== "blank" ? JSON.stringify({ template }) : undefined
         const res = await fetch("/api/pages/create", {
           method: "POST",
           headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          body: body ?? undefined,
         })
         const json = (await res.json().catch(() => null)) as { ok?: boolean; id?: string; message?: string } | null
         if (!res.ok || !json?.ok || !json?.id) {
           setToastMessage(json?.message ?? "ページ作成に失敗しました")
           return
         }
-        fetchSidebarPages()
+        void fetchSidebarPages({ force: true })
         onNavigate?.()
         router.push(`/pages/${json.id}`)
       } catch (err) {
@@ -456,11 +478,11 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
         const json = (await res.json().catch(() => null)) as { ok?: boolean; message?: string } | null
         if (!res.ok || !json?.ok) {
           setToastMessage(json?.message ?? "並び順の保存に失敗しました")
-          fetchSidebarPages()
+          void fetchSidebarPages({ force: true })
         }
       } catch {
         setToastMessage("並び順の保存に失敗しました")
-        fetchSidebarPages()
+        void fetchSidebarPages({ force: true })
       } finally {
         setSavingOrder(false)
       }
@@ -472,13 +494,12 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
     if (orgId === "new") {
       setSwitcherOpen(false)
       onNavigate?.()
-      router.push("/onboarding")
+      router.push("/request-org")
       return
     }
     await setActiveOrgId(orgId)
     setSwitcherOpen(false)
     onNavigate?.()
-    window.location.reload()
   }
 
   const handleLogout = async () => {
@@ -508,7 +529,7 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
           return
         }
         setToastMessage("ページを複製しました")
-        await fetchSidebarPages()
+        await fetchSidebarPages({ force: true })
         if (json.id) {
           onNavigate?.()
           router.push(`/pages/${json.id}`)
@@ -539,7 +560,7 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
           return
         }
         setToastMessage("ページをアーカイブしました")
-        await fetchSidebarPages()
+        await fetchSidebarPages({ force: true })
         if (pathname === `/pages/${pageId}`) {
           onNavigate?.()
           router.push("/pages")
@@ -692,7 +713,7 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
                 background: "var(--surface)",
                 border: "1px solid var(--border)",
                 borderRadius: 10,
-                boxShadow: "0 10px 20px rgba(0,0,0,0.12)",
+                boxShadow: "var(--shadow-md)",
                 zIndex: 55,
                 padding: 8,
               }}
@@ -745,7 +766,7 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
               background: "var(--surface)",
               border: "1px solid var(--border)",
               borderRadius: 16,
-              boxShadow: "0 12px 32px rgba(0,0,0,0.15)",
+              boxShadow: "var(--shadow-lg)",
               zIndex: 50,
               padding: 12,
             }}
@@ -897,7 +918,7 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
             const showLock = item.locked === true && !canAccessBilling
             const label = showLock ? `${item.label}（権限限定）` : item.label
             const isPages = item.href === "/pages"
-            const isActive = pathname === item.href
+            const isActive = pathname === item.href || (item.childPaths?.some((p) => pathname?.startsWith(p)) ?? false)
             const badge = navBadges[item.href]
             return (
               <div key={item.href}>
@@ -980,78 +1001,16 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
           })
         ))}
       </nav>
-      {templateModalOpen && (
-        <>
-          <div
-            role="presentation"
-            style={{ position: "fixed", inset: 0, zIndex: 40, background: "rgba(0,0,0,0.4)" }}
-            onClick={() => setTemplateModalOpen(false)}
-          />
-          <div
-            role="dialog"
-            aria-label="新規ページテンプレート選択"
-            style={{
-              position: "fixed",
-              bottom: 100,
-              left: 20,
-              width: Math.min(320, SIDEBAR_WIDTH + 40),
-              maxHeight: 360,
-              overflow: "auto",
-              background: "var(--surface)",
-              border: "1px solid var(--border)",
-              borderRadius: 16,
-              boxShadow: "0 12px 32px rgba(0,0,0,0.15)",
-              zIndex: 50,
-              padding: 12,
-            }}
-          >
-            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10, fontWeight: 600 }}>新規ページ</div>
-            <button
-              type="button"
-              onClick={() => createPageWithTemplate("blank")}
-              disabled={creatingPage}
-              style={{
-                display: "block",
-                width: "100%",
-                padding: "10px 12px",
-                textAlign: "left",
-                borderRadius: 10,
-                border: "1px solid var(--border)",
-                background: "var(--surface-2)",
-                color: "var(--text)",
-                fontSize: 14,
-                cursor: creatingPage ? "wait" : "pointer",
-                marginBottom: 6,
-              }}
-            >
-              空白のページ
-            </button>
-            {(Object.keys(PAGE_TEMPLATES) as (keyof typeof PAGE_TEMPLATES)[]).map((key) => (
-              <button
-                key={key}
-                type="button"
-                onClick={() => createPageWithTemplate(key)}
-                disabled={creatingPage}
-                style={{
-                  display: "block",
-                  width: "100%",
-                  padding: "10px 12px",
-                  textAlign: "left",
-                  borderRadius: 10,
-                  border: "1px solid var(--border)",
-                  background: "var(--surface-2)",
-                  color: "var(--text)",
-                  fontSize: 14,
-                  cursor: creatingPage ? "wait" : "pointer",
-                  marginBottom: 6,
-                }}
-              >
-                {PAGE_TEMPLATES[key].title}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
+      <TemplateInstallDialog
+        open={templateModalOpen}
+        onClose={() => setTemplateModalOpen(false)}
+        onInstalled={({ rootPageId, pageCount, templateName }) => {
+          setToastMessage(`${templateName} を導入しました（${pageCount} ページ）`)
+          void fetchSidebarPages({ force: true })
+          onNavigate?.()
+          router.push(`/pages/${rootPageId}`)
+        }}
+      />
       <div className="sidebar-bottom" style={{ padding: "14px 20px 0", borderTop: "1px solid rgba(124, 58, 237, 0.12)", marginTop: 8 }}>
         <button
           type="button"
@@ -1121,35 +1080,34 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
           {pagesMenuOpen && (
             <div
               style={{
-                border: "1px solid rgba(124, 58, 237, 0.12)",
-                borderRadius: 10,
-                background: "linear-gradient(180deg, var(--surface-2) 0%, var(--surface) 100%)",
-                boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04)",
-                padding: 8,
-                marginBottom: 10,
+                borderRadius: 8,
+                background: "var(--surface)",
+                padding: "4px 0",
+                marginBottom: 8,
               }}
             >
               {sidebarPages.length > 0 && (
                 <>
                   <input
                     type="text"
-                    placeholder="ページ検索"
+                    placeholder="ページ検索…"
                     value={sidebarPagesSearch}
                     onChange={(e) => setSidebarPagesSearch(e.target.value)}
                     style={{
                       width: "100%",
-                      padding: "6px 10px",
-                      fontSize: 12,
+                      padding: "4px 8px",
+                      fontSize: 11,
                       border: "1px solid var(--border)",
-                      borderRadius: 8,
+                      borderRadius: 6,
                       background: "var(--input-bg)",
                       color: "var(--text)",
                       outline: "none",
-                      marginBottom: 8,
+                      marginBottom: 4,
+                      margin: "0 0 4px",
                     }}
                   />
                   {sidebarPagesSearch.trim() ? (
-                    <div style={{ maxHeight: 180, overflowY: "auto" }}>
+                    <div style={{ maxHeight: 200, overflowY: "auto" }}>
                       {sidebarPages
                         .filter((p) => (p.title || "").toLowerCase().includes(sidebarPagesSearch.trim().toLowerCase()))
                         .map((p) => (
@@ -1159,14 +1117,13 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
                             onClick={onNavigate}
                             style={{
                               display: "block",
-                              padding: "6px 8px",
-                              borderRadius: 8,
-                              marginBottom: 4,
+                              padding: "3px 8px",
+                              borderRadius: 5,
+                              marginBottom: 1,
                               textDecoration: "none",
-                              color: "var(--text)",
-                              background: pathname === `/pages/${p.id}` ? "var(--surface)" : "transparent",
-                              border: pathname === `/pages/${p.id}` ? "1px solid var(--chip-border)" : "1px solid transparent",
-                              fontSize: 12,
+                              color: pathname === `/pages/${p.id}` ? "var(--text)" : "var(--muted)",
+                              background: pathname === `/pages/${p.id}` ? "var(--surface-2)" : "transparent",
+                              fontSize: 11,
                             }}
                           >
                             <span style={{ display: "block", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.title || "無題"}</span>
@@ -1178,7 +1135,7 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
                       pages={sidebarPages}
                       setPages={setSidebarPages}
                       pathname={pathname}
-                      linkBase={{ ...linkBase, padding: "6px 8px", borderRadius: 8, borderLeft: "none", fontSize: 12 }}
+                      linkBase={{ ...linkBase, padding: "3px 8px", borderRadius: 5, borderLeft: "none", fontSize: 11 }}
                       onNavigate={onNavigate}
                       canReorder={canCreatePage && !savingOrder}
                       onReorder={handlePagesReorder}
@@ -1269,7 +1226,17 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
               }}
               style={{ border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", borderRadius: 8, padding: "8px 10px", textAlign: "left", cursor: "pointer", fontSize: 12 }}
             >
-              新規ページ
+              テンプレを導入
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setQuickCreateOpen(false)
+                void createBlankPage()
+              }}
+              style={{ border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", borderRadius: 8, padding: "8px 10px", textAlign: "left", cursor: "pointer", fontSize: 12 }}
+            >
+              空ページ
             </button>
             <button
               type="button"
@@ -1280,7 +1247,7 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
               }}
               style={{ border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", borderRadius: 8, padding: "8px 10px", textAlign: "left", cursor: "pointer", fontSize: 12 }}
             >
-              新規コンテンツ
+              新規タスク
               </button>
             {canAccessBilling && (
               <button
@@ -1305,9 +1272,9 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
               padding: "8px 12px",
               borderRadius: 8,
               fontSize: 12,
-              background: "#fff1f2",
-              color: "#b91c1c",
-              border: "1px solid #fecaca",
+              background: "var(--error-bg)",
+              color: "var(--error-text)",
+              border: "1px solid var(--error-border)",
             }}
           >
             {toastMessage}
@@ -1358,7 +1325,7 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
             padding: "9px 12px",
             fontSize: 13,
             fontWeight: 600,
-            color: pathname?.startsWith("/help") ? "var(--text)" : "var(--muted)",
+            color: pathname?.startsWith("/help") ? "var(--text)" : "var(--sidebar-help-text, var(--muted))",
             textDecoration: "none",
             borderRadius: 10,
             marginBottom: 8,
@@ -1406,16 +1373,16 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
             padding: "10px 12px",
             fontSize: 13,
             fontWeight: 600,
-            color: "#991b1b",
+            color: "var(--sidebar-logout-text, var(--error-text))",
             background: "linear-gradient(180deg, #fff7f7 0%, #ffe9ea 100%)",
-            border: "1px solid #fca5a5",
+            border: "1px solid var(--error-border)",
             borderRadius: 12,
             cursor: "pointer",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             gap: 8,
-            boxShadow: "0 4px 10px rgba(185, 28, 28, 0.14)",
+            boxShadow: "var(--shadow-sm)",
             transition: "color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease",
           }}
         >
@@ -1471,7 +1438,7 @@ function SortableNavItem({
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.href })
   const style = { transform: CSS.Transform.toString(transform), transition }
   const showLock = (item.locked === true) && !canAccessBilling
-  const isActive = pathname === item.href
+  const isActive = pathname === item.href || (item.childPaths?.some((p) => pathname?.startsWith(p)) ?? false)
   const label = showLock ? `${item.label}（権限限定）` : item.label
   const isPages = item.href === "/pages"
 
@@ -1483,7 +1450,7 @@ function SortableNavItem({
         opacity: isDragging ? 0.85 : 1,
         cursor: isDragging ? "grabbing" : "default",
         transition: "box-shadow 0.2s ease, transform 0.2s ease",
-        boxShadow: isDragging ? "0 8px 20px rgba(0,0,0,0.15)" : undefined,
+        boxShadow: isDragging ? "var(--shadow-md)" : undefined,
       }}
     >
       <div style={{ display: "flex", alignItems: "stretch", minHeight: 44 }}>
@@ -1696,7 +1663,7 @@ function SidebarPagesList({
   return (
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
       <SortableContext items={pages.map((p) => p.id)} strategy={verticalListSortingStrategy}>
-        <div style={{ paddingLeft: 20, marginBottom: 4 }}>
+        <div style={{ maxHeight: 240, overflowY: "auto", marginBottom: 2 }}>
           {pages.map((p) => (
             <SortableSidebarPageRow
               key={p.id}
@@ -1744,15 +1711,21 @@ function SortableSidebarPageRow({
   })
   const isPageActive = pathname === `/pages/${page.id}`
   const isWorking = pageActionLoadingId === page.id
+  const [hovered, setHovered] = useState(false)
   return (
     <div
       ref={setNodeRef}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       style={{
         transform: CSS.Transform.toString(transform),
         transition,
         display: "flex",
         alignItems: "center",
         opacity: isDragging ? 0.85 : 1,
+        borderRadius: 5,
+        background: isPageActive ? "var(--surface-2)" : hovered ? "var(--surface-2)" : "transparent",
+        marginBottom: 1,
       }}
     >
       {canReorder ? (
@@ -1760,13 +1733,16 @@ function SortableSidebarPageRow({
           {...attributes}
           {...listeners}
           style={{
-            padding: "2px 4px",
+            padding: "0 2px",
             cursor: isDragging ? "grabbing" : "grab",
             color: "var(--muted)",
-            fontSize: 10,
+            fontSize: 9,
+            opacity: hovered ? 0.6 : 0,
+            transition: "opacity 0.12s",
+            flexShrink: 0,
           }}
         >
-          ::
+          ⠿
         </span>
       ) : null}
       <Link
@@ -1775,18 +1751,20 @@ function SortableSidebarPageRow({
         style={{
           ...linkBase,
           flex: 1,
-          padding: "6px 8px 6px 4px",
-          fontSize: 13,
-          borderLeftColor: isPageActive ? "var(--chip-border)" : "transparent",
-          background: isPageActive ? "var(--surface-2)" : undefined,
+          minWidth: 0,
+          padding: "3px 6px",
+          fontSize: 11,
+          color: isPageActive ? "var(--text)" : "var(--muted)",
+          background: "transparent",
+          textDecoration: "none",
         }}
       >
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}>
-          {page.title}
+          {page.title || "無題"}
         </span>
       </Link>
-      {canManage && (
-        <div style={{ display: "flex", alignItems: "center", gap: 4, paddingRight: 6 }}>
+      {canManage && hovered && (
+        <div style={{ display: "flex", alignItems: "center", gap: 2, paddingRight: 4, flexShrink: 0 }}>
           <button
             type="button"
             disabled={isWorking}
@@ -1797,13 +1775,13 @@ function SortableSidebarPageRow({
             }}
             title="複製"
             style={{
-              border: "1px solid var(--border)",
-              background: "var(--surface-2)",
+              border: "none",
+              background: "transparent",
               color: "var(--muted)",
-              borderRadius: 6,
-              fontSize: 10,
-              padding: "2px 6px",
+              fontSize: 9,
+              padding: "1px 4px",
               cursor: isWorking ? "wait" : "pointer",
+              borderRadius: 3,
             }}
           >
             複製
@@ -1818,16 +1796,16 @@ function SortableSidebarPageRow({
             }}
             title="アーカイブ"
             style={{
-              border: "1px solid var(--border)",
-              background: "var(--surface-2)",
+              border: "none",
+              background: "transparent",
               color: "var(--muted)",
-              borderRadius: 6,
-              fontSize: 10,
-              padding: "2px 6px",
+              fontSize: 9,
+              padding: "1px 4px",
               cursor: isWorking ? "wait" : "pointer",
+              borderRadius: 3,
             }}
           >
-            アーカイブ
+            ✕
           </button>
         </div>
       )}
@@ -1836,5 +1814,3 @@ function SortableSidebarPageRow({
 }
 
 export { SIDEBAR_WIDTH }
-
-

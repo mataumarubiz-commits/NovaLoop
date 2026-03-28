@@ -15,7 +15,7 @@ const cardStyle: CSSProperties = {
   borderRadius: 16,
   background: "var(--surface)",
   padding: 16,
-  boxShadow: "0 10px 30px rgba(15, 23, 42, 0.06)",
+  boxShadow: "var(--shadow-lg)",
 }
 
 const ROUTES = [
