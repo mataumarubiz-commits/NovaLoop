@@ -401,7 +401,7 @@ export default function GoogleLoginLanding() {
     setAuthState("signing_in")
     setErrorMessage(null)
 
-    const origin = window.location.origin
+    const origin = getAuthRedirectOrigin()
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
