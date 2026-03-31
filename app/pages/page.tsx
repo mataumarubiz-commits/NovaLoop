@@ -9,6 +9,7 @@ import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, v
 import { CSS } from "@dnd-kit/utilities"
 import TemplateInstallDialog from "@/components/pages/TemplateInstallDialog"
 import { useAuthOrg } from "@/hooks/useAuthOrg"
+import { hasOrgPermission } from "@/lib/orgRolePermissions"
 import { supabase } from "@/lib/supabase"
 
 type PageTemplateBinding = {
@@ -75,8 +76,8 @@ function templateBadgeTone(label: string): { background: string; color: string; 
 export default function PagesListPage() {
   const router = useRouter()
   const searchRef = useRef<HTMLInputElement>(null)
-  const { activeOrgId, role, loading: authLoading, needsOnboarding } = useAuthOrg({ redirectToOnboarding: true })
-  const canEdit = role === "owner" || role === "executive_assistant"
+  const { activeOrgId, role, permissions, loading: authLoading, needsOnboarding } = useAuthOrg({ redirectToOnboarding: true })
+  const canEdit = hasOrgPermission(role, permissions, "pages_write")
   const [pages, setPages] = useState<PageRow[]>([])
   const [archivedPages, setArchivedPages] = useState<PageRow[]>([])
   const [loading, setLoading] = useState(true)
@@ -396,7 +397,7 @@ export default function PagesListPage() {
           <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: "var(--text)" }}>Pages</h1>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-start" }}>
-          <button type="button" onClick={() => setTemplateDialogOpen(true)} style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid #222", background: "#222", color: "#fff", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>+ テンプレを導入</button>
+          {canEdit ? <button type="button" onClick={() => setTemplateDialogOpen(true)} style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid #222", background: "#222", color: "#fff", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>+ テンプレを導入</button> : null}
           {canEdit ? <button type="button" onClick={() => void createBlankPage()} style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid var(--border)", background: "#fff", color: "var(--text)", fontWeight: 500, fontSize: 13, cursor: "pointer" }}>{creatingBlank ? "作成中..." : "空ページを作成"}</button> : null}
         </div>
       </div>
@@ -437,7 +438,7 @@ export default function PagesListPage() {
           <div style={{ fontSize: 16, fontWeight: 600, color: "var(--text)", marginBottom: 6 }}>ページがありません</div>
           <p style={{ margin: "0 0 20px", fontSize: 13, color: "var(--muted)" }}>テンプレートから導入するか、空ページを作成して始められます。</p>
           <div style={{ display: "flex", justifyContent: "center", gap: 8 }}>
-            <button type="button" onClick={() => setTemplateDialogOpen(true)} style={{ padding: "8px 18px", borderRadius: 8, border: "1px solid #222", background: "#222", color: "#fff", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>テンプレートから導入</button>
+            {canEdit ? <button type="button" onClick={() => setTemplateDialogOpen(true)} style={{ padding: "8px 18px", borderRadius: 8, border: "1px solid #222", background: "#222", color: "#fff", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>テンプレートから導入</button> : null}
             {canEdit ? <button type="button" onClick={() => void createBlankPage()} style={{ padding: "8px 18px", borderRadius: 8, border: "1px solid var(--border)", background: "#fff", color: "var(--text)", fontWeight: 500, fontSize: 13, cursor: "pointer" }}>空ページを作成</button> : null}
           </div>
         </div>

@@ -56,11 +56,27 @@ export const GUIDED_ADD_TYPE_OPTIONS: GuidedAddTypeOption[] = [
 ]
 
 export const GUIDED_STATUS_OPTIONS: GuidedStatusOption[] = [
-  { value: "billable", label: "請求対象" },
-  { value: "operating", label: "進行中" },
+  { value: "billable", label: "請求対象（未着手相当）" },
+  { value: "operating", label: "進行中（内部制作中相当）" },
   { value: "delivered", label: "納品完了" },
   { value: "invoiced", label: "請求済み" },
 ]
+
+/** ガイドの「初期ステータス」→ DB の contents.status / billable_flag */
+export function mapGuidedStatusToContentStatus(guidedStatus: string): { status: string; billable_flag: boolean } {
+  switch (guidedStatus) {
+    case "billable":
+      return { status: "not_started", billable_flag: true }
+    case "operating":
+      return { status: "internal_production", billable_flag: true }
+    case "delivered":
+      return { status: "delivered", billable_flag: true }
+    case "invoiced":
+      return { status: "invoiced", billable_flag: false }
+    default:
+      return { status: "not_started", billable_flag: true }
+  }
+}
 
 export const GUIDED_BILLING_MODEL_LABELS: Record<GuidedBillingModel, string> = {
   monthly_fixed: "月額固定",

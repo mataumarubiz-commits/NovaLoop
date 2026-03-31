@@ -40,6 +40,12 @@
   --table-border: #e9e5ff;
   --table-header-bg: #f5f3ff;
 
+  /* Semantic colors */
+  --error-text: #b91c1c;
+  --warning-text: #b45309;
+  --success-text: #166534;
+  --shadow-lg: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+
   /* Legacy / 互換 */
   --background: var(--bg);
   --foreground: var(--text);
@@ -88,6 +94,12 @@
     --table-bg: #0d1626;
     --table-border: #223148;
     --table-header-bg: #152136;
+
+    /* Semantic colors (dark) */
+    --error-text: #fca5a5;
+    --warning-text: #fbbf24;
+    --success-text: #86efac;
+    --shadow-lg: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -2px rgba(0, 0, 0, 0.2);
 
     --background: var(--bg);
     --foreground: var(--text);
@@ -143,6 +155,10 @@
   --button-secondary-text: var(--button-text);
   --chip-fg: var(--chip-text);
   --input-border: var(--button-border);
+  --error-text: #b91c1c;
+  --warning-text: #b45309;
+  --success-text: #166534;
+  --shadow-lg: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
 }
 
 /* 設定画面ボタン: 丸み・hover/active */
@@ -151,6 +167,15 @@
 }
 .settings-switch:active:not(:disabled) {
   transform: scale(0.98);
+}
+
+/* ナビゲーション横スクロールバーを非表示 */
+.nav-scroll-hide {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.nav-scroll-hide::-webkit-scrollbar {
+  display: none;
 }
 
 /* サイドバー「新規ページ作成」CTA（控えめ） */
@@ -245,6 +270,10 @@
   --button-secondary-text: var(--button-text);
   --chip-fg: var(--chip-text);
   --input-border: var(--button-border);
+  --error-text: #fca5a5;
+  --warning-text: #fbbf24;
+  --success-text: #86efac;
+  --shadow-lg: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -2px rgba(0, 0, 0, 0.2);
 }
 
 @theme inline {

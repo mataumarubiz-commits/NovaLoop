@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
-import { trackServerEvent } from "@/lib/analytics"
+import { getOrgAccess } from "@/lib/apiAuth"
+import { hasOrgPermission as permissionEnabled, type OrgPermissions } from "@/lib/orgRolePermissions"
+import type { AppOrgRole } from "@/lib/orgRoles"
+import { trackServerEvent } from "@/lib/analyticsServer"
 import { writeAuditLog } from "@/lib/auditLog"
 import {
   applyTemplateUpdateToInstall,
@@ -63,20 +66,14 @@ async function getRequestContext(req: NextRequest) {
     }
   }
 
-  const { data: appUser } = await supabase
-    .from("app_users")
-    .select("role")
-    .eq("user_id", userId)
-    .eq("org_id", orgId)
-    .maybeSingle()
-  const role = (appUser as { role?: string } | null)?.role ?? null
-  if (!role) {
+  const access = await getOrgAccess(createSupabaseAdmin(), userId, orgId)
+  if (!access.role) {
     return {
       error: NextResponse.json({ ok: false, message: "組織メンバーではありません" }, { status: 403 }),
     }
   }
 
-  return { userId, orgId, role }
+  return { userId, orgId, role: access.role, permissions: access.permissions }
 }
 
 function isSchemaMissing(error: unknown): boolean {
@@ -93,8 +90,12 @@ function isSchemaMissing(error: unknown): boolean {
   )
 }
 
-function requireTemplateAdmin(role: string) {
+function requireTemplateAdmin(role: AppOrgRole | null) {
   return role === "owner" || role === "executive_assistant"
+}
+
+function canWritePages(role: AppOrgRole | null, permissions: OrgPermissions) {
+  return permissionEnabled(role, permissions, "pages_write")
 }
 
 export async function GET(req: NextRequest) {
@@ -156,7 +157,14 @@ export async function POST(req: NextRequest) {
     const action = typeof body.action === "string" ? body.action : "queue_install"
     const admin = createSupabaseAdmin()
 
-    if (!requireTemplateAdmin(context.role)) {
+    if (
+      (action === "queue_install" || action === "run_install" || action === "apply_update") &&
+      !canWritePages(context.role, context.permissions)
+    ) {
+      return NextResponse.json({ ok: false, message: "Pages の編集権限がありません" }, { status: 403 })
+    }
+
+    if ((action === "share_install" || action === "set_template_status") && !requireTemplateAdmin(context.role)) {
       return NextResponse.json({ ok: false, message: "テンプレ操作の権限がありません" }, { status: 403 })
     }
 

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createUserClient, getBearerToken } from "@/lib/userClient"
 import { normalizeAppOrgRole } from "@/lib/orgRoles"
+import { buildOrgPermissions } from "@/lib/orgRolePermissions"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -39,20 +40,44 @@ export async function GET(req: NextRequest) {
 
     const [profileRes, appUsersRes] = await Promise.all([
       supabase.from("user_profiles").select("display_name, active_org_id").eq("user_id", userId).maybeSingle(),
-      supabase.from("app_users").select("org_id, role").eq("user_id", userId),
+      supabase.from("app_users").select("org_id, role, role_id").eq("user_id", userId),
     ])
 
     const profile = (profileRes.data ?? null) as {
       display_name?: string | null
       active_org_id?: string | null
     } | null
-    const memberships = ((appUsersRes.data ?? []) as { org_id: string; role: string }[])
+    const appUsers = ((appUsersRes.data ?? []) as { org_id: string; role: string; role_id?: string | null }[])
+    const roleIds = Array.from(new Set(appUsers.map((row) => row.role_id).filter((value): value is string => Boolean(value))))
+    const rolePermissionMap = new Map<string, Record<string, unknown> | null>()
+    if (roleIds.length > 0) {
+      const { data: orgRoleRows } = await supabase.from("org_roles").select("id, permissions").in("id", roleIds)
+      for (const row of (orgRoleRows ?? []) as Array<{ id: string; permissions?: Record<string, unknown> | null }>) {
+        rolePermissionMap.set(row.id, row.permissions ?? null)
+      }
+    }
+
+    const memberships = appUsers
       .map((row) => {
         const role = normalizeAppOrgRole(row.role)
         if (!role) return null
-        return { org_id: row.org_id, role }
+        return {
+          org_id: row.org_id,
+          role,
+          role_id: row.role_id ?? null,
+          permissions: buildOrgPermissions(role, row.role_id ? rolePermissionMap.get(row.role_id) ?? null : null),
+        }
       })
-      .filter((row): row is { org_id: string; role: "owner" | "executive_assistant" | "member" } => Boolean(row))
+      .filter(
+        (
+          row
+        ): row is {
+          org_id: string
+          role: "owner" | "executive_assistant" | "member"
+          role_id: string | null
+          permissions: ReturnType<typeof buildOrgPermissions>
+        } => Boolean(row)
+      )
 
     if (memberships.length === 0) {
       return NextResponse.json({
@@ -73,6 +98,8 @@ export async function GET(req: NextRequest) {
       org_id: row.org_id,
       org_name: orgMap.get(row.org_id) ?? "",
       role: row.role,
+      roleId: row.role_id,
+      permissions: row.permissions,
     }))
 
     return NextResponse.json({

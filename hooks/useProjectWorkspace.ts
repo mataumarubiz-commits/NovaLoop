@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react"
 import { useAuthOrg } from "@/hooks/useAuthOrg"
+import { hasOrgPermission } from "@/lib/orgRolePermissions"
 import {
   ensureContentLinksJsonRows,
   isMissingContentsLinksJsonColumn,
@@ -19,6 +20,7 @@ import {
   type InvoiceRowLite,
   type MaterialAssetRow,
   type ProjectMember,
+  normalizeProjectRowStatus,
   type ProjectRow,
   type ProjectSummary,
   type ProjectTaskRow,
@@ -59,7 +61,8 @@ type ProjectWorkspaceState = {
   vendorInvoiceLines: VendorInvoiceLineLite[]
   projectSummaries: ProjectSummary[]
   runtimeExceptions: RuntimeExceptionCandidate[]
-  refresh: () => Promise<void>
+  /** silent: 一覧を消さずバックグラウンド再取得（プルダウンなど軽量更新向け） */
+  refresh: (options?: { silent?: boolean }) => Promise<void>
 }
 
 type ProjectWorkspaceSnapshot = Omit<ProjectWorkspaceState, "refresh">
@@ -129,12 +132,14 @@ async function loadMembers(orgId: string) {
 
 const workspaceCache = new Map<string, WorkspaceCacheEntry>()
 const workspaceInflight = new Map<string, Promise<ProjectWorkspaceSnapshot>>()
+/** 直近の fetch 世代。古い in-flight が完了してもキャッシュを上書きしない（mutation 直後の refresh が stale を返すのを防ぐ） */
+const workspaceFetchGeneration = new Map<string, number>()
 const workspaceContentSelect =
   "id, org_id, client_id, project_id, project_name, title, due_client_at, due_editor_at, publish_at, status, thumbnail_done, billable_flag, delivery_month, unit_price, invoice_id, sequence_no, assignee_editor_user_id, assignee_checker_user_id, revision_count, workload_points, estimated_cost, next_action, blocked_reason, material_status, draft_status, final_status, health_score, links_json, editor_submitted_at, client_submitted_at"
 const workspaceContentSelectLegacy = removeLinksJsonFromSelect(workspaceContentSelect)
 
-function getWorkspaceKey(orgId: string, role: string | null, canViewFinance: boolean) {
-  return `${orgId}:${role ?? "none"}:${canViewFinance ? "finance" : "base"}`
+function getWorkspaceKey(orgId: string, role: string | null, canEdit: boolean, canViewFinance: boolean) {
+  return `${orgId}:${role ?? "none"}:${canEdit ? "edit" : "read"}:${canViewFinance ? "finance" : "base"}`
 }
 
 function readWorkspaceCache(key: string) {
@@ -156,9 +161,10 @@ function writeWorkspaceCache(key: string, snapshot: ProjectWorkspaceSnapshot) {
 async function fetchWorkspaceSnapshot(params: {
   orgId: string
   role: string | null
+  canEdit: boolean
   canViewFinance: boolean
 }): Promise<ProjectWorkspaceSnapshot> {
-  const { orgId, role, canViewFinance } = params
+  const { orgId, role, canEdit, canViewFinance } = params
   const now = new Date()
   const todayYmd = toYmd(now)
   const month = toYm(now)
@@ -261,7 +267,7 @@ async function fetchWorkspaceSnapshot(params: {
 
   const clients = ((clientsRes.data ?? []) as WorkspaceClient[]) || []
   const members = (membersRes ?? []) as ProjectMember[]
-  const projects = ((projectsRes.data ?? []) as ProjectRow[]) || []
+  const projects = (((projectsRes.data ?? []) as ProjectRow[]) || []).map(normalizeProjectRowStatus)
   const contents = ((contentsRes.data ?? []) as WorkspaceContent[]) || []
   const tasks = ((tasksRes.data ?? []) as ProjectTaskRow[]) || []
   const events = ((eventsRes.data ?? []) as ScheduleEventRow[]) || []
@@ -303,7 +309,7 @@ async function fetchWorkspaceSnapshot(params: {
   return {
     loading: false,
     error: errors[0] ?? null,
-    canEdit: role === "owner" || role === "executive_assistant",
+    canEdit,
     canViewFinance,
     orgId,
     role,
@@ -333,14 +339,30 @@ async function fetchWorkspaceSnapshot(params: {
 async function refreshWorkspaceSnapshot(params: {
   orgId: string
   role: string | null
+  canEdit: boolean
   canViewFinance: boolean
+  /** true のとき進行中の fetch を待たず新規取得（mutation 後の再読込に必須） */
+  force?: boolean
 }) {
-  const key = getWorkspaceKey(params.orgId, params.role, params.canViewFinance)
-  const inflight = workspaceInflight.get(key)
-  if (inflight) return inflight
+  const key = getWorkspaceKey(params.orgId, params.role, params.canEdit, params.canViewFinance)
+
+  if (!params.force) {
+    const inflight = workspaceInflight.get(key)
+    if (inflight) return inflight
+  } else {
+    workspaceInflight.delete(key)
+    workspaceCache.delete(key)
+  }
+
+  const nextGen = (workspaceFetchGeneration.get(key) ?? 0) + 1
+  workspaceFetchGeneration.set(key, nextGen)
+  const token = nextGen
 
   const promise = fetchWorkspaceSnapshot(params)
     .then((snapshot) => {
+      if (workspaceFetchGeneration.get(key) !== token) {
+        return snapshot
+      }
       writeWorkspaceCache(key, snapshot)
       return snapshot
     })
@@ -355,9 +377,9 @@ async function refreshWorkspaceSnapshot(params: {
 }
 
 export function useProjectWorkspace(): ProjectWorkspaceState {
-  const { activeOrgId, role, loading: authLoading, needsOnboarding } = useAuthOrg({ redirectToOnboarding: true })
-  const canEdit = role === "owner" || role === "executive_assistant"
-  const canViewFinance = canEdit
+  const { activeOrgId, role, permissions, loading: authLoading, needsOnboarding } = useAuthOrg({ redirectToOnboarding: true })
+  const canEdit = hasOrgPermission(role, permissions, "contents_write")
+  const canViewFinance = role === "owner" || role === "executive_assistant"
   const [snapshot, setSnapshot] = useState<ProjectWorkspaceSnapshot>(() => emptyWorkspaceSnapshot())
 
   const load = useCallback(
@@ -375,7 +397,7 @@ export function useProjectWorkspace(): ProjectWorkspaceState {
         return
       }
 
-      const key = getWorkspaceKey(activeOrgId, role, canViewFinance)
+      const key = getWorkspaceKey(activeOrgId, role, canEdit, canViewFinance)
       const cached = options?.force ? null : readWorkspaceCache(key)
       if (cached) {
         setSnapshot(cached.snapshot)
@@ -383,6 +405,7 @@ export function useProjectWorkspace(): ProjectWorkspaceState {
           void refreshWorkspaceSnapshot({
             orgId: activeOrgId,
             role,
+            canEdit,
             canViewFinance,
           })
             .then((next) => {
@@ -412,6 +435,7 @@ export function useProjectWorkspace(): ProjectWorkspaceState {
         const nextSnapshot = await refreshWorkspaceSnapshot({
           orgId: activeOrgId,
           role,
+          canEdit,
           canViewFinance,
         })
         setSnapshot(nextSnapshot)
@@ -452,7 +476,7 @@ export function useProjectWorkspace(): ProjectWorkspaceState {
       return
     }
 
-    const key = getWorkspaceKey(activeOrgId, role, canViewFinance)
+    const key = getWorkspaceKey(activeOrgId, role, canEdit, canViewFinance)
     const cached = readWorkspaceCache(key)
     if (cached) {
       queueMicrotask(() => setSnapshot(cached.snapshot))
@@ -460,6 +484,7 @@ export function useProjectWorkspace(): ProjectWorkspaceState {
         void refreshWorkspaceSnapshot({
           orgId: activeOrgId,
           role,
+          canEdit,
           canViewFinance,
         })
           .then((next) => {
@@ -479,24 +504,32 @@ export function useProjectWorkspace(): ProjectWorkspaceState {
     })
   }, [activeOrgId, authLoading, canEdit, canViewFinance, load, needsOnboarding, role])
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (options?: { silent?: boolean }) => {
     if (!activeOrgId) return
-    setSnapshot((prev) => ({
-      ...prev,
-      loading: true,
-      error: null,
-      orgId: activeOrgId,
-      role: role ?? null,
-      canEdit,
-      canViewFinance,
-      needsOnboarding: false,
-    }))
+    const silent = Boolean(options?.silent)
+
+    if (!silent) {
+      setSnapshot((prev) => ({
+        ...prev,
+        loading: true,
+        error: null,
+        orgId: activeOrgId,
+        role: role ?? null,
+        canEdit,
+        canViewFinance,
+        needsOnboarding: false,
+      }))
+    } else {
+      setSnapshot((prev) => ({ ...prev, error: null }))
+    }
 
     try {
       const nextSnapshot = await refreshWorkspaceSnapshot({
         orgId: activeOrgId,
         role,
+        canEdit,
         canViewFinance,
+        force: true,
       })
       setSnapshot(nextSnapshot)
     } catch (error) {

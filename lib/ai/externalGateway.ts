@@ -1,5 +1,5 @@
 import OpenAI from "openai"
-import { trackServerEvent } from "@/lib/analytics"
+import { trackServerEvent } from "@/lib/analyticsServer"
 import { EXTERNAL_CHAT_COPY } from "./externalCopy"
 import { writeExternalAiAuditLog } from "./externalAudit"
 import { runInternalTool } from "./internalTools"

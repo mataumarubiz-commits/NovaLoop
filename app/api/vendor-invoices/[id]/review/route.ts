@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
 import { notifyAdminRoles, notifyVendorUser } from "@/lib/opsNotifications"
 import { requireAdminActor } from "@/lib/vendorPortal"
-import { trackServerEvent } from "@/lib/analytics"
+import { trackServerEvent } from "@/lib/analyticsServer"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"

@@ -1,4 +1,4 @@
-﻿import {
+import {
   buildContentHealthScore,
   isBillableDoneStatus,
   isContentClientOverdue,
@@ -21,7 +21,8 @@ export type ProjectRow = {
   client_id: string
   name: string
   code?: string | null
-  status: "active" | "paused" | "completed"
+  /** projects.status（065_project_status_workflow.sql 参照） */
+  status: string
   contract_type: "per_content" | "retainer" | "fixed_fee" | "monthly"
   start_date?: string | null
   end_date?: string | null
@@ -34,6 +35,12 @@ export type ProjectRow = {
   notes?: string | null
   created_at: string
   updated_at: string
+}
+
+/** legacy `active`（055 の DEFAULT / 未移行行）を一覧・集計では `internal_production` として扱う */
+export function normalizeProjectRowStatus(row: ProjectRow): ProjectRow {
+  if (row.status !== "active") return row
+  return { ...row, status: "internal_production" }
 }
 
 export type WorkspaceClient = {

@@ -3,7 +3,7 @@ import { createClient } from "@supabase/supabase-js"
 import { PAGE_TEMPLATES, type PageTemplateKey } from "@/lib/pageTemplates"
 import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
 import { writeAuditLog } from "@/lib/auditLog"
-import { trackServerEvent } from "@/lib/analytics"
+import { trackServerEvent } from "@/lib/analyticsServer"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"

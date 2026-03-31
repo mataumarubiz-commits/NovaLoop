@@ -1,8 +1,20 @@
-"use client"
+﻿"use client"
 
 import Link from "next/link"
 import { useMemo, useState } from "react"
 import { useSearchParams } from "next/navigation"
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts"
 import { ProjectInfoCard, ProjectSection, ProjectShell } from "@/components/project/ProjectShell"
 import {
   buttonPrimaryStyle,
@@ -23,6 +35,12 @@ function formatPercent(value: number | null) {
 function safeNumber(value: unknown) {
   const num = Number(value ?? 0)
   return Number.isFinite(num) ? num : 0
+}
+
+function shortCurrency(value: number) {
+  if (Math.abs(value) >= 1_000_000) return `${Math.round(value / 100_000) / 10}M`
+  if (Math.abs(value) >= 1_000) return `${Math.round(value / 100) / 10}K`
+  return `${Math.round(value)}`
 }
 
 export default function FinanceLitePage() {
@@ -217,6 +235,29 @@ export default function FinanceLitePage() {
       .sort((a, b) => b.month.localeCompare(a.month))
   }, [contentCostById, contentSalesById, filteredContents, filteredExpenses])
 
+  const monthlyTrendChart = useMemo(
+    () =>
+      [...monthlyTrend]
+        .reverse()
+        .map((row) => ({
+          month: row.month.slice(5),
+          sales: row.sales,
+          vendorCost: row.vendorCost,
+          expense: row.expense,
+          gross: row.gross,
+        })),
+    [monthlyTrend]
+  )
+
+  const marginChart = useMemo(
+    () =>
+      lowMarginProjects.slice(0, 8).map((summary) => ({
+        name: summary.project.name.length > 12 ? `${summary.project.name.slice(0, 12)}…` : summary.project.name,
+        gross: summary.grossProfit,
+      })),
+    [lowMarginProjects]
+  )
+
   const createExpense = async () => {
     if (!canViewFinance || !orgId) return
     if (!expenseForm.description.trim() || !expenseForm.amount || !expenseForm.occurredOn) {
@@ -330,6 +371,51 @@ export default function FinanceLitePage() {
           </select>
         </label>
       </ProjectSection>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 16 }}>
+        <ProjectSection title="収支トレンド" description="売上と粗利の流れを一目で確認できます。">
+          <div style={{ width: "100%", height: 280 }}>
+            <ResponsiveContainer>
+              <AreaChart data={monthlyTrendChart}>
+                <defs>
+                  <linearGradient id="finance-sales-gradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#2563eb" stopOpacity={0.34} />
+                    <stop offset="100%" stopColor="#2563eb" stopOpacity={0.04} />
+                  </linearGradient>
+                  <linearGradient id="finance-gross-gradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#14b8a6" stopOpacity={0.28} />
+                    <stop offset="100%" stopColor="#14b8a6" stopOpacity={0.04} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid stroke="rgba(148,163,184,0.18)" vertical={false} />
+                <XAxis dataKey="month" stroke="var(--muted)" tickLine={false} axisLine={false} />
+                <YAxis stroke="var(--muted)" tickLine={false} axisLine={false} tickFormatter={shortCurrency} />
+                <Tooltip formatter={(value) => formatCurrency(Number(value ?? 0))} />
+                <Area type="monotone" dataKey="sales" stroke="#2563eb" fill="url(#finance-sales-gradient)" strokeWidth={2} />
+                <Area type="monotone" dataKey="gross" stroke="#14b8a6" fill="url(#finance-gross-gradient)" strokeWidth={2} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </ProjectSection>
+
+        <ProjectSection title="低粗利の警戒ライン" description="粗利が弱い案件だけを絞って表示します。">
+          <div style={{ width: "100%", height: 280 }}>
+            <ResponsiveContainer>
+              <BarChart data={marginChart} layout="vertical" margin={{ left: 8, right: 16 }}>
+                <CartesianGrid stroke="rgba(148,163,184,0.18)" horizontal={false} />
+                <XAxis type="number" stroke="var(--muted)" tickLine={false} axisLine={false} tickFormatter={shortCurrency} />
+                <YAxis type="category" dataKey="name" width={92} stroke="var(--muted)" tickLine={false} axisLine={false} />
+                <Tooltip formatter={(value) => formatCurrency(Number(value ?? 0))} />
+                <Bar dataKey="gross" radius={[0, 8, 8, 0]}>
+                  {marginChart.map((row) => (
+                    <Cell key={row.name} fill={row.gross < 0 ? "#ef4444" : "#f59e0b"} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </ProjectSection>
+      </div>
 
       {(uiError || uiSuccess) ? (
         <ProjectSection title="通知">

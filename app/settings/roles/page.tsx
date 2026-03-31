@@ -306,8 +306,7 @@ export default function RolesSettingsPage() {
     <div style={{ padding: "32px 40px", minHeight: "100vh", background: "var(--bg-grad)" }}>
       <h1 style={{ fontSize: 24, fontWeight: 700, color: "var(--text)", marginBottom: 4 }}>ロール設定</h1>
       <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 20 }}>
-        このワークスペース内のロールと権限を管理します。カスタムロールの権限は当面 UI 上のみに反映され、RLS
-        は従来どおり owner / executive_assistant ベースです。
+        このワークスペース内のロールと権限を管理します。設定されたカスタムロールの権限は実業務データ（機能ごとのアクセス制御）に適用されます。ただし、経理系画面についてはセキュリティ担保のため引き続き owner / executive_assistant のみがアクセス可能です。
       </p>
       {!canEdit && (
         <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 12 }}>

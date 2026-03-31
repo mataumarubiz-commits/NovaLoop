@@ -33,7 +33,7 @@ export default async function HelpArticlePage({ params }: Props) {
           <header style={cardStyle}>
             <div style={metaStyle}>
               <span style={chipStyle}>{getCategoryLabel(article.category)}</span>
-              <span style={{ ...chipStyle, ...chipMutedStyle }}>運用ガイド</span>
+              <span style={{ ...chipStyle, ...chipMutedStyle }}>ガイド</span>
             </div>
             <h1 style={heroTitleStyle}>
               <span style={iconStyle}>{article.icon}</span>
@@ -46,7 +46,7 @@ export default async function HelpArticlePage({ params }: Props) {
             <section style={cardStyle}>
               <div style={sectionHeadStyle}>
                 <div>
-                  <p style={sectionKickerStyle}>先に見る要点</p>
+                  <p style={sectionKickerStyle}>要点</p>
                   <h2 style={sectionTitleStyle}>最初に押さえるポイント</h2>
                 </div>
               </div>
@@ -65,7 +65,7 @@ export default async function HelpArticlePage({ params }: Props) {
             <section key={section.heading} style={cardStyle}>
               <div style={sectionHeadStyle}>
                 <div>
-                  <p style={sectionKickerStyle}>本文</p>
+                  <p style={sectionKickerStyle}>詳細</p>
                   <h2 style={sectionTitleStyle}>{section.heading}</h2>
                 </div>
               </div>
@@ -84,8 +84,8 @@ export default async function HelpArticlePage({ params }: Props) {
           <section style={cardStyle}>
             <div style={sectionHeadStyle}>
               <div>
-                <p style={sectionKickerStyle}>関連ガイド</p>
-                <h2 style={sectionTitleStyle}>続けて読む記事</h2>
+                <p style={sectionKickerStyle}>関連記事</p>
+                <h2 style={sectionTitleStyle}>あわせて読む</h2>
               </div>
             </div>
             {related.length === 0 ? (
@@ -108,8 +108,8 @@ export default async function HelpArticlePage({ params }: Props) {
           <section style={cardStyle}>
             <div style={sectionHeadStyle}>
               <div>
-                <p style={sectionKickerStyle}>次の一歩</p>
-                <h2 style={sectionTitleStyle}>関連画面へ移動する</h2>
+                <p style={sectionKickerStyle}>関連画面</p>
+                <h2 style={sectionTitleStyle}>画面を開く</h2>
               </div>
             </div>
             <div style={listStyle}>

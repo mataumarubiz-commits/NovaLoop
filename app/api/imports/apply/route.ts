@@ -102,19 +102,43 @@ type ExportData = {
   }>
 }
 
-const VALID_CONTENT_STATUSES = new Set([
+/** DB にそのまま入れられる制作シート status（066 以降） */
+const INSERTABLE_CONTENT_STATUSES = new Set([
   "not_started",
-  "materials_checked",
-  "editing",
+  "internal_production",
   "internal_revision",
-  "editing_revision",
-  "submitted_to_client",
-  "client_revision",
-  "scheduling",
+  "client_submission",
+  "client_revision_work",
   "delivered",
-  "published",
+  "invoiced",
+  "paused",
+  "completed",
   "canceled",
 ])
+
+/** エクスポート JSON に残る旧値 → 新 status */
+const LEGACY_CONTENT_STATUS_IMPORT_MAP: Record<string, string> = {
+  materials_checked: "internal_production",
+  editing: "internal_production",
+  internal_revision: "internal_revision",
+  editing_revision: "internal_revision",
+  submitted_to_client: "client_submission",
+  client_revision: "client_revision_work",
+  scheduling: "client_submission",
+  published: "delivered",
+  billable: "not_started",
+  operating: "internal_production",
+  approved: "delivered",
+  launched: "delivered",
+}
+
+function normalizeImportedContentStatus(raw: unknown): string {
+  if (typeof raw !== "string" || !raw.trim()) return "not_started"
+  const v = raw.trim()
+  if (INSERTABLE_CONTENT_STATUSES.has(v)) return v
+  if (v === "cancelled") return "canceled"
+  return LEGACY_CONTENT_STATUS_IMPORT_MAP[v] ?? "not_started"
+}
 
 function addDays(iso: string, days: number): string {
   const date = new Date(iso)
@@ -254,7 +278,7 @@ export async function POST(req: NextRequest) {
       const dedupKey = `${mappedClientId ?? ""}\t${title}\t${dueClientAt}`
       if (contentDedup.has(dedupKey)) continue
       const contentId = randomUUID()
-      const status = typeof row.status === "string" && VALID_CONTENT_STATUSES.has(row.status) ? row.status : "not_started"
+      const status = normalizeImportedContentStatus(row.status)
       const { error } = await admin.from("contents").insert({
         id: contentId,
         org_id: orgId,

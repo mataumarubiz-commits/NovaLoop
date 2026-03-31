@@ -20,6 +20,7 @@ import { titleToSlug } from "@/lib/slug"
 import { supabase } from "@/lib/supabase"
 import TemplateInstallDialog from "@/components/pages/TemplateInstallDialog"
 import { useAuthOrg } from "@/hooks/useAuthOrg"
+import { hasOrgPermission } from "@/lib/orgRolePermissions"
 
 const DEBOUNCE_MS = 1000
 const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"]
@@ -475,7 +476,7 @@ export default function PageEditPage() {
   const params = useParams()
   const router = useRouter()
   const id = typeof params?.id === "string" ? params.id : null
-  const { activeOrgId, role, loading: authLoading, needsOnboarding } = useAuthOrg({ redirectToOnboarding: true })
+  const { activeOrgId, role, permissions, loading: authLoading, needsOnboarding } = useAuthOrg({ redirectToOnboarding: true })
 
   const [page, setPage] = useState<PageRow | null>(null)
   const [titleInput, setTitleInput] = useState("")
@@ -536,7 +537,7 @@ export default function PageEditPage() {
   const aiToolsRef = useRef<HTMLDivElement>(null)
   const hydratedPageIdRef = useRef<string | null>(null)
 
-  const canEdit = role === "owner" || role === "executive_assistant"
+  const canEdit = hasOrgPermission(role, permissions, "pages_write")
   const filteredComments = useMemo(() => {
     const q = panelSearch.trim().toLowerCase()
     if (!q) return comments

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    {
+      "path": "/api/notifications/digest",
+      "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/invoice-requests/reminders",
+      "schedule": "10 0 * * *"
+    },
+    {
+      "path": "/api/exports/process",
+      "schedule": "20 0 * * *"
+    }
+  ]
+}

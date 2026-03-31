@@ -1,15 +1,12 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
-import { getUserIdFromToken, getOrgRole, isOrgAdmin } from "@/lib/apiAuth"
+import { requireOrgPermission } from "@/lib/adminApi"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
 export async function POST(req: NextRequest) {
   try {
-    const userId = await getUserIdFromToken(req)
-    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-
     const body = await req.json().catch(() => ({}))
     const inviteId = typeof body?.inviteId === "string" ? body.inviteId.trim() : null
     if (!inviteId) return NextResponse.json({ error: "inviteId is required" }, { status: 400 })
@@ -24,10 +21,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invite not found or already used" }, { status: 400 })
     }
 
-    const callerRole = await getOrgRole(admin, userId, (inv as { org_id: string }).org_id)
-    if (!isOrgAdmin(callerRole)) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-    }
+    const orgId = (inv as { org_id: string }).org_id
+    const auth = await requireOrgPermission(req, "members_manage", orgId)
+    if (!auth.ok) return auth.response
 
     const expiresAt = new Date()
     expiresAt.setDate(expiresAt.getDate() + 7)

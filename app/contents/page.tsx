@@ -6,13 +6,17 @@ import { useSearchParams } from "next/navigation"
 import { supabase } from "../../lib/supabase"
 import { useAuthOrg } from "@/hooks/useAuthOrg"
 import ChecklistReturnButton from "@/components/home/ChecklistReturnButton"
+import { CONTENT_STATUS_LABELS, CONTENT_WORKFLOW_STATUS_OPTIONS } from "@/lib/projectStatus"
 import type { ApplyAiResultDetail } from "@/lib/aiClientEvents"
 import {
   buildContentHealthScore,
   isContentClientOverdue,
   isContentEditorOverdue,
+  normalizeContentDueYmd,
   normalizeContentLinks,
   validateContentRules,
+  getContentBillingMonthYm,
+  isContentWithoutProject,
   type ContentLinks,
 } from "@/lib/contentWorkflow"
 import {
@@ -455,12 +459,17 @@ const prepareContentWritePayload = (
   supportsWorkItemFields: boolean | null
 ) => {
   const sanitize = (item: Record<string, unknown>) => {
-    let next = item
+    let next = { ...item }
     if (supportsLinksJson === false) next = withoutLinksJson(next)
-    if (supportsWorkItemFields === false) next = withoutWorkItemFields(next)
+    if (supportsWorkItemFields === false) {
+      next = withoutWorkItemFields(next)
+    } else {
+      // Generated column should be handled by DB only
+      delete next.amount
+    }
     return next
   }
-  return Array.isArray(payload) ? payload.map((item) => sanitize(item)) : sanitize(payload)
+  return Array.isArray(payload) ? payload.map((it) => sanitize(it)) : sanitize(payload)
 }
 
 export default function ContentsPage() {
@@ -700,9 +709,17 @@ export default function ContentsPage() {
     return result
   }
 
+  const querySuppressesFocusMonth = Boolean(projectIdQuery || highlightId || dueQuery || filterQuery)
+  const effectiveFocusMonth = querySuppressesFocusMonth ? "" : focusMonth
+
   const filteredRows = useMemo(() => {
     let list = rows
-    if (focusMonth) list = list.filter((r) => r.deliveryMonth === focusMonth)
+    if (effectiveFocusMonth) {
+      list = list.filter((r) => getContentBillingMonthYm(r.deliveryMonth, r.dueClientAt) === effectiveFocusMonth)
+    }
+    if (filterQuery === "unlinked") {
+      list = list.filter((r) => isContentWithoutProject(r.projectId))
+    }
     if (filterDue === "today") list = list.filter((r) => r.dueClientAt === todayYmd)
     else if (filterDue === "tomorrow") list = list.filter((r) => r.dueClientAt === tomorrowYmd)
     else if (filterDue === "week") list = list.filter((r) => r.dueClientAt >= weekStartYmd && r.dueClientAt <= weekEndYmd)
@@ -734,7 +751,8 @@ export default function ContentsPage() {
     })
   }, [
     rows,
-    focusMonth,
+    effectiveFocusMonth,
+    filterQuery,
     filterDue,
     filterClientId,
     filterProjectId,
@@ -1023,14 +1041,14 @@ export default function ContentsPage() {
       unitType: row.unit_type ?? null,
       quantity,
       amount: Number(row.amount ?? quantity * unitPrice),
-      dueClientAt: row.due_client_at,
-      dueEditorAt: row.due_editor_at,
-      publishAt: row.publish_at ?? null,
+      dueClientAt: normalizeContentDueYmd(row.due_client_at),
+      dueEditorAt: normalizeContentDueYmd(row.due_editor_at),
+      publishAt: normalizeContentDueYmd(row.publish_at),
       unitPrice,
       thumbnailDone: row.thumbnail_done,
       billable: row.billable_flag,
-      deliveryMonth: row.delivery_month,
-      status: row.status,
+      deliveryMonth: normalizeContentDueYmd(row.delivery_month),
+      status: String(row.status ?? "").trim(),
       invoiceId: row.invoice_id ?? null,
       editorSubmittedAt: row.editor_submitted_at ?? null,
       clientSubmittedAt: row.client_submitted_at ?? null,
@@ -1411,7 +1429,7 @@ export default function ContentsPage() {
 
   const handleStatusChange = async (row: Row, newStatus: string) => {
     if (!canEdit) return
-    await updateContentStatus(row, newStatus)
+    await updateContentStatus(row, newStatus.trim())
   }
 
   const handleSetCanceled = async (row: Row) => {
@@ -2023,6 +2041,48 @@ export default function ContentsPage() {
           pointerEvents: "auto",
         }}
       >
+        {uiError && (
+          <div
+            style={{
+              marginBottom: 20,
+              padding: "12px 16px",
+              borderRadius: 12,
+              border: "1px solid #fecaca",
+              background: "#fff1f2",
+              color: "#b91c1c",
+              fontSize: 14,
+              fontWeight: 600,
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              boxShadow: "0 2px 8px rgba(220, 38, 38, 0.08)",
+            }}
+          >
+            <span style={{ fontSize: 18 }}>⚠️</span>
+            {uiError}
+          </div>
+        )}
+        {uiSuccess && (
+          <div
+            style={{
+              marginBottom: 20,
+              padding: "12px 16px",
+              borderRadius: 12,
+              border: "1px solid #bbf7d0",
+              background: "#f0fdf4",
+              color: "#166534",
+              fontSize: 14,
+              fontWeight: 600,
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              boxShadow: "0 2px 8px rgba(22, 101, 52, 0.08)",
+            }}
+          >
+            <span style={{ fontSize: 18 }}>✅</span>
+            {uiSuccess}
+          </div>
+        )}
         <div style={{ marginBottom: 16 }}>
           <ChecklistReturnButton />
         </div>
@@ -3833,16 +3893,14 @@ export default function ContentsPage() {
                         }}
                       >
                         {row.status &&
-                        !(row.status in statusLabels) ? (
-                          <option value={row.status}>{getGuidedStatusLabel(row.status)}</option>
+                        !CONTENT_WORKFLOW_STATUS_OPTIONS.some((o) => o.value === row.status) ? (
+                          <option value={row.status}>{getGuidedStatusLabel(row.status) ?? row.status}</option>
                         ) : null}
-                        {Object.entries(statusLabels)
-                          .filter(([k]) => k !== "cancelled")
-                          .map(([value, label]) => (
-                            <option key={value} value={value}>
-                              {label}
-                            </option>
-                          ))}
+                        {CONTENT_WORKFLOW_STATUS_OPTIONS.map(({ value, label }) => (
+                          <option key={value} value={value}>
+                            {label}
+                          </option>
+                        ))}
                       </select>
                     </td>
                     <td style={{ ...tdStyle, textAlign: "center" }}>

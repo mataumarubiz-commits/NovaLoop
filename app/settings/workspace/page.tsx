@@ -6,6 +6,7 @@ import Link from "next/link"
 import ChecklistReturnButton from "@/components/home/ChecklistReturnButton"
 import { supabase } from "@/lib/supabase"
 import { useAuthOrg } from "@/hooks/useAuthOrg"
+import type { ExternalChannel } from "@/lib/orgIntegrationSettings"
 
 type OrgSettings = {
   business_entity_type: "corporate" | "sole_proprietor"
@@ -16,10 +17,32 @@ type OrgSettings = {
   issuer_email: string | null
   issuer_registration_number: string | null
   invoice_note_fixed: string | null
-  payout_csv_format: "zengin_simple" | "custom_basic"
+  payout_csv_format: "zengin_simple" | "custom_basic" | "freee_vendor" | "zengin_standard"
   payout_csv_depositor_code: string | null
   payout_csv_company_name_kana: string | null
   payout_csv_notes: string | null
+}
+
+type OpsSettings = {
+  hasChatworkToken: boolean
+  chatworkApiToken: string
+  clearChatworkToken: boolean
+  chatworkDefaultRoomId: string
+  hasSlackWebhook: boolean
+  slackWebhookUrl: string
+  clearSlackWebhook: boolean
+  hasDiscordWebhook: boolean
+  discordWebhookUrl: string
+  clearDiscordWebhook: boolean
+  hasLarkWebhook: boolean
+  larkWebhookUrl: string
+  clearLarkWebhook: boolean
+  autoDigestEnabled: boolean
+  autoInvoiceRemindersEnabled: boolean
+  autoBackupEnabled: boolean
+  digestChannels: ExternalChannel[]
+  reminderChannels: ExternalChannel[]
+  backupChannels: ExternalChannel[]
 }
 
 type BankAccount = {
@@ -55,6 +78,35 @@ const emptySettings: OrgSettings = {
   payout_csv_depositor_code: "",
   payout_csv_company_name_kana: "",
   payout_csv_notes: "",
+}
+
+const CHANNEL_OPTIONS: Array<{ key: ExternalChannel; label: string }> = [
+  { key: "chatwork", label: "Chatwork" },
+  { key: "slack", label: "Slack" },
+  { key: "discord", label: "Discord" },
+  { key: "lark", label: "Lark" },
+]
+
+const emptyOpsSettings: OpsSettings = {
+  hasChatworkToken: false,
+  chatworkApiToken: "",
+  clearChatworkToken: false,
+  chatworkDefaultRoomId: "",
+  hasSlackWebhook: false,
+  slackWebhookUrl: "",
+  clearSlackWebhook: false,
+  hasDiscordWebhook: false,
+  discordWebhookUrl: "",
+  clearDiscordWebhook: false,
+  hasLarkWebhook: false,
+  larkWebhookUrl: "",
+  clearLarkWebhook: false,
+  autoDigestEnabled: false,
+  autoInvoiceRemindersEnabled: false,
+  autoBackupEnabled: false,
+  digestChannels: [],
+  reminderChannels: [],
+  backupChannels: [],
 }
 
 const emptyBank = {
@@ -93,6 +145,7 @@ export default function WorkspaceSettingsPage() {
   const [settings, setSettings] = useState<OrgSettings>(emptySettings)
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([])
   const [referralCodes, setReferralCodes] = useState<ReferralCode[]>([])
+  const [opsSettings, setOpsSettings] = useState<OpsSettings>(emptyOpsSettings)
   const [bankForm, setBankForm] = useState(emptyBank)
   const [referralEmail, setReferralEmail] = useState("")
   const [referralNote, setReferralNote] = useState("")
@@ -116,8 +169,9 @@ export default function WorkspaceSettingsPage() {
         return
       }
 
-      const [settingsRes, bankRes, referralRes] = await Promise.all([
+      const [settingsRes, opsRes, bankRes, referralRes] = await Promise.all([
         fetch("/api/org-settings", { headers: { Authorization: `Bearer ${token}` } }).then((res) => res.json().catch(() => null)),
+        fetch("/api/org-ops-settings", { headers: { Authorization: `Bearer ${token}` } }).then((res) => res.json().catch(() => null)),
         fetch("/api/org-bank-accounts", { headers: { Authorization: `Bearer ${token}` } }).then((res) => res.json().catch(() => null)),
         fetch("/api/referral-codes", { headers: { Authorization: `Bearer ${token}` } }).then((res) => res.json().catch(() => null)),
       ])
@@ -129,6 +183,24 @@ export default function WorkspaceSettingsPage() {
       }
       if (settingsRes?.settings) {
         setSettings({ ...emptySettings, ...settingsRes.settings })
+      }
+      if (opsRes?.settings) {
+        setOpsSettings((prev) => ({
+          ...emptyOpsSettings,
+          ...opsRes.settings,
+          chatworkApiToken: "",
+          clearChatworkToken: false,
+          slackWebhookUrl: "",
+          clearSlackWebhook: false,
+          discordWebhookUrl: "",
+          clearDiscordWebhook: false,
+          larkWebhookUrl: "",
+          clearLarkWebhook: false,
+          chatworkDefaultRoomId: opsRes.settings.chatworkDefaultRoomId ?? "",
+          digestChannels: Array.isArray(opsRes.settings.digestChannels) ? opsRes.settings.digestChannels : prev.digestChannels,
+          reminderChannels: Array.isArray(opsRes.settings.reminderChannels) ? opsRes.settings.reminderChannels : prev.reminderChannels,
+          backupChannels: Array.isArray(opsRes.settings.backupChannels) ? opsRes.settings.backupChannels : prev.backupChannels,
+        }))
       }
       setBankAccounts((bankRes?.bankAccounts ?? []) as BankAccount[])
       setReferralCodes((referralRes?.referralCodes ?? []) as ReferralCode[])
@@ -175,6 +247,78 @@ export default function WorkspaceSettingsPage() {
 
       await refresh()
       setMessage({ type: "success", text: "ワークスペース情報を更新しました。" })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const toggleChannels = (key: "digestChannels" | "reminderChannels" | "backupChannels", channel: ExternalChannel) => {
+    setOpsSettings((prev) => ({
+      ...prev,
+      [key]: prev[key].includes(channel)
+        ? prev[key].filter((item) => item !== channel)
+        : [...prev[key], channel],
+    }))
+  }
+
+  const saveOpsSettings = async () => {
+    if (!activeOrgId || !canEdit) return
+
+    setSaving(true)
+    setMessage(null)
+    try {
+      const token = await getAccessToken()
+      if (!token) {
+        setMessage({ type: "error", text: "認証に失敗しました。ログインし直してください。" })
+        return
+      }
+
+      const res = await fetch("/api/org-ops-settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          chatworkApiToken: opsSettings.clearChatworkToken ? "" : opsSettings.chatworkApiToken || "__KEEP__",
+          chatworkDefaultRoomId: opsSettings.chatworkDefaultRoomId,
+          slackWebhookUrl: opsSettings.clearSlackWebhook ? "" : opsSettings.slackWebhookUrl || "__KEEP__",
+          discordWebhookUrl: opsSettings.clearDiscordWebhook ? "" : opsSettings.discordWebhookUrl || "__KEEP__",
+          larkWebhookUrl: opsSettings.clearLarkWebhook ? "" : opsSettings.larkWebhookUrl || "__KEEP__",
+          autoDigestEnabled: opsSettings.autoDigestEnabled,
+          autoInvoiceRemindersEnabled: opsSettings.autoInvoiceRemindersEnabled,
+          autoBackupEnabled: opsSettings.autoBackupEnabled,
+          digestChannels: opsSettings.digestChannels,
+          reminderChannels: opsSettings.reminderChannels,
+          backupChannels: opsSettings.backupChannels,
+        }),
+      })
+      const json = await res.json().catch(() => null)
+      if (!res.ok || !json?.ok) {
+        setMessage({ type: "error", text: json?.message ?? "通知設定の更新に失敗しました。" })
+        return
+      }
+
+      setOpsSettings((prev) => ({
+        ...prev,
+        hasChatworkToken: Boolean(json.settings?.hasChatworkToken),
+        chatworkApiToken: "",
+        clearChatworkToken: false,
+        chatworkDefaultRoomId: json.settings?.chatworkDefaultRoomId ?? prev.chatworkDefaultRoomId,
+        hasSlackWebhook: Boolean(json.settings?.hasSlackWebhook),
+        slackWebhookUrl: "",
+        clearSlackWebhook: false,
+        hasDiscordWebhook: Boolean(json.settings?.hasDiscordWebhook),
+        discordWebhookUrl: "",
+        clearDiscordWebhook: false,
+        hasLarkWebhook: Boolean(json.settings?.hasLarkWebhook),
+        larkWebhookUrl: "",
+        clearLarkWebhook: false,
+        autoDigestEnabled: json.settings?.autoDigestEnabled === true,
+        autoInvoiceRemindersEnabled: json.settings?.autoInvoiceRemindersEnabled === true,
+        autoBackupEnabled: json.settings?.autoBackupEnabled === true,
+        digestChannels: Array.isArray(json.settings?.digestChannels) ? json.settings.digestChannels : prev.digestChannels,
+        reminderChannels: Array.isArray(json.settings?.reminderChannels) ? json.settings.reminderChannels : prev.reminderChannels,
+        backupChannels: Array.isArray(json.settings?.backupChannels) ? json.settings.backupChannels : prev.backupChannels,
+      }))
+      setMessage({ type: "success", text: "通知連携と自動実行設定を更新しました。" })
     } finally {
       setSaving(false)
     }
@@ -428,10 +572,17 @@ export default function WorkspaceSettingsPage() {
               <span>出力形式</span>
               <select
                 value={settings.payout_csv_format ?? "zengin_simple"}
-                onChange={(e) => setSettings((prev) => ({ ...prev, payout_csv_format: e.target.value as "zengin_simple" | "custom_basic" }))}
+                onChange={(e) =>
+                  setSettings((prev) => ({
+                    ...prev,
+                    payout_csv_format: e.target.value as OrgSettings["payout_csv_format"],
+                  }))
+                }
                 style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--input-bg)" }}
               >
                 <option value="zengin_simple">全銀CSV（簡易）</option>
+                <option value="zengin_standard">全銀CSV（標準）</option>
+                <option value="freee_vendor">freee支払CSV</option>
                 <option value="custom_basic">汎用CSV</option>
               </select>
             </label>
@@ -463,6 +614,202 @@ export default function WorkspaceSettingsPage() {
           </div>
           <div style={{ marginTop: 12, color: "var(--muted)", fontSize: 13 }}>
             文字コードは UTF-8 BOM / CRLF です。実際の列プレビューと出力履歴は Payouts で確認してください。
+          </div>
+        </section>
+
+        <section style={cardStyle}>
+          <h2 style={{ marginTop: 0, fontSize: 18 }}>通知連携と自動実行</h2>
+          <p style={{ marginTop: 0, color: "var(--muted)" }}>
+            既存画面からの手動送信と、日次ダイジェスト / 請求リマインド / バックアップ自動実行をここでまとめて管理します。
+          </p>
+
+          <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span>Chatwork API token</span>
+              <input
+                type="password"
+                value={opsSettings.chatworkApiToken}
+                onChange={(event) =>
+                  setOpsSettings((prev) => ({
+                    ...prev,
+                    chatworkApiToken: event.target.value,
+                    clearChatworkToken: false,
+                  }))
+                }
+                placeholder={opsSettings.hasChatworkToken ? "保存済み。変更する場合のみ入力" : "token を入力"}
+                style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--input-bg)" }}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span>Chatwork 既定ルーム</span>
+              <input
+                value={opsSettings.chatworkDefaultRoomId}
+                onChange={(event) => setOpsSettings((prev) => ({ ...prev, chatworkDefaultRoomId: event.target.value }))}
+                placeholder="自動通知用の room id"
+                style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--input-bg)" }}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span>Slack webhook</span>
+              <input
+                value={opsSettings.slackWebhookUrl}
+                onChange={(event) =>
+                  setOpsSettings((prev) => ({
+                    ...prev,
+                    slackWebhookUrl: event.target.value,
+                    clearSlackWebhook: false,
+                  }))
+                }
+                placeholder={opsSettings.hasSlackWebhook ? "保存済み。変更する場合のみ入力" : "https://hooks.slack.com/..."}
+                style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--input-bg)" }}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span>Discord webhook</span>
+              <input
+                value={opsSettings.discordWebhookUrl}
+                onChange={(event) =>
+                  setOpsSettings((prev) => ({
+                    ...prev,
+                    discordWebhookUrl: event.target.value,
+                    clearDiscordWebhook: false,
+                  }))
+                }
+                placeholder={opsSettings.hasDiscordWebhook ? "保存済み。変更する場合のみ入力" : "https://discord.com/api/webhooks/..."}
+                style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--input-bg)" }}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 6, gridColumn: "1 / -1" }}>
+              <span>Lark webhook</span>
+              <input
+                value={opsSettings.larkWebhookUrl}
+                onChange={(event) =>
+                  setOpsSettings((prev) => ({
+                    ...prev,
+                    larkWebhookUrl: event.target.value,
+                    clearLarkWebhook: false,
+                  }))
+                }
+                placeholder={opsSettings.hasLarkWebhook ? "保存済み。変更する場合のみ入力" : "https://open.larksuite.com/open-apis/bot/v2/hook/..."}
+                style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--input-bg)" }}
+              />
+            </label>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12, color: "var(--muted)", fontSize: 12 }}>
+            <button type="button" onClick={() => setOpsSettings((prev) => ({ ...prev, clearChatworkToken: true, chatworkApiToken: "" }))} style={{ padding: "6px 10px", borderRadius: 999, border: "1px solid var(--border)", background: "var(--surface-2)" }}>
+              Chatwork token を削除
+            </button>
+            <button type="button" onClick={() => setOpsSettings((prev) => ({ ...prev, clearSlackWebhook: true, slackWebhookUrl: "" }))} style={{ padding: "6px 10px", borderRadius: 999, border: "1px solid var(--border)", background: "var(--surface-2)" }}>
+              Slack webhook を削除
+            </button>
+            <button type="button" onClick={() => setOpsSettings((prev) => ({ ...prev, clearDiscordWebhook: true, discordWebhookUrl: "" }))} style={{ padding: "6px 10px", borderRadius: 999, border: "1px solid var(--border)", background: "var(--surface-2)" }}>
+              Discord webhook を削除
+            </button>
+            <button type="button" onClick={() => setOpsSettings((prev) => ({ ...prev, clearLarkWebhook: true, larkWebhookUrl: "" }))} style={{ padding: "6px 10px", borderRadius: 999, border: "1px solid var(--border)", background: "var(--surface-2)" }}>
+              Lark webhook を削除
+            </button>
+          </div>
+
+          <div style={{ display: "grid", gap: 12, marginTop: 16 }}>
+            <div style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 14, background: "var(--surface-2)" }}>
+              <label style={{ display: "flex", gap: 8, alignItems: "center", fontWeight: 700 }}>
+                <input
+                  type="checkbox"
+                  checked={opsSettings.autoDigestEnabled}
+                  onChange={(event) => setOpsSettings((prev) => ({ ...prev, autoDigestEnabled: event.target.checked }))}
+                />
+                <span>日次ダイジェストを自動送信</span>
+              </label>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                {CHANNEL_OPTIONS.map((option) => (
+                  <label key={option.key} style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 13 }}>
+                    <input
+                      type="checkbox"
+                      checked={opsSettings.digestChannels.includes(option.key)}
+                      onChange={() => toggleChannels("digestChannels", option.key)}
+                    />
+                    <span>{option.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 14, background: "var(--surface-2)" }}>
+              <label style={{ display: "flex", gap: 8, alignItems: "center", fontWeight: 700 }}>
+                <input
+                  type="checkbox"
+                  checked={opsSettings.autoInvoiceRemindersEnabled}
+                  onChange={(event) => setOpsSettings((prev) => ({ ...prev, autoInvoiceRemindersEnabled: event.target.checked }))}
+                />
+                <span>請求 / 外注リマインドを自動送信</span>
+              </label>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                {CHANNEL_OPTIONS.map((option) => (
+                  <label key={option.key} style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 13 }}>
+                    <input
+                      type="checkbox"
+                      checked={opsSettings.reminderChannels.includes(option.key)}
+                      onChange={() => toggleChannels("reminderChannels", option.key)}
+                    />
+                    <span>{option.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 14, background: "var(--surface-2)" }}>
+              <label style={{ display: "flex", gap: 8, alignItems: "center", fontWeight: 700 }}>
+                <input
+                  type="checkbox"
+                  checked={opsSettings.autoBackupEnabled}
+                  onChange={(event) => setOpsSettings((prev) => ({ ...prev, autoBackupEnabled: event.target.checked }))}
+                />
+                <span>バックアップを毎日自動作成</span>
+              </label>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                {CHANNEL_OPTIONS.map((option) => (
+                  <label key={option.key} style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 13 }}>
+                    <input
+                      type="checkbox"
+                      checked={opsSettings.backupChannels.includes(option.key)}
+                      onChange={() => toggleChannels("backupChannels", option.key)}
+                    />
+                    <span>{option.label}</span>
+                  </label>
+                ))}
+              </div>
+              <div style={{ marginTop: 10, fontSize: 12, color: "var(--muted)" }}>
+                バックアップ作成と復元は
+                <Link href="/settings/export" style={{ margin: "0 4px", color: "var(--primary)", textDecoration: "none", fontWeight: 600 }}>
+                  /settings/export
+                </Link>
+                と
+                <Link href="/settings/import" style={{ marginLeft: 4, color: "var(--primary)", textDecoration: "none", fontWeight: 600 }}>
+                  /settings/import
+                </Link>
+                から確認できます。
+              </div>
+            </div>
+          </div>
+
+          <div style={{ marginTop: 16, display: "flex", justifyContent: "flex-end" }}>
+            <button
+              type="button"
+              onClick={saveOpsSettings}
+              disabled={!canEdit || saving}
+              style={{
+                padding: "10px 18px",
+                borderRadius: 10,
+                border: "none",
+                background: "var(--button-primary-bg)",
+                color: "var(--primary-contrast)",
+                fontWeight: 600,
+                cursor: saving ? "not-allowed" : "pointer",
+              }}
+            >
+              {saving ? "保存中..." : "通知設定を保存"}
+            </button>
           </div>
         </section>
 

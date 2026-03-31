@@ -1,53 +1,85 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
-import { getUserIdFromToken, getOrgRole, isOrgAdmin } from "@/lib/apiAuth"
+import { requireOrgPermission } from "@/lib/adminApi"
 import { writeAuditLog } from "@/lib/auditLog"
 import { updateJoinRequestDecision } from "@/lib/joinRequests"
-import { type AppOrgRole, upsertOrgMembership } from "@/lib/orgRoles"
+import { resolveOrgRoleById, resolveOrgRoleByKey, upsertOrgMembership } from "@/lib/orgRoles"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
-const ALLOWED_ROLES = ["executive_assistant", "member"] as const satisfies readonly AppOrgRole[]
-
 export async function POST(req: NextRequest) {
   try {
-    const approverId = await getUserIdFromToken(req)
-    if (!approverId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-
     const body = await req.json().catch(() => ({}))
     const requestId = typeof body?.requestId === "string" ? body.requestId.trim() : null
-    const roleKey: AppOrgRole =
-      typeof body?.roleKey === "string" && (ALLOWED_ROLES as readonly string[]).includes(body.roleKey)
-        ? (body.roleKey as AppOrgRole)
-        : "member"
+    const requestedRoleId = typeof body?.roleId === "string" ? body.roleId.trim() : null
     if (!requestId) return NextResponse.json({ error: "requestId is required" }, { status: 400 })
 
     const admin = createSupabaseAdmin()
-    const { data: jr, error: fetchErr } = await admin
+    let jr: unknown = null
+    let fetchErr: { code?: string; message?: string } | null = null
+
+    const primary = await admin
       .from("join_requests")
-      .select("id, org_id, owner_user_id, requester_user_id, status, requested_display_name")
+      .select("id, org_id, owner_user_id, requester_user_id, status, requested_display_name, requested_role, requested_role_id")
       .eq("id", requestId)
       .maybeSingle()
 
-    const row = jr as { org_id?: string; owner_user_id?: string; requester_user_id?: string; status?: string; requested_display_name?: string | null } | null
+    if (primary.error?.code === "42703") {
+      const fallback = await admin
+        .from("join_requests")
+        .select("id, org_id, owner_user_id, requester_user_id, status, requested_display_name, requested_role")
+        .eq("id", requestId)
+        .maybeSingle()
+      jr = fallback.data
+      fetchErr = fallback.error as { code?: string; message?: string } | null
+    } else {
+      jr = primary.data
+      fetchErr = primary.error as { code?: string; message?: string } | null
+    }
+
+    const row = jr as {
+      org_id?: string
+      owner_user_id?: string
+      requester_user_id?: string
+      status?: string
+      requested_display_name?: string | null
+      requested_role?: string | null
+      requested_role_id?: string | null
+    } | null
+
     if (fetchErr || !row || row.status !== "pending") {
       return NextResponse.json({ error: "Request not found or already decided" }, { status: 400 })
     }
 
     const orgId = row.org_id as string
-    const callerRole = await getOrgRole(admin, approverId, orgId)
-    if (!isOrgAdmin(callerRole)) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-    }
+    const auth = await requireOrgPermission(req, "members_manage", orgId)
+    if (!auth.ok) return auth.response
+    const approverId = auth.userId
 
     const requesterUserId = row.requester_user_id as string
     const displayName = row.requested_display_name?.trim() || null
+    const fallbackRoleKey = row.requested_role?.trim() || "member"
+
+    let resolvedRole = requestedRoleId ? await resolveOrgRoleById(admin, orgId, requestedRoleId) : null
+    if (!resolvedRole && row.requested_role_id) {
+      resolvedRole = await resolveOrgRoleById(admin, orgId, row.requested_role_id)
+    }
+    if (!resolvedRole) {
+      resolvedRole = await resolveOrgRoleByKey(admin, orgId, fallbackRoleKey)
+    }
+    if (!resolvedRole) {
+      resolvedRole = await resolveOrgRoleByKey(admin, orgId, "member")
+    }
+    if (!resolvedRole || resolvedRole.key === "owner") {
+      return NextResponse.json({ error: "Role not found" }, { status: 400 })
+    }
 
     const membershipWrite = await upsertOrgMembership(admin, {
       userId: requesterUserId,
       orgId,
-      role: roleKey,
+      role: resolvedRole.appRole,
+      roleId: resolvedRole.id,
       status: "active",
       displayName,
     })
@@ -89,7 +121,13 @@ export async function POST(req: NextRequest) {
       org_id: orgId,
       recipient_user_id: requesterUserId,
       type: "membership.approved",
-      payload: { org_id: orgId, org_name: orgName, role: roleKey },
+      payload: {
+        org_id: orgId,
+        org_name: orgName,
+        role: resolvedRole.appRole,
+        role_id: resolvedRole.id,
+        role_key: resolvedRole.key,
+      },
     })
     if (notificationErr) {
       console.error("[api/org/requests/approve] failed to notify requester", notificationErr)
@@ -125,7 +163,9 @@ export async function POST(req: NextRequest) {
       resource_id: requestId,
       meta: {
         requester_user_id: requesterUserId,
-        role: roleKey,
+        role: resolvedRole.appRole,
+        role_id: resolvedRole.id,
+        role_key: resolvedRole.key,
         stored_role: membershipWrite.storedRole,
       },
     })

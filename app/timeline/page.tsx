@@ -58,6 +58,20 @@ export default function TimelinePage() {
   const taskById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks])
   const filteredTasks = useMemo(() => tasks.filter((t) => !projectFilter || t.project_id === projectFilter).filter((t) => !statusFilter || t.status === statusFilter).filter((t) => !typeFilter || t.task_type === typeFilter).filter((t) => !assigneeFilter || t.assignee_user_id === assigneeFilter).filter((t) => !onlyUnassigned || !t.assignee_user_id).filter((t) => !onlyOverdue || isTaskOverdue(t, todayYmd)).filter((t) => { const w = taskWindow(t.planned_start_date, t.planned_end_date); return !w || overlapsRange(w, range) }).sort((a, b) => (a.planned_start_date || a.planned_end_date || a.created_at).localeCompare(b.planned_start_date || b.planned_end_date || b.created_at) || a.title.localeCompare(b.title)), [assigneeFilter, onlyOverdue, onlyUnassigned, projectFilter, range, statusFilter, tasks, todayYmd, typeFilter])
   const summary = useMemo(() => filteredTasks.reduce((acc, t) => { acc.total += 1; if (t.status === "done") acc.done += 1; if (t.status === "blocked") acc.blocked += 1; if (!t.planned_start_date && !t.planned_end_date) acc.unscheduled += 1; if (!t.assignee_user_id) acc.unassigned += 1; if (t.dependency_task_id) acc.dependency += 1; if (isTaskOverdue(t, todayYmd)) acc.overdue += 1; acc.workload += Number(t.workload_points || 0); return acc }, { total: 0, done: 0, blocked: 0, overdue: 0, unscheduled: 0, unassigned: 0, dependency: 0, workload: 0 }), [filteredTasks, todayYmd])
+  
+  const workloadByAssignee = useMemo(() => {
+    const map = new Map<string, { userId: string; name: string; workload: number; taskCount: number }>()
+    for (const t of filteredTasks) {
+      if (!t.assignee_user_id) continue
+      const name = memberNameById.get(t.assignee_user_id) || t.assignee_user_id
+      const current = map.get(t.assignee_user_id) || { userId: t.assignee_user_id, name, workload: 0, taskCount: 0 }
+      current.workload += Number(t.workload_points || 0)
+      current.taskCount += 1
+      map.set(t.assignee_user_id, current)
+    }
+    return Array.from(map.values()).sort((a, b) => b.workload - a.workload)
+  }, [filteredTasks, memberNameById])
+
   const projectContents = useMemo(() => contents.filter((c) => c.project_id === form.projectId), [contents, form.projectId])
   const dependencyCandidates = useMemo(() => tasks.filter((t) => t.project_id === form.projectId).sort((a, b) => a.title.localeCompare(b.title)), [form.projectId, tasks])
 
@@ -133,8 +147,32 @@ export default function TimelinePage() {
         </nav>
       }>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
-        <ProjectInfoCard label="表示タスク" value={`${summary.total}件`} /><ProjectInfoCard label="完了" value={`${summary.done}件`} /><ProjectInfoCard label="ブロック" value={`${summary.blocked}件`} /><ProjectInfoCard label="期限超過" value={`${summary.overdue}件`} accent={summary.overdue > 0 ? "var(--error-text)" : undefined} /><ProjectInfoCard label="未設定日程" value={`${summary.unscheduled}件`} /><ProjectInfoCard label="依存あり" value={`${summary.dependency}件`} /><ProjectInfoCard label="工数" value={`${summary.workload}`} /><ProjectInfoCard label="未担当" value={`${summary.unassigned}件`} accent={summary.unassigned > 0 ? "var(--warning-text)" : undefined} />
+        <ProjectInfoCard label="表示タスク" value={`${summary.total}件`} /><ProjectInfoCard label="完了" value={`${summary.done}件`} /><ProjectInfoCard label="ブロック" value={`${summary.blocked}件`} /><ProjectInfoCard label="期限超過" value={`${summary.overdue}件`} accent={summary.overdue > 0 ? "var(--error-text)" : undefined} /><ProjectInfoCard label="未設定日程" value={`${summary.unscheduled}件`} /><ProjectInfoCard label="依存あり" value={`${summary.dependency}件`} /><ProjectInfoCard label="工数合計" value={`${summary.workload}`} /><ProjectInfoCard label="未担当" value={`${summary.unassigned}件`} accent={summary.unassigned > 0 ? "var(--warning-text)" : undefined} />
       </div>
+
+      <ProjectSection title="担当者別の負荷状況" description="表示期間中の担当者ごとの工数とタスク数を可視化します。特定のメンバーに負荷が集中していないか確認してください。">
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12 }}>
+          {workloadByAssignee.map((item) => (
+            <div key={item.userId} style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 16, background: "var(--surface)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                <div style={{ fontWeight: 700, fontSize: 13, color: "var(--text)" }}>{item.name}</div>
+                <div style={{ fontSize: 13, color: "var(--muted)" }}>タスク: {item.taskCount}件</div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <div style={{ flex: 1, background: "var(--surface-2)", height: 8, borderRadius: 999, overflow: "hidden" }}>
+                  <div style={{ background: item.workload > 20 ? "var(--error-text)" : item.workload > 12 ? "var(--warning-text)" : "var(--primary)", height: "100%", width: `${Math.min(100, (item.workload / 30) * 100)}%` }} />
+                </div>
+                <div style={{ fontWeight: 700, fontSize: 15, color: item.workload > 20 ? "var(--error-text)" : "var(--text)", width: 40, textAlign: "right" }}>
+                  {item.workload}
+                </div>
+              </div>
+            </div>
+          ))}
+          {workloadByAssignee.length === 0 && (
+            <div style={{ color: "var(--muted)", fontSize: 13 }}>表示範囲に担当が割り当てられたタスクはありません。</div>
+          )}
+        </div>
+      </ProjectSection>
 
       <ProjectSection title="絞り込み" description={`${range.label}: ${range.start} - ${range.end}`}>
         <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>

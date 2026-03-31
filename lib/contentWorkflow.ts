@@ -1,4 +1,4 @@
-﻿export type ContentLinks = Record<string, string>
+export type ContentLinks = Record<string, string>
 
 export type ContentRuleInput = {
   dueClientAt: string
@@ -18,6 +18,8 @@ export type ContentRuleInput = {
   todayYmd?: string | null
   integrationMissing?: boolean | null
 }
+
+import { CONTENT_WORKFLOW_STATUS_OPTIONS } from "@/lib/projectStatus"
 
 export type ContentWorkflowOption = {
   value: string
@@ -46,69 +48,85 @@ export const FINAL_STATUS_OPTIONS = [
   { value: "delivered", label: "納品済み" },
 ] as const
 
-export const WORKFLOW_STATUS_OPTIONS = [
-  { value: "not_started", label: "未着手" },
-  { value: "materials_checked", label: "進行中" },
-  { value: "editing", label: "編集中" },
-  { value: "internal_revision", label: "内部確認" },
-  { value: "editing_revision", label: "修正対応" },
-  { value: "submitted_to_client", label: "先方提出" },
-  { value: "client_revision", label: "先方修正" },
-  { value: "scheduling", label: "予約投稿" },
-  { value: "delivered", label: "納品完了" },
-  { value: "published", label: "公開済み" },
-  { value: "canceled", label: "キャンセル" },
-] as const
+export const WORKFLOW_STATUS_OPTIONS = CONTENT_WORKFLOW_STATUS_OPTIONS
 
+/** 編集者側の提出シグナル相当（納期判定・旧ステータス互換） */
 const EDITOR_SUBMITTED_STATUSES = new Set([
   "internal_revision",
+  "client_submission",
+  "client_revision_work",
+  "delivered",
+  "invoiced",
+  "completed",
   "editing_revision",
   "submitted_to_client",
   "client_revision",
   "scheduling",
-  "completed",
   "approved",
   "launched",
-  "invoiced",
-  "delivered",
   "published",
 ])
 
+/** 先方提出済み相当（納期判定・旧ステータス互換） */
 const CLIENT_SUBMITTED_STATUSES = new Set([
+  "client_submission",
+  "client_revision_work",
+  "delivered",
+  "invoiced",
+  "completed",
   "submitted_to_client",
   "client_revision",
   "scheduling",
-  "completed",
   "approved",
   "launched",
-  "invoiced",
-  "delivered",
   "published",
 ])
 
 export const CLOSED_WORKFLOW_STATUSES = new Set([
-  "completed",
-  "approved",
-  "launched",
-  "invoiced",
   "delivered",
-  "published",
+  "invoiced",
+  "completed",
   "canceled",
   "cancelled",
+  "archive",
+  "approved",
+  "launched",
+  "published",
 ])
 
+/** 請求ドラフト対象になりうる「納品相当」（請求済みステータスは含めない） */
 export const BILLABLE_DONE_WORKFLOW_STATUSES = new Set([
+  "delivered",
   "completed",
   "approved",
   "launched",
-  "invoiced",
-  "delivered",
   "published",
 ])
 
 const normalizeWorkflowStatusValue = (status: string | null | undefined) => {
   const normalized = typeof status === "string" ? status.trim() : ""
   return normalized === "cancelled" ? "canceled" : normalized
+}
+
+/**
+ * 先方/編集納期の比較用。`date` / `timestamptz` の文字列表現が混在してもブラウザのローカル暦で YYYY-MM-DD に揃える。
+ * （UTC の日付だけ切り出すと JST 利用時に「遅れ」が 1 日ずれることがある）
+ */
+export function normalizeContentDueYmd(value: string | null | undefined): string {
+  if (typeof value !== "string") return ""
+  const s = value.trim()
+  if (!s) return ""
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s
+  const t = Date.parse(s)
+  if (Number.isNaN(t)) {
+    const head = s.slice(0, 10)
+    return /^\d{4}-\d{2}-\d{2}$/.test(head) ? head : ""
+  }
+  const d = new Date(t)
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, "0")
+  const day = String(d.getDate()).padStart(2, "0")
+  return `${y}-${m}-${day}`
 }
 
 export function hasEditorSubmissionSignal(status: string | null | undefined, editorSubmittedAt?: string | null) {
@@ -125,6 +143,28 @@ export function isContentClosedStatus(status: string | null | undefined) {
   return CLOSED_WORKFLOW_STATUSES.has(normalizeWorkflowStatusValue(status))
 }
 
+/** 案件 ID なし（NULL / 空文字）を同一視。RLS や JSON 経由で undefined になる場合もある */
+export function isContentWithoutProject(projectId: string | null | undefined) {
+  return projectId == null || String(projectId).trim() === ""
+}
+
+/**
+ * 請求・対象月チップと一致させる YYYY-MM。
+ * delivery_month は DB 上 YYYY-MM だが、UI では normalizeContentDueYmd 後に YYYY-MM-DD になることがある。
+ */
+export function getContentBillingMonthYm(
+  deliveryMonthOrYmd: string | null | undefined,
+  dueClientAt: string | null | undefined
+): string {
+  const dm = typeof deliveryMonthOrYmd === "string" ? deliveryMonthOrYmd.trim() : ""
+  if (/^\d{4}-\d{2}$/.test(dm)) return dm
+  if (/^\d{4}-\d{2}-\d{2}/.test(dm)) return dm.slice(0, 7)
+  const due = typeof dueClientAt === "string" ? dueClientAt.trim() : ""
+  if (/^\d{4}-\d{2}-\d{2}/.test(due)) return due.slice(0, 7)
+  if (/^\d{4}-\d{2}$/.test(due)) return due
+  return ""
+}
+
 export function isBillableDoneStatus(status: string | null | undefined) {
   return BILLABLE_DONE_WORKFLOW_STATUSES.has(normalizeWorkflowStatusValue(status))
 }
@@ -135,9 +175,10 @@ export function isContentClientOverdue(
   todayYmd: string,
   clientSubmittedAt?: string | null
 ) {
-  if (!dueClientAt) return false
+  const due = normalizeContentDueYmd(dueClientAt)
+  if (!due) return false
   if (hasClientSubmissionSignal(status, clientSubmittedAt)) return false
-  return dueClientAt < todayYmd
+  return due < todayYmd
 }
 
 export function isContentEditorOverdue(
@@ -146,9 +187,10 @@ export function isContentEditorOverdue(
   todayYmd: string,
   editorSubmittedAt?: string | null
 ) {
-  if (!dueEditorAt) return false
+  const due = normalizeContentDueYmd(dueEditorAt)
+  if (!due) return false
   if (hasEditorSubmissionSignal(status, editorSubmittedAt)) return false
-  return dueEditorAt < todayYmd
+  return due < todayYmd
 }
 
 const cloneWorkflowOptions = (options: ReadonlyArray<ContentWorkflowOption>) =>
@@ -238,13 +280,9 @@ export function validateContentRules(input: ContentRuleInput) {
   const revisionCount = Number(input.revisionCount ?? 0)
   const estimatedCost = Number(input.estimatedCost ?? 0)
 
-  if (
-    input.dueClientAt &&
-    input.dueEditorAt &&
-    /^\d{4}-\d{2}-\d{2}$/.test(input.dueClientAt) &&
-    /^\d{4}-\d{2}-\d{2}$/.test(input.dueEditorAt) &&
-    input.dueEditorAt > input.dueClientAt
-  ) {
+  const dueClientNorm = normalizeContentDueYmd(input.dueClientAt)
+  const dueEditorNorm = normalizeContentDueYmd(input.dueEditorAt)
+  if (dueClientNorm && dueEditorNorm && dueEditorNorm > dueClientNorm) {
     errors.push("編集者提出日は先方提出日以前である必要があります。")
   }
 
@@ -270,14 +308,16 @@ export function buildContentHealthScore(input: ContentRuleInput) {
   const estimatedCost = Number(input.estimatedCost ?? 0)
 
   if (Number(input.unitPrice) <= 0) score -= 25
-  if (input.dueEditorAt && input.dueClientAt && input.dueEditorAt > input.dueClientAt) score -= 35
+  const dueCn = normalizeContentDueYmd(input.dueClientAt)
+  const dueEn = normalizeContentDueYmd(input.dueEditorAt)
+  if (dueCn && dueEn && dueEn > dueCn) score -= 35
   if (revisionCount >= 3) score -= 10
   if (Number(input.unitPrice) > 0 && estimatedCost > Number(input.unitPrice)) score -= 20
   if (input.integrationMissing) score -= 10
   if (
     todayYmd &&
-    input.dueClientAt &&
-    input.dueClientAt < todayYmd &&
+    dueCn &&
+    dueCn < todayYmd &&
     !hasClientSubmissionSignal(input.status) &&
     !isContentClosedStatus(input.status)
   ) {

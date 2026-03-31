@@ -100,15 +100,15 @@ function FeaturePreview({ tone }: { tone: FeatureTone }) {
         <rect x="8" y="10" width="224" height="112" rx="20" fill="rgba(255,255,255,0.72)" />
         <rect x="24" y="24" width="192" height="24" rx="12" fill="rgba(255,255,255,0.9)" />
         <rect x="36" y="31" width="10" height="10" rx="2" fill="none" stroke="rgba(90,60,220,0.45)" strokeWidth="2" />
-        <path d="M39 36l3 3 5-6" fill="none" stroke="rgba(90,60,220,0.7)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M38.5 36l2 2 3.5-4" fill="none" stroke="rgba(90,60,220,0.7)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
         <rect x="56" y="32" width="96" height="8" rx="4" fill="rgba(90,60,220,0.2)" />
         <rect x="24" y="56" width="192" height="24" rx="12" fill="rgba(255,255,255,0.9)" />
         <rect x="36" y="63" width="10" height="10" rx="2" fill="none" stroke="rgba(90,60,220,0.45)" strokeWidth="2" />
-        <path d="M39 68l3 3 5-6" fill="none" stroke="rgba(90,60,220,0.7)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M38.5 68l2 2 3.5-4" fill="none" stroke="rgba(90,60,220,0.7)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
         <rect x="56" y="64" width="112" height="8" rx="4" fill="rgba(90,60,220,0.18)" />
         <rect x="24" y="88" width="192" height="24" rx="12" fill="rgba(255,255,255,0.9)" />
         <rect x="36" y="95" width="10" height="10" rx="2" fill="none" stroke="rgba(90,60,220,0.45)" strokeWidth="2" />
-        <path d="M39 100l3 3 5-6" fill="none" stroke="rgba(90,60,220,0.7)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M38.5 100l2 2 3.5-4" fill="none" stroke="rgba(90,60,220,0.7)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
         <rect x="56" y="96" width="84" height="8" rx="4" fill="rgba(90,60,220,0.18)" />
       </svg>
     </div>
@@ -905,8 +905,8 @@ export default function GoogleLoginLanding() {
 
         .hero-grid {
           display: grid;
-          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-          gap: 68px;
+          grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+          gap: 48px;
           align-items: start;
           padding: 76px 0 108px;
           position: relative;
@@ -1015,7 +1015,7 @@ export default function GoogleLoginLanding() {
         .hero-priority-list {
           display: grid;
           gap: 10px;
-          max-width: 36rem;
+          max-width: 44rem;
         }
 
         .hero-priority-group {
@@ -1034,10 +1034,10 @@ export default function GoogleLoginLanding() {
 
         .hero-priority-item {
           display: grid;
-          grid-template-columns: 124px minmax(0, 1fr);
-          gap: 14px;
+          grid-template-columns: auto minmax(0, 1fr);
+          gap: 10px;
           align-items: center;
-          padding: 12px 14px;
+          padding: 10px 12px;
           border-radius: 16px;
           border: 1px solid rgba(139, 92, 246, 0.12);
           background: rgba(255, 255, 255, 0.78);
@@ -1056,11 +1056,11 @@ export default function GoogleLoginLanding() {
         .hero-priority-label {
           display: inline-flex;
           align-items: center;
-          gap: 8px;
+          gap: 6px;
           color: var(--text-main);
-          font-size: 0.8rem;
+          font-size: 0.76rem;
           font-weight: 800;
-          letter-spacing: 0.04em;
+          letter-spacing: 0.03em;
           white-space: nowrap;
         }
 
@@ -1076,7 +1076,7 @@ export default function GoogleLoginLanding() {
         .hero-priority-item p {
           margin: 0;
           color: var(--text-sub);
-          font-size: 0.95rem;
+          font-size: 0.84rem;
           font-weight: 600;
           line-height: 1.55;
         }
@@ -1288,7 +1288,7 @@ export default function GoogleLoginLanding() {
 
         .shot-app {
           display: grid;
-          grid-template-columns: 100px minmax(0, 1fr);
+          grid-template-columns: 132px minmax(0, 1fr);
           gap: 12px;
           align-items: stretch;
           padding: 12px;
@@ -1299,6 +1299,7 @@ export default function GoogleLoginLanding() {
           background: linear-gradient(180deg, #f6f1ff 0%, #efe7ff 100%);
           padding: 12px 10px;
           border: 1px solid #ede9fe;
+          overflow: hidden;
         }
 
         .shot-sidebar-brand {
@@ -1354,10 +1355,10 @@ export default function GoogleLoginLanding() {
           flex-shrink: 0;
           display: inline-flex;
           align-items: center;
-          min-height: 20px;
-          padding: 0 8px;
+          min-height: 18px;
+          padding: 0 6px;
           border-radius: 9999px;
-          font-size: 0.66rem;
+          font-size: 0.58rem;
           font-weight: 700;
         }
 

@@ -101,7 +101,11 @@ export async function PATCH(req: NextRequest) {
         typeof body.issuer_registration_number === "string" ? body.issuer_registration_number.trim() : null,
       invoice_note_fixed: typeof body.invoice_note_fixed === "string" ? body.invoice_note_fixed.trim() : null,
       payout_csv_format:
-        body.payout_csv_format === "custom_basic" ? "custom_basic" : "zengin_simple",
+        body.payout_csv_format === "custom_basic" ||
+        body.payout_csv_format === "freee_vendor" ||
+        body.payout_csv_format === "zengin_standard"
+          ? body.payout_csv_format
+          : "zengin_simple",
       payout_csv_encoding: "utf8_bom",
       payout_csv_delimiter: "comma",
       payout_csv_depositor_code:

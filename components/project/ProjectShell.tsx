@@ -54,13 +54,13 @@ export function ProjectShell({
                 <span>/</span>
                 <span>案件管理レイヤー</span>
               </div>
-              <h1 style={{ margin: 0, fontSize: 28, color: "var(--text)" }}>{title}</h1>
-              <p style={{ margin: "6px 0 0", fontSize: 13, color: "var(--muted)", lineHeight: 1.7 }}>{description}</p>
+              <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: "var(--text)", letterSpacing: "-0.02em" }}>{title}</h1>
+              <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--muted)", lineHeight: 1.5 }}>{description}</p>
             </div>
             {action ?? null}
           </div>
 
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <nav className="nav-scroll-hide" style={{ display: "flex", gap: 0, borderBottom: "1px solid var(--border)", margin: "0 -16px", padding: "0 16px", overflowX: "auto", WebkitOverflowScrolling: "touch" as const }}>
             {ROUTES.map((route) => {
               const active = pathname === route.href || pathname?.startsWith(`${route.href}/`)
               return (
@@ -68,14 +68,14 @@ export function ProjectShell({
                   key={route.href}
                   href={route.href}
                   style={{
-                    padding: "8px 12px",
-                    borderRadius: 999,
-                    border: `1px solid ${active ? "var(--primary)" : "var(--border)"}`,
-                    background: active ? "rgba(99, 102, 241, 0.12)" : "var(--surface-2)",
-                    color: active ? "var(--primary)" : "var(--text)",
+                    padding: "10px 16px",
+                    borderBottom: active ? "2px solid var(--primary)" : "2px solid transparent",
+                    color: active ? "var(--text)" : "var(--muted)",
                     textDecoration: "none",
                     fontSize: 13,
-                    fontWeight: 700,
+                    fontWeight: active ? 700 : 500,
+                    whiteSpace: "nowrap",
+                    transition: "color 0.15s, border-color 0.15s",
                   }}
                 >
                   {route.label}
@@ -85,19 +85,19 @@ export function ProjectShell({
             <Link
               href="/contents"
               style={{
-                padding: "8px 12px",
-                borderRadius: 999,
-                border: "1px solid var(--border)",
-                background: "var(--surface-2)",
-                color: "var(--text)",
+                padding: "10px 16px",
+                marginLeft: "auto",
+                borderBottom: "2px solid transparent",
+                color: "var(--muted)",
                 textDecoration: "none",
                 fontSize: 13,
-                fontWeight: 700,
+                fontWeight: 500,
+                whiteSpace: "nowrap",
               }}
             >
-              制作シートへ
+              制作シートへ &rarr;
             </Link>
-          </div>
+          </nav>
         </header>
 
         {children}

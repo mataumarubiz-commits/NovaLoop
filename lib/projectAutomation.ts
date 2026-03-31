@@ -1,4 +1,4 @@
-﻿import { buildContentHealthScore, normalizeContentLinks } from "@/lib/contentWorkflow"
+import { buildContentHealthScore, normalizeContentLinks } from "@/lib/contentWorkflow"
 
 export type AutomationProject = {
   id: string
@@ -55,21 +55,28 @@ export type AutoChangeRequestDraft = {
   extra_cost_amount: number
 }
 
-const CLOSED_CONTENT_STATUSES = new Set(["delivered", "published", "canceled", "cancelled"])
+const CLOSED_CONTENT_STATUSES = new Set(["delivered", "invoiced", "completed", "published", "canceled", "cancelled"])
 
+/** 進行の前後判定（フェーズ統合後 + 旧ステータス互換） */
 const CLIENT_SUBMITTED_RANK: Record<string, number> = {
   not_started: 0,
+  paused: 1,
+  internal_production: 1,
+  internal_revision: 2,
+  client_submission: 3,
+  client_revision_work: 4,
+  delivered: 5,
+  invoiced: 6,
+  completed: 7,
   materials_checked: 1,
-  editing: 2,
-  internal_revision: 3,
-  editing_revision: 4,
-  submitted_to_client: 5,
-  client_revision: 6,
-  scheduling: 7,
-  delivered: 8,
-  published: 9,
-  canceled: 10,
-  cancelled: 10,
+  editing: 1,
+  editing_revision: 2,
+  submitted_to_client: 3,
+  client_revision: 4,
+  scheduling: 3,
+  published: 5,
+  canceled: 99,
+  cancelled: 99,
 }
 
 function safeNumber(value: unknown) {
@@ -359,7 +366,17 @@ export function buildExpectedExceptions(params: {
   }
 
   if (
-    !["submitted_to_client", "client_revision", "scheduling", "delivered", "published"].includes(content.status) &&
+    ![
+      "client_submission",
+      "client_revision_work",
+      "delivered",
+      "invoiced",
+      "completed",
+      "submitted_to_client",
+      "client_revision",
+      "scheduling",
+      "published",
+    ].includes(content.status) &&
     content.due_client_at < todayYmd
   ) {
     expected.push({
@@ -379,7 +396,12 @@ export function buildExpectedExceptions(params: {
     })
   }
 
-  if (content.billable_flag && (content.status === "delivered" || content.status === "published") && !content.invoice_id && content.delivery_month <= currentMonth) {
+  if (
+    content.billable_flag &&
+    ["delivered", "completed", "published"].includes(content.status) &&
+    !content.invoice_id &&
+    content.delivery_month <= currentMonth
+  ) {
     expected.push({
       exception_type: "invoice_missing",
       severity: "high",
@@ -585,13 +607,14 @@ export function applyProgressSignal(params: {
 
   if (signal === "material_received" || signal === "discord_material_received" || signal === "drive_material_uploaded") {
     content.material_status = "ready"
-    if (content.status === "not_started") content.status = "materials_checked"
+    if (content.status === "not_started") content.status = "internal_production"
     content.next_action = appendDetail(content.next_action, sourceLabel ? `${sourceLabel}: material received` : "material received")
   }
 
   if (signal === "editor_submitted" || signal === "slack_reaction_submitted") {
     content.editor_submitted_at = occurredAt
-    if ((CLIENT_SUBMITTED_RANK[content.status] ?? 0) < CLIENT_SUBMITTED_RANK.internal_revision) {
+    const ir = CLIENT_SUBMITTED_RANK.internal_revision
+    if ((CLIENT_SUBMITTED_RANK[content.status] ?? 0) < ir) {
       content.status = "internal_revision"
     }
     content.next_action = appendDetail(content.next_action, sourceLabel ? `${sourceLabel}: editor submitted` : "editor submitted")
@@ -600,14 +623,15 @@ export function applyProgressSignal(params: {
   if (signal === "client_submitted" || signal === "chatwork_client_submitted") {
     content.client_submitted_at = occurredAt
     if (!content.editor_submitted_at) content.editor_submitted_at = occurredAt
-    if ((CLIENT_SUBMITTED_RANK[content.status] ?? 0) < CLIENT_SUBMITTED_RANK.submitted_to_client) {
-      content.status = "submitted_to_client"
+    const cs = CLIENT_SUBMITTED_RANK.client_submission
+    if ((CLIENT_SUBMITTED_RANK[content.status] ?? 0) < cs) {
+      content.status = "client_submission"
     }
     content.next_action = appendDetail(content.next_action, sourceLabel ? `${sourceLabel}: client submitted` : "client submitted")
   }
 
   if (signal === "published") {
-    content.status = "published"
+    content.status = "delivered"
     content.final_status = "delivered"
     content.next_action = appendDetail(content.next_action, sourceLabel ? `${sourceLabel}: published` : "published")
   }

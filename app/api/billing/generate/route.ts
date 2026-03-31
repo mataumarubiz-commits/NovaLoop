@@ -11,7 +11,7 @@ import {
 } from "@/lib/monthlyBilling"
 import { normalizeInvoiceSourceTypeForWrite } from "@/lib/invoiceSourceType"
 import { writeAuditLog } from "@/lib/auditLog"
-import { trackServerEvent } from "@/lib/analytics"
+import { trackServerEvent } from "@/lib/analyticsServer"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"

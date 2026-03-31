@@ -78,6 +78,7 @@ export default function SettingsPage() {
   const orgItems: MenuItem[] = [
     { href: "/settings/workspace", title: "ワークスペース", description: "会社情報、請求元情報、組織コードを設定します。" },
     { href: "/settings/members", title: "メンバー", description: "招待、権限、承認待ちメンバーを管理します。" },
+    { href: "/settings/templates", title: "テンプレート", description: "コンテンツテンプレートの一覧・追加・編集・並び順を管理します。" },
     { href: "/settings/ai-history", title: "AI 履歴", description: "AI の利用履歴を確認します。" },
     { href: "/settings/ai-channels", title: "外部AI連携", description: "Discord / LINE の AI 連携設定を確認します。" },
   ]

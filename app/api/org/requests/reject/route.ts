@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
-import { getUserIdFromToken, getOrgRole, isOrgAdmin } from "@/lib/apiAuth"
+import { requireOrgPermission } from "@/lib/adminApi"
 import { writeAuditLog } from "@/lib/auditLog"
 import { updateJoinRequestDecision } from "@/lib/joinRequests"
 
@@ -9,9 +9,6 @@ export const dynamic = "force-dynamic"
 
 export async function POST(req: NextRequest) {
   try {
-    const userId = await getUserIdFromToken(req)
-    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-
     const body = await req.json().catch(() => ({}))
     const requestId = typeof body?.requestId === "string" ? body.requestId.trim() : null
     if (!requestId) return NextResponse.json({ error: "requestId is required" }, { status: 400 })
@@ -27,10 +24,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Request not found or already decided" }, { status: 400 })
     }
 
-    const callerRole = await getOrgRole(admin, userId, row.org_id as string)
-    if (!isOrgAdmin(callerRole)) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-    }
+    const orgId = row.org_id as string
+    const auth = await requireOrgPermission(req, "members_manage", orgId)
+    if (!auth.ok) return auth.response
+    const userId = auth.userId
 
     const now = new Date().toISOString()
     const decisionUpdate = await updateJoinRequestDecision(admin, requestId, {

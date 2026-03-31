@@ -1,55 +1,29 @@
 import { NextRequest, NextResponse } from "next/server"
-import { createClient } from "@supabase/supabase-js"
-import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
+import { requireOrgPermission } from "@/lib/adminApi"
 import { writeAuditLog } from "@/lib/auditLog"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
-async function getAuth(req: NextRequest): Promise<{ userId: string; orgId: string; role: string } | NextResponse> {
-  const authHeader = req.headers.get("Authorization")
-  const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7).trim() : null
-  if (!token) return NextResponse.json({ ok: false, message: "認証が必要です。" }, { status: 401 })
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-  if (!url || !anonKey) return NextResponse.json({ ok: false, message: "設定エラー" }, { status: 500 })
-  const supabase = createClient(url, anonKey, { auth: { persistSession: false } })
-  const { data } = await supabase.auth.getUser(token)
-  const userId = data.user?.id
-  if (!userId) return NextResponse.json({ ok: false, message: "認証が必要です。" }, { status: 401 })
-  const admin = createSupabaseAdmin()
-  const { data: profile } = await admin.from("user_profiles").select("active_org_id").eq("user_id", userId).maybeSingle()
-  const orgId = (profile as { active_org_id?: string | null } | null)?.active_org_id ?? null
-  if (!orgId) return NextResponse.json({ ok: false, message: "ワークスペースを選択してください。" }, { status: 400 })
-  const { data: au } = await admin.from("app_users").select("role").eq("user_id", userId).eq("org_id", orgId).maybeSingle()
-  const role = (au as { role?: string } | null)?.role ?? "member"
-  if (role !== "owner" && role !== "executive_assistant") {
-    return NextResponse.json({ ok: false, message: "復元の権限がありません。" }, { status: 403 })
-  }
-  return { userId, orgId, role }
-}
-
-/** POST /api/pages/[id]/restore - 指定リビジョンに復元 */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const auth = await getAuth(req)
-    if (auth instanceof NextResponse) return auth
-    const { userId, orgId } = auth
+    const auth = await requireOrgPermission(req, "pages_write")
+    if (!auth.ok) return auth.response
+    const { admin, userId, orgId } = auth
     const { id: pageId } = await params
-    if (!pageId) return NextResponse.json({ ok: false, message: "page id が必要です。" }, { status: 400 })
+    if (!pageId) return NextResponse.json({ ok: false, message: "page id は必須です" }, { status: 400 })
 
     let body: { revision_id?: string }
     try {
       body = await req.json()
     } catch {
-      return NextResponse.json({ ok: false, message: "JSON が必要です。" }, { status: 400 })
+      return NextResponse.json({ ok: false, message: "JSON が不正です" }, { status: 400 })
     }
     const revisionId = typeof body?.revision_id === "string" ? body.revision_id.trim() : ""
-    if (!revisionId) return NextResponse.json({ ok: false, message: "revision_id が必要です。" }, { status: 400 })
+    if (!revisionId) return NextResponse.json({ ok: false, message: "revision_id は必須です" }, { status: 400 })
 
-    const admin = createSupabaseAdmin()
     const { data: page } = await admin.from("pages").select("id, org_id").eq("id", pageId).eq("org_id", orgId).maybeSingle()
-    if (!page) return NextResponse.json({ ok: false, message: "ページが見つかりません。" }, { status: 404 })
+    if (!page) return NextResponse.json({ ok: false, message: "ページが見つかりません" }, { status: 404 })
 
     const { data: rev } = await admin
       .from("page_revisions")
@@ -59,7 +33,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       .eq("org_id", orgId)
       .maybeSingle()
 
-    if (!rev) return NextResponse.json({ ok: false, message: "指定の履歴が見つかりません。" }, { status: 404 })
+    if (!rev) return NextResponse.json({ ok: false, message: "リビジョンが見つかりません" }, { status: 404 })
 
     const r = rev as { title: string; body_json: unknown }
     const now = new Date().toISOString()
@@ -74,7 +48,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       .eq("id", pageId)
       .eq("org_id", orgId)
 
-    if (updateErr) return NextResponse.json({ ok: false, message: "復元に失敗しました。" }, { status: 500 })
+    if (updateErr) return NextResponse.json({ ok: false, message: "復元に失敗しました" }, { status: 500 })
 
     await writeAuditLog(admin, {
       org_id: orgId,
@@ -96,6 +70,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ ok: true, title: r.title, content: r.body_json }, { status: 200 })
   } catch (e) {
     console.error("[api/pages/restore]", e)
-    return NextResponse.json({ ok: false, message: "復元に失敗しました。" }, { status: 500 })
+    return NextResponse.json({ ok: false, message: "復元に失敗しました" }, { status: 500 })
   }
 }

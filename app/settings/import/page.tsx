@@ -1,28 +1,47 @@
 "use client"
 
-import { useState } from "react"
+import { useMemo, useState, type CSSProperties } from "react"
 import Link from "next/link"
 import { supabase } from "@/lib/supabase"
 import { useAuthOrg } from "@/hooks/useAuthOrg"
 
-type PreviewSummary = Record<string, { addCount?: number; reuseCount?: number; skipCount?: number; dupSkipCount?: number; invalidSkipCount?: number }>
+type PreviewSummary = Record<
+  string,
+  {
+    addCount?: number
+    reuseCount?: number
+    skipCount?: number
+    dupSkipCount?: number
+    invalidSkipCount?: number
+  }
+>
 
-const cardStyle: React.CSSProperties = {
+const cardStyle: CSSProperties = {
   background: "var(--surface)",
   borderRadius: 16,
   border: "1px solid var(--border)",
   padding: 20,
 }
 
+async function getAccessToken() {
+  const session = await supabase.auth.getSession()
+  return session.data.session?.access_token ?? null
+}
+
 export default function ImportSettingsPage() {
   const { activeOrgId, role, loading, needsOnboarding } = useAuthOrg({ redirectToOnboarding: true })
+  const canUse = role === "owner" || role === "executive_assistant"
   const [file, setFile] = useState<File | null>(null)
   const [exportData, setExportData] = useState<Record<string, unknown> | null>(null)
   const [summary, setSummary] = useState<PreviewSummary | null>(null)
   const [busy, setBusy] = useState<"preview" | "apply" | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
-  const canUse = role === "owner" || role === "executive_assistant"
+
+  const summaryRows = useMemo(
+    () => (summary ? Object.entries(summary) : []),
+    [summary]
+  )
 
   const handleFile = (nextFile: File | null) => {
     setFile(nextFile)
@@ -45,9 +64,9 @@ export default function ImportSettingsPage() {
 
   const callApi = async (path: "/api/imports/preview" | "/api/imports/apply") => {
     if (!activeOrgId || !exportData) return null
-    const token = (await supabase.auth.getSession()).data.session?.access_token
+    const token = await getAccessToken()
     if (!token) {
-      setError("ログインし直してから再実行してください。")
+      setError("ログイン状態を確認できませんでした。")
       return null
     }
     const res = await fetch(path, {
@@ -61,9 +80,10 @@ export default function ImportSettingsPage() {
   const runPreview = async () => {
     setBusy("preview")
     setError(null)
+    setSuccess(null)
     const json = await callApi("/api/imports/preview")
     if (!json?.ok || !json?.summary) {
-      setError(json?.message ?? "プレビューの取得に失敗しました。")
+      setError(json?.message ?? "復元プレビューの取得に失敗しました。")
     } else {
       setSummary(json.summary as PreviewSummary)
     }
@@ -71,16 +91,16 @@ export default function ImportSettingsPage() {
   }
 
   const runApply = async () => {
-    if (typeof window !== "undefined" && !window.confirm("このデータを現在のワークスペースへ取り込みます。続行しますか？")) {
-      return
-    }
+    if (!summary) return
+    if (!window.confirm("現在のワークスペースにバックアップ内容を反映します。続けますか。")) return
     setBusy("apply")
     setError(null)
+    setSuccess(null)
     const json = await callApi("/api/imports/apply")
     if (!json?.ok) {
-      setError(json?.message ?? "取り込みに失敗しました。")
+      setError(json?.message ?? "復元に失敗しました。")
     } else {
-      setSuccess("取り込みを実行しました。")
+      setSuccess("復元を反映しました。")
       setSummary(null)
       setFile(null)
       setExportData(null)
@@ -94,51 +114,51 @@ export default function ImportSettingsPage() {
 
   return (
     <div style={{ padding: "32px 40px", minHeight: "100vh", background: "var(--bg-grad)" }}>
-      <div style={{ maxWidth: 920, margin: "0 auto", display: "grid", gap: 16 }}>
+      <div style={{ maxWidth: 980, margin: "0 auto", display: "grid", gap: 16 }}>
         <header>
-          <h1 style={{ fontSize: 28, color: "var(--text)", margin: 0 }}>インポート</h1>
+          <h1 style={{ fontSize: 28, color: "var(--text)", margin: 0 }}>復元</h1>
           <p style={{ fontSize: 13, color: "var(--muted)", marginTop: 8 }}>
-            `/settings/export` で出した JSON を読み込みます。apply は実データ変更なので必ず preview を先に確認してください。
+            先に preview で差分を確認してから apply します。画面の操作を増やしすぎないため、手順は3段階に固定しています。
           </p>
         </header>
 
         <section style={{ ...cardStyle, background: "var(--warning-bg)", borderColor: "var(--warning-border)", color: "var(--warning-text)" }}>
-          PDF や Storage 実ファイルは取り込みません。まずはマスタ・制作・請求・外注の再現を優先しています。
+          PDF や Storage 内の原本ファイルは別管理です。ここで戻すのはアプリのデータと添付の参照情報です。
         </section>
 
-        {error && <section style={{ ...cardStyle, background: "var(--error-bg)", borderColor: "var(--error-border)", color: "var(--error-text)" }}>{error}</section>}
-        {success && <section style={{ ...cardStyle, background: "var(--success-bg)", borderColor: "var(--success-border)", color: "var(--success-text)" }}>{success}</section>}
+        {error ? <section style={{ ...cardStyle, background: "var(--error-bg)", borderColor: "var(--error-border)", color: "var(--error-text)" }}>{error}</section> : null}
+        {success ? <section style={{ ...cardStyle, background: "var(--success-bg)", borderColor: "var(--success-border)", color: "var(--success-text)" }}>{success}</section> : null}
 
         <section style={cardStyle}>
-          <div style={{ fontWeight: 700, color: "var(--text)", marginBottom: 12 }}>1. ファイルを選ぶ</div>
+          <div style={{ fontWeight: 800, color: "var(--text)", marginBottom: 12 }}>1. バックアップファイルを選ぶ</div>
           <input type="file" accept=".json,application/json" onChange={(event) => handleFile(event.target.files?.[0] ?? null)} />
-          {file ? <p style={{ marginTop: 8, color: "var(--muted)" }}>{file.name}</p> : null}
+          {file ? <p style={{ marginTop: 10, color: "var(--muted)" }}>{file.name}</p> : null}
         </section>
 
         <section style={cardStyle}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button type="button" disabled={!exportData || busy !== null} onClick={() => void runPreview()} style={{ padding: "10px 16px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface-2)" }}>
-              {busy === "preview" ? "プレビュー中..." : "2. preview を実行"}
+            <button type="button" disabled={!exportData || busy !== null} onClick={() => void runPreview()} style={secondaryButtonStyle}>
+              {busy === "preview" ? "確認中..." : "2. preview"}
             </button>
-            <button type="button" disabled={!summary || busy !== null} onClick={() => void runApply()} style={{ padding: "10px 16px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface-2)" }}>
-              {busy === "apply" ? "取り込み中..." : "3. apply を実行"}
+            <button type="button" disabled={!summary || busy !== null} onClick={() => void runApply()} style={primaryButtonStyle}>
+              {busy === "apply" ? "反映中..." : "3. apply"}
             </button>
           </div>
         </section>
 
-        {summary ? (
+        {summaryRows.length > 0 ? (
           <section style={cardStyle}>
-            <div style={{ fontWeight: 700, color: "var(--text)", marginBottom: 12 }}>プレビュー結果</div>
-            <div style={{ display: "grid", gap: 8 }}>
-              {Object.entries(summary).map(([key, value]) => (
-                <div key={key} style={{ display: "flex", justifyContent: "space-between", gap: 16, paddingBottom: 8, borderBottom: "1px solid var(--border)" }}>
+            <div style={{ fontWeight: 800, color: "var(--text)", marginBottom: 12 }}>プレビュー結果</div>
+            <div style={{ display: "grid", gap: 10 }}>
+              {summaryRows.map(([key, value]) => (
+                <div key={key} style={{ display: "flex", justifyContent: "space-between", gap: 16, paddingBottom: 10, borderBottom: "1px solid var(--border)" }}>
                   <strong style={{ color: "var(--text)" }}>{key}</strong>
                   <span style={{ color: "var(--muted)", textAlign: "right" }}>
                     追加 {value.addCount ?? 0}
                     {" / "}再利用 {value.reuseCount ?? 0}
                     {" / "}重複スキップ {value.dupSkipCount ?? 0}
-                    {" / "}無効スキップ {value.invalidSkipCount ?? 0}
-                    {" / "}通常スキップ {value.skipCount ?? 0}
+                    {" / "}不正スキップ {value.invalidSkipCount ?? 0}
+                    {" / "}その他スキップ {value.skipCount ?? 0}
                   </span>
                 </div>
               ))}
@@ -146,8 +166,36 @@ export default function ImportSettingsPage() {
           </section>
         ) : null}
 
-        <Link href="/settings" style={{ color: "var(--primary)", fontWeight: 600, textDecoration: "none" }}>設定へ戻る</Link>
+        <section style={cardStyle}>
+          <div style={{ fontWeight: 800, color: "var(--text)" }}>バックアップ取得がまだなら</div>
+          <div style={{ marginTop: 8 }}>
+            <Link href="/settings/export" style={{ color: "var(--primary)", fontWeight: 700, textDecoration: "none" }}>
+              バックアップ画面へ
+            </Link>
+          </div>
+        </section>
+
+        <Link href="/settings" style={{ color: "var(--primary)", fontWeight: 600, textDecoration: "none" }}>
+          設定へ戻る
+        </Link>
       </div>
     </div>
   )
+}
+
+const secondaryButtonStyle: CSSProperties = {
+  padding: "10px 16px",
+  borderRadius: 10,
+  border: "1px solid var(--border)",
+  background: "var(--surface-2)",
+  color: "var(--text)",
+  fontWeight: 700,
+  cursor: "pointer",
+}
+
+const primaryButtonStyle: CSSProperties = {
+  ...secondaryButtonStyle,
+  borderColor: "var(--button-primary-bg)",
+  background: "var(--button-primary-bg)",
+  color: "var(--primary-contrast)",
 }

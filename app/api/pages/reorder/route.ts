@@ -1,61 +1,22 @@
 import { NextRequest, NextResponse } from "next/server"
-import { createClient } from "@supabase/supabase-js"
-import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
+import { requireOrgPermission } from "@/lib/adminApi"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
-async function getUserIdFromToken(req: NextRequest): Promise<string | null> {
-  const authHeader = req.headers.get("Authorization")
-  const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7).trim() : null
-  if (!token) return null
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-  if (!url || !anonKey) return null
-  const supabase = createClient(url, anonKey, { auth: { persistSession: false } })
-  const { data } = await supabase.auth.getUser(token)
-  return data.user?.id ?? null
-}
-
-/**
- * POST /api/pages/reorder
- * Body: { ordered_ids: string[] } — 並び順の id 配列。Bearer 必須。owner/executive_assistant のみ。
- */
 export async function POST(req: NextRequest) {
   try {
-    const userId = await getUserIdFromToken(req)
-    if (!userId) {
-      return NextResponse.json({ ok: false, message: "認証が必要です。" }, { status: 401 })
-    }
-
-    const admin = createSupabaseAdmin()
-    const { data: profile } = await admin
-      .from("user_profiles")
-      .select("active_org_id")
-      .eq("user_id", userId)
-      .maybeSingle()
-    const orgId = (profile as { active_org_id?: string | null } | null)?.active_org_id ?? null
-    if (!orgId) {
-      return NextResponse.json({ ok: false, message: "ワークスペースを選択してください。" }, { status: 400 })
-    }
-
-    const { data: au } = await admin
-      .from("app_users")
-      .select("role")
-      .eq("user_id", userId)
-      .eq("org_id", orgId)
-      .maybeSingle()
-    const role = (au as { role?: string } | null)?.role ?? null
-    if (role !== "owner" && role !== "executive_assistant") {
-      return NextResponse.json({ ok: false, message: "並び替えの権限がありません。" }, { status: 403 })
-    }
+    const auth = await requireOrgPermission(req, "pages_write")
+    if (!auth.ok) return auth.response
+    const { admin, orgId } = auth
 
     let body: { ordered_ids?: string[] }
     try {
       body = await req.json()
     } catch {
-      return NextResponse.json({ ok: false, message: "JSON が必要です。" }, { status: 400 })
+      return NextResponse.json({ ok: false, message: "JSON が不正です" }, { status: 400 })
     }
+
     const orderedIds = Array.isArray(body?.ordered_ids) ? body.ordered_ids : []
     if (orderedIds.length === 0) {
       return NextResponse.json({ ok: true }, { status: 200 })
@@ -75,7 +36,7 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     console.error("[api/pages/reorder]", e)
     return NextResponse.json(
-      { ok: false, message: "並び替えに失敗しました。" },
+      { ok: false, message: "並び順の保存に失敗しました" },
       { status: 500 }
     )
   }

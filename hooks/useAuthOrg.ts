@@ -3,19 +3,23 @@
 import { useEffect, useState, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { supabase } from "@/lib/supabase"
-import { normalizeAppOrgRole } from "@/lib/orgRoles"
+import { normalizeAppOrgRole, type AppOrgRole } from "@/lib/orgRoles"
+import { buildOrgPermissions, emptyOrgPermissions, type OrgPermissions } from "@/lib/orgRolePermissions"
 
 export type OrgMembership = {
   org_id: string
   org_name?: string
-  role: string
+  role: AppOrgRole
+  roleId?: string | null
+  permissions?: OrgPermissions
 }
 
 export type AuthOrgState = {
   user: { id: string; email?: string } | null
   profile: { display_name: string; active_org_id: string | null } | null
   activeOrgId: string | null
-  role: string | null
+  role: AppOrgRole | null
+  permissions: OrgPermissions
   memberships: OrgMembership[]
   loading: boolean
   needsOnboarding: boolean
@@ -32,6 +36,7 @@ const EMPTY_AUTH_ORG_SNAPSHOT: AuthOrgSnapshot = {
   profile: null,
   activeOrgId: null,
   role: null,
+  permissions: emptyOrgPermissions(),
   memberships: [],
   loading: true,
   needsOnboarding: false,
@@ -51,6 +56,7 @@ const cloneSnapshot = (snapshot: AuthOrgSnapshot): AuthOrgSnapshot => ({
   profile: snapshot.profile ? { ...snapshot.profile } : null,
   activeOrgId: snapshot.activeOrgId,
   role: snapshot.role,
+  permissions: { ...snapshot.permissions },
   memberships: snapshot.memberships.map((membership) => ({ ...membership })),
   loading: snapshot.loading,
   needsOnboarding: snapshot.needsOnboarding,
@@ -77,6 +83,7 @@ const normalizeMembership = (membership: OrgMembership): OrgMembership | null =>
   return {
     ...membership,
     role,
+    permissions: buildOrgPermissions(role, membership.permissions ?? null),
   }
 }
 
@@ -118,6 +125,7 @@ async function fetchAuthOrgSnapshot(): Promise<AuthOrgSnapshot> {
       profile: null,
       activeOrgId: null,
       role: null,
+      permissions: emptyOrgPermissions(),
       memberships: [],
       needsOnboarding: false,
       loading: false,
@@ -128,11 +136,13 @@ async function fetchAuthOrgSnapshot(): Promise<AuthOrgSnapshot> {
   const apiSnapshot = await fetchMyOrgs(accessToken)
   if (apiSnapshot) {
     const activeOrgId = apiSnapshot.profile?.active_org_id ?? apiSnapshot.orgs[0]?.org_id ?? null
+    const activeMembership = apiSnapshot.orgs.find((org) => org.org_id === activeOrgId) ?? apiSnapshot.orgs[0] ?? null
     return {
       user,
       profile: apiSnapshot.profile ?? null,
       activeOrgId,
-      role: apiSnapshot.orgs.find((org) => org.org_id === activeOrgId)?.role ?? apiSnapshot.orgs[0]?.role ?? null,
+      role: activeMembership?.role ?? null,
+      permissions: activeMembership?.permissions ?? emptyOrgPermissions(),
       memberships: apiSnapshot.orgs,
       needsOnboarding: apiSnapshot.orgs.length === 0,
       loading: false,
@@ -176,14 +186,13 @@ async function fetchAuthOrgSnapshot(): Promise<AuthOrgSnapshot> {
     const fallback = await fetchMyOrgs(accessToken)
     if (fallback?.orgs && fallback.orgs.length > 0) {
       const activeOrgId = fallback.profile?.active_org_id ?? fallback.orgs[0].org_id
+      const activeMembership = fallback.orgs.find((org) => org.org_id === activeOrgId) ?? fallback.orgs[0] ?? null
       return {
         user,
         profile: fallback.profile ?? { display_name: "", active_org_id: activeOrgId },
         activeOrgId,
-        role:
-          fallback.orgs.find((org) => org.org_id === activeOrgId)?.role ??
-          fallback.orgs[0].role ??
-          null,
+        role: activeMembership?.role ?? null,
+        permissions: activeMembership?.permissions ?? emptyOrgPermissions(),
         memberships: fallback.orgs,
         needsOnboarding: false,
         loading: false,
@@ -195,6 +204,7 @@ async function fetchAuthOrgSnapshot(): Promise<AuthOrgSnapshot> {
       profile: null,
       activeOrgId: null,
       role: null,
+      permissions: emptyOrgPermissions(),
       memberships: [],
       needsOnboarding: true,
       loading: false,
@@ -208,15 +218,15 @@ async function fetchAuthOrgSnapshot(): Promise<AuthOrgSnapshot> {
 
   const { data: auListData } = await supabase
     .from("app_users")
-    .select("org_id, role")
+    .select("org_id, role, role_id")
     .eq("user_id", u.id)
 
-  let rows = (auListData ?? []) as { org_id: string; role: string }[]
+  let rows = (auListData ?? []) as { org_id: string; role: string; role_id?: string | null }[]
   for (const delayMs of [400, 1000]) {
     if (rows.length > 0) break
     await new Promise((resolve) => setTimeout(resolve, delayMs))
-    const retry = await supabase.from("app_users").select("org_id, role").eq("user_id", u.id)
-    rows = (retry.data ?? []) as { org_id: string; role: string }[]
+    const retry = await supabase.from("app_users").select("org_id, role, role_id").eq("user_id", u.id)
+    rows = (retry.data ?? []) as { org_id: string; role: string; role_id?: string | null }[]
   }
 
   rows = rows.filter((row) => Boolean(normalizeAppOrgRole(row.role)))
@@ -225,14 +235,13 @@ async function fetchAuthOrgSnapshot(): Promise<AuthOrgSnapshot> {
     const fallback = await fetchMyOrgs(accessToken)
     if (fallback?.orgs && fallback.orgs.length > 0) {
       const activeOrgId = fallback.profile?.active_org_id ?? fallback.orgs[0].org_id
+      const activeMembership = fallback.orgs.find((org) => org.org_id === activeOrgId) ?? fallback.orgs[0] ?? null
       return {
         user,
         profile,
         activeOrgId,
-        role:
-          fallback.orgs.find((org) => org.org_id === activeOrgId)?.role ??
-          fallback.orgs[0].role ??
-          null,
+        role: activeMembership?.role ?? null,
+        permissions: activeMembership?.permissions ?? emptyOrgPermissions(),
         memberships: fallback.orgs,
         needsOnboarding: false,
         loading: false,
@@ -244,6 +253,7 @@ async function fetchAuthOrgSnapshot(): Promise<AuthOrgSnapshot> {
       profile,
       activeOrgId: null,
       role: null,
+      permissions: emptyOrgPermissions(),
       memberships: [],
       needsOnboarding: true,
       loading: false,
@@ -252,12 +262,26 @@ async function fetchAuthOrgSnapshot(): Promise<AuthOrgSnapshot> {
 
   const orgIds = [...new Set(rows.map((row) => row.org_id))]
   const { data: orgs } = await supabase.from("organizations").select("id, name").in("id", orgIds)
+  const roleIds = Array.from(new Set(rows.map((row) => row.role_id).filter((value): value is string => Boolean(value))))
+  const rolePermissionMap = new Map<string, Record<string, unknown> | null>()
+  if (roleIds.length > 0) {
+    const { data: orgRoleRows } = await supabase.from("org_roles").select("id, permissions").in("id", roleIds)
+    ;(orgRoleRows ?? []).forEach((row) => {
+      const normalized = row as { id: string; permissions?: Record<string, unknown> | null }
+      rolePermissionMap.set(normalized.id, normalized.permissions ?? null)
+    })
+  }
   const orgMap = new Map<string, string>()
   ;(orgs ?? []).forEach((org) => orgMap.set((org as { id: string }).id, (org as { name: string }).name))
   const memberships: OrgMembership[] = rows.map((row) => ({
     org_id: row.org_id,
     org_name: orgMap.get(row.org_id),
     role: normalizeAppOrgRole(row.role) ?? "member",
+    roleId: row.role_id ?? null,
+    permissions: buildOrgPermissions(
+      normalizeAppOrgRole(row.role),
+      row.role_id ? rolePermissionMap.get(row.role_id) ?? null : null
+    ),
   }))
 
   let activeOrgId = profile.active_org_id ?? null
@@ -269,11 +293,13 @@ async function fetchAuthOrgSnapshot(): Promise<AuthOrgSnapshot> {
       .eq("user_id", u.id)
   }
 
+  const activeMembership = memberships.find((membership) => membership.org_id === activeOrgId) ?? null
   return {
     user,
     profile,
     activeOrgId,
-    role: normalizeAppOrgRole(rows.find((row) => row.org_id === activeOrgId)?.role) ?? null,
+    role: activeMembership?.role ?? null,
+    permissions: activeMembership?.permissions ?? emptyOrgPermissions(),
     memberships,
     needsOnboarding: false,
     loading: false,
@@ -342,6 +368,7 @@ export function useAuthOrg(options?: { redirectToOnboarding?: boolean }): AuthOr
         profile: state.profile ? { ...state.profile, active_org_id: orgId } : { display_name: "", active_org_id: orgId },
         activeOrgId: orgId,
         role: membership?.role ?? null,
+        permissions: membership?.permissions ?? emptyOrgPermissions(),
         loading: false,
       }
 

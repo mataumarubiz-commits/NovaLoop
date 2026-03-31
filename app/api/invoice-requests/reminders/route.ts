@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 import { requireOrgAdmin } from "@/lib/adminApi"
+import { fanOutExternalMessage } from "@/lib/externalChannels"
 import { notifyAdminRoles, notifyVendorUser } from "@/lib/opsNotifications"
+import { loadOrgIntegrationSettings } from "@/lib/orgIntegrationSettings"
 import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
 
 export const runtime = "nodejs"
@@ -31,50 +33,49 @@ function uniqueIds(value: unknown): string[] {
 }
 
 function hasCronAccess(req: NextRequest) {
-  const secret = process.env.INVOICE_REMINDER_CRON_SECRET
+  const secret = process.env.INVOICE_REMINDER_CRON_SECRET || process.env.CRON_SECRET
   if (!secret) return false
+  const bearer = req.headers.get("authorization")
+  if (bearer === `Bearer ${secret}`) return true
   return req.headers.get("x-reminder-cron-secret") === secret
 }
 
-async function executeReminders(req: NextRequest, body: Record<string, unknown>) {
-  const orgId = typeof body.orgId === "string" ? body.orgId.trim() : null
-  const cronMode = hasCronAccess(req)
-  let auth:
-    | {
-        admin: ReturnType<typeof createSupabaseAdmin>
-        orgId: string
-        userId: string
-      }
-    | null = null
+type ReminderBody = Record<string, unknown>
 
-  if (cronMode) {
-    if (!orgId) {
-      return NextResponse.json({ ok: false, error: "orgId is required for cron execution" }, { status: 400 })
-    }
-    auth = {
-      admin: createSupabaseAdmin(),
-      orgId,
-      userId: "system:invoice-reminder-cron",
-    }
-  } else {
-    const adminAuth = await requireOrgAdmin(req, orgId)
-    if (!adminAuth.ok) return adminAuth.response
-    auth = {
-      admin: adminAuth.admin,
-      orgId: adminAuth.orgId,
-      userId: adminAuth.userId,
-    }
-  }
+type ReminderSummary = {
+  invoiceRequests: number
+  vendorInvoices: number
+  createdLogs: number
+}
 
+type ReminderExecutionInput = {
+  admin: ReturnType<typeof createSupabaseAdmin>
+  orgId: string
+  userId: string
+  body: ReminderBody
+  externalDelivery: boolean
+}
+
+function buildReminderMessage(orgName: string, today: string, summary: ReminderSummary) {
+  return [
+    `【リマインド実行】${orgName}`,
+    `対象日: ${today}`,
+    `請求依頼フォロー: ${summary.invoiceRequests}件`,
+    `外注請求フォロー: ${summary.vendorInvoices}件`,
+    `記録追加: ${summary.createdLogs}件`,
+  ].join("\n")
+}
+
+async function executeRemindersForOrg(input: ReminderExecutionInput) {
+  const { admin, orgId, userId, body, externalDelivery } = input
   const scope = isScope(body.scope) ? body.scope : "all"
   const dryRun = Boolean(body.dryRun)
   const manual = Boolean(body.manual)
   const invoiceRequestIds = uniqueIds(body.invoiceRequestIds)
   const vendorInvoiceIds = uniqueIds(body.vendorInvoiceIds)
   const today = new Date().toISOString().slice(0, 10)
-  const { admin, userId } = auth
 
-  const summary = {
+  const summary: ReminderSummary = {
     invoiceRequests: 0,
     vendorInvoices: 0,
     createdLogs: 0,
@@ -86,14 +87,14 @@ async function executeReminders(req: NextRequest, body: Record<string, unknown>)
       .select(
         "id, client_id, guest_name, guest_company_name, recipient_email, requested_title, status, request_deadline, due_date, reminder_enabled, reminder_lead_days, reminder_count, last_reminded_at"
       )
-      .eq("org_id", auth.orgId)
+      .eq("org_id", orgId)
       .in("status", ["sent", "viewed"])
 
     if (!manual) query = query.eq("reminder_enabled", true)
     if (invoiceRequestIds.length > 0) query = query.in("id", invoiceRequestIds)
 
     const { data: requests, error } = await query
-    if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+    if (error) throw new Error(error.message)
 
     const candidateRequests = ((requests ?? []) as Array<Record<string, unknown>>).filter((request) => {
       const deadline = String(request.request_deadline ?? request.due_date ?? "")
@@ -113,11 +114,11 @@ async function executeReminders(req: NextRequest, body: Record<string, unknown>)
         ? await admin
             .from("invoice_reminder_logs")
             .select("invoice_request_id, created_at")
-            .eq("org_id", auth.orgId)
+            .eq("org_id", orgId)
             .in("invoice_request_id", requestIds)
         : { data: [] }
 
-    const requestLoggedToday = new Set(
+    const loggedToday = new Set(
       ((existingLogs ?? []) as Array<{ invoice_request_id: string | null; created_at: string }>)
         .filter((row) => row.created_at.startsWith(today))
         .map((row) => row.invoice_request_id)
@@ -126,7 +127,7 @@ async function executeReminders(req: NextRequest, body: Record<string, unknown>)
 
     const dueRequests = candidateRequests.filter((request) => {
       if (manual && invoiceRequestIds.length > 0) return true
-      return !requestLoggedToday.has(String(request.id))
+      return !loggedToday.has(String(request.id))
     })
 
     summary.invoiceRequests = dueRequests.length
@@ -137,31 +138,29 @@ async function executeReminders(req: NextRequest, body: Record<string, unknown>)
         const days = diffInDays(today, deadline)
         const recipientLabel = String(request.guest_company_name ?? request.guest_name ?? "請求依頼先")
         const recipientEmail = String(request.recipient_email ?? "")
-        const message = manual
-          ? `請求依頼のフォローを記録しました。期限: ${deadline || "未設定"}`
-          : days < 0
-            ? `期限 ${deadline} を超過した請求依頼です。対応確認を進めてください。`
-            : `期限 ${deadline} が近い請求依頼です。フォロー対応として確認してください。`
-
         return {
-          org_id: auth.orgId,
+          org_id: orgId,
           invoice_request_id: String(request.id),
           reminder_type: manual ? "manual" : days < 0 ? "overdue" : "deadline_soon",
           recipient_label: recipientLabel || null,
           recipient_email: recipientEmail || null,
-          message,
+          message: manual
+            ? `請求依頼のフォローを記録しました。期限: ${deadline || "未設定"}`
+            : days < 0
+              ? `期限 ${deadline} を超過した請求依頼です。`
+              : `期限 ${deadline} が近い請求依頼です。`,
           actor_user_id: userId,
         }
       })
 
       const { error: logError } = await admin.from("invoice_reminder_logs").insert(logs)
-      if (logError) return NextResponse.json({ ok: false, error: logError.message }, { status: 500 })
+      if (logError) throw new Error(logError.message)
 
       for (const request of dueRequests) {
         const deadline = String(request.request_deadline ?? request.due_date ?? "")
         const days = diffInDays(today, deadline)
         await notifyAdminRoles({
-          orgId: auth.orgId,
+          orgId,
           type: days < 0 ? "billing.request_overdue" : "billing.request_due_soon",
           payload: {
             invoice_request_id: request.id,
@@ -179,7 +178,7 @@ async function executeReminders(req: NextRequest, body: Record<string, unknown>)
             last_reminded_at: new Date().toISOString(),
             reminder_count: Number(request.reminder_count ?? 0) + 1,
           })
-          .eq("org_id", auth.orgId)
+          .eq("org_id", orgId)
           .eq("id", String(request.id))
       }
 
@@ -191,21 +190,20 @@ async function executeReminders(req: NextRequest, body: Record<string, unknown>)
     let query = admin
       .from("vendor_invoices")
       .select("id, vendor_id, billing_month, submit_deadline, request_sent_at, status")
-      .eq("org_id", auth.orgId)
+      .eq("org_id", orgId)
       .in("status", ["draft", "rejected"])
       .not("request_sent_at", "is", null)
 
     if (vendorInvoiceIds.length > 0) query = query.in("id", vendorInvoiceIds)
 
     const { data: vendorRows, error } = await query
-    if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+    if (error) throw new Error(error.message)
 
     const candidateVendorInvoices = ((vendorRows ?? []) as Array<Record<string, unknown>>).filter((row) => {
       const deadline = String(row.submit_deadline ?? "")
       if (!deadline) return false
       if (manual && vendorInvoiceIds.length > 0) return true
-      const days = diffInDays(today, deadline)
-      return days <= 3
+      return diffInDays(today, deadline) <= 3
     })
 
     const candidateIds = candidateVendorInvoices.map((row) => String(row.id))
@@ -214,11 +212,11 @@ async function executeReminders(req: NextRequest, body: Record<string, unknown>)
         ? await admin
             .from("invoice_reminder_logs")
             .select("vendor_invoice_id, created_at")
-            .eq("org_id", auth.orgId)
+            .eq("org_id", orgId)
             .in("vendor_invoice_id", candidateIds)
         : { data: [] }
 
-    const vendorLoggedToday = new Set(
+    const loggedToday = new Set(
       ((existingVendorLogs ?? []) as Array<{ vendor_invoice_id: string | null; created_at: string }>)
         .filter((row) => row.created_at.startsWith(today))
         .map((row) => row.vendor_invoice_id)
@@ -227,7 +225,7 @@ async function executeReminders(req: NextRequest, body: Record<string, unknown>)
 
     const dueVendorInvoices = candidateVendorInvoices.filter((row) => {
       if (manual && vendorInvoiceIds.length > 0) return true
-      return !vendorLoggedToday.has(String(row.id))
+      return !loggedToday.has(String(row.id))
     })
 
     summary.vendorInvoices = dueVendorInvoices.length
@@ -237,7 +235,7 @@ async function executeReminders(req: NextRequest, body: Record<string, unknown>)
         const deadline = String(row.submit_deadline ?? "")
         const days = diffInDays(today, deadline)
         return {
-          org_id: auth.orgId,
+          org_id: orgId,
           vendor_invoice_id: String(row.id),
           reminder_type: manual ? "manual" : days < 0 ? "overdue" : "deadline_soon",
           recipient_label: "外注請求依頼",
@@ -245,20 +243,20 @@ async function executeReminders(req: NextRequest, body: Record<string, unknown>)
           message: manual
             ? `外注請求依頼のフォローを記録しました。期限: ${deadline || "未設定"}`
             : days < 0
-              ? "外注請求依頼が期限超過です。差し戻し理由と提出状況を確認してください。"
-              : "外注請求依頼の期限が近づいています。提出状況を確認してください。",
+              ? "外注請求依頼が期限超過です。"
+              : "外注請求依頼の期限が近づいています。",
           actor_user_id: userId,
         }
       })
 
       const { error: logError } = await admin.from("invoice_reminder_logs").insert(logs)
-      if (logError) return NextResponse.json({ ok: false, error: logError.message }, { status: 500 })
+      if (logError) throw new Error(logError.message)
 
       for (const row of dueVendorInvoices) {
         const deadline = String(row.submit_deadline ?? "")
         const days = diffInDays(today, deadline)
         await notifyVendorUser({
-          orgId: auth.orgId,
+          orgId,
           vendorId: String(row.vendor_id),
           type: days < 0 ? "vendor_invoice.request_overdue" : "vendor_invoice.request_due_soon",
           payload: {
@@ -269,7 +267,7 @@ async function executeReminders(req: NextRequest, body: Record<string, unknown>)
           },
         })
         await notifyAdminRoles({
-          orgId: auth.orgId,
+          orgId,
           type: days < 0 ? "vendor_invoice.request_overdue" : "vendor_invoice.request_due_soon",
           payload: {
             vendor_invoice_id: row.id,
@@ -285,13 +283,44 @@ async function executeReminders(req: NextRequest, body: Record<string, unknown>)
     }
   }
 
-  return NextResponse.json({ ok: true, dryRun, manual, summary })
+  if (externalDelivery && !dryRun && (summary.invoiceRequests > 0 || summary.vendorInvoices > 0)) {
+    const [settings, orgRes] = await Promise.all([
+      loadOrgIntegrationSettings(admin, orgId),
+      admin.from("organizations").select("name").eq("id", orgId).maybeSingle(),
+    ])
+
+    if (settings.auto_invoice_reminders_enabled && settings.reminder_channels.length > 0) {
+      await fanOutExternalMessage({
+        settings,
+        channels: settings.reminder_channels,
+        text: buildReminderMessage(
+          (orgRes.data as { name?: string | null } | null)?.name ?? "NovaLoop",
+          today,
+          summary
+        ),
+        useDefaultChatworkRoom: true,
+      })
+    }
+  }
+
+  return { ok: true, dryRun, manual, orgId, summary }
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json().catch(() => ({}))) as Record<string, unknown>
-    return await executeReminders(req, body)
+    const body = (await req.json().catch(() => ({}))) as ReminderBody
+    const orgId = typeof body.orgId === "string" ? body.orgId.trim() : null
+    const auth = await requireOrgAdmin(req, orgId)
+    if (!auth.ok) return auth.response
+
+    const result = await executeRemindersForOrg({
+      admin: auth.admin,
+      orgId: auth.orgId,
+      userId: auth.userId,
+      body,
+      externalDelivery: false,
+    })
+    return NextResponse.json(result)
   } catch (error) {
     return NextResponse.json(
       { ok: false, error: error instanceof Error ? error.message : "リマインド処理に失敗しました" },
@@ -306,13 +335,39 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const url = new URL(req.url)
-    return await executeReminders(req, {
-      orgId: url.searchParams.get("orgId"),
-      scope: url.searchParams.get("scope"),
-      dryRun: url.searchParams.get("dryRun") === "1",
+    const admin = createSupabaseAdmin()
+    const requestedOrgId = req.nextUrl.searchParams.get("orgId")?.trim() || null
+    const body: ReminderBody = {
+      scope: req.nextUrl.searchParams.get("scope"),
+      dryRun: req.nextUrl.searchParams.get("dryRun") === "1",
       manual: false,
-    })
+    }
+
+    const orgIds = requestedOrgId
+      ? [requestedOrgId]
+      : (
+          (
+            await admin
+              .from("org_integration_settings")
+              .select("org_id")
+              .eq("auto_invoice_reminders_enabled", true)
+          ).data ?? []
+        ).map((row) => (row as { org_id: string }).org_id)
+
+    const results = []
+    for (const orgId of orgIds) {
+      results.push(
+        await executeRemindersForOrg({
+          admin,
+          orgId,
+          userId: "system:invoice-reminder-cron",
+          body,
+          externalDelivery: true,
+        })
+      )
+    }
+
+    return NextResponse.json({ ok: true, results })
   } catch (error) {
     return NextResponse.json(
       { ok: false, error: error instanceof Error ? error.message : "リマインド処理に失敗しました" },

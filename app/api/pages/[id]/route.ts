@@ -1,5 +1,7 @@
 ﻿import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
+import { getOrgAccess } from "@/lib/apiAuth"
+import { hasOrgPermission as permissionEnabled } from "@/lib/orgRolePermissions"
 import { loadPageTemplateBindings } from "@/lib/pageTemplateCatalogServer"
 import { resolveSlugDuplicate, titleToSlug } from "@/lib/slug"
 import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
@@ -47,19 +49,12 @@ async function getAuth(req: NextRequest) {
     return { error: NextResponse.json({ ok: false, message: "ワークスペースを選択してください" }, { status: 400 }) }
   }
 
-  const { data: appUser } = await supabase
-    .from("app_users")
-    .select("role")
-    .eq("user_id", userId)
-    .eq("org_id", orgId)
-    .maybeSingle()
-
-  const role = (appUser as { role?: string } | null)?.role ?? null
-  if (!role) {
+  const access = await getOrgAccess(createSupabaseAdmin(), userId, orgId)
+  if (!access.role) {
     return { error: NextResponse.json({ ok: false, message: "組織メンバーではありません" }, { status: 403 }) }
   }
 
-  return { supabase, userId, orgId, role }
+  return { supabase, userId, orgId, role: access.role, permissions: access.permissions }
 }
 
 export async function GET(
@@ -144,9 +139,9 @@ export async function PATCH(
   try {
     const auth = await getAuth(req)
     if ("error" in auth) return auth.error
-    const { supabase, userId, orgId, role } = auth
+    const { supabase, userId, orgId, role, permissions } = auth
 
-    if (role !== "owner" && role !== "executive_assistant") {
+    if (role !== "owner" && role !== "executive_assistant" && !permissionEnabled(role, permissions, "pages_write")) {
       return NextResponse.json({ ok: false, message: "更新権限がありません" }, { status: 403 })
     }
 

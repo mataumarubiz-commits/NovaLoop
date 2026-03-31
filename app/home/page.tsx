@@ -306,24 +306,24 @@ export default function Home() {
     const tasks: ActionTask[] = []
     tasks.push({
       id: "client-overdue",
-      label: "邏肴悄驕・ｌ蟇ｾ蠢・,
-      description: "蜈域婿謠仙・縺ｮ驕・ｻｶ譯井ｻｶ",
+      label: "納期遅れ対応",
+      description: "先方提出の遅延案件",
       count: clientOverdue,
       href: "/contents?filter=client_overdue",
       tone: "danger",
     })
     tasks.push({
       id: "editor-overdue",
-      label: "螟匁ｳｨ驕・ｻｶ蟇ｾ蠢・,
-      description: "邱ｨ髮・・署蜃ｺ縺ｮ驕・ｻｶ譯井ｻｶ",
+      label: "外注遅延対応",
+      description: "編集者提出の遅延案件",
       count: editorOverdue,
       href: "/contents?filter=editor_overdue",
       tone: "danger",
     })
     tasks.push({
       id: "today-submit",
-      label: "莉頑律謠仙・縺ｮ遒ｺ隱・,
-      description: "譛ｬ譌･謠仙・莠亥ｮ壹・譯井ｻｶ",
+      label: "今日提出の確認",
+      description: "本日提出予定の案件",
       count: todayTotal,
       href: "/contents?due=today",
       tone: "warn",
@@ -338,7 +338,7 @@ export default function Home() {
   const hasHomeBlockingLoad = authLoading || loading || (canAccessBilling && onboardingLoading && onboarding == null)
 
   if (hasHomeBlockingLoad) {
-    return <div style={{ padding: 32, color: "var(--muted)" }}>隱ｭ縺ｿ霎ｼ縺ｿ荳ｭ窶ｦ</div>
+    return <div style={{ padding: 32, color: "var(--muted)" }}>読み込み中…</div>
   }
 
   return (
@@ -353,15 +353,15 @@ export default function Home() {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <div>
             <p style={{ fontSize: 12, letterSpacing: "0.08em", color: "var(--muted)" }}>SNS Ops SaaS</p>
-            <h1 style={{ fontSize: 28, margin: "6px 0 8px", color: "var(--text)" }}>繝帙・繝</h1>
+            <h1 style={{ fontSize: 28, margin: "6px 0 8px", color: "var(--text)" }}>ホーム</h1>
             <p style={{ fontSize: 12, color: "var(--muted)", margin: 0 }}>{roleLabel}</p>
           </div>
           <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
             <Link href="/help/setup" style={{ fontSize: 13, color: "var(--primary)", fontWeight: 600 }}>
-              菴ｿ縺・婿繧定ｦ九ｋ
+              使い方を見る
             </Link>
             <Link href="/notifications" style={{ fontSize: 13, color: "var(--primary)", fontWeight: 600 }}>
-              騾夂衍繧ｻ繝ｳ繧ｿ繝ｼ縺ｸ
+              通知センターへ
             </Link>
           </div>
         </div>
@@ -369,7 +369,7 @@ export default function Home() {
 
       {error && (
         <div style={{ ...cardStyle, marginTop: 12, borderColor: "#fca5a5", background: "#fef2f2", color: "#991b1b" }}>
-          繝・・繧ｿ蜿門ｾ励↓螟ｱ謨励＠縺ｾ縺励◆: {error}
+          データ取得に失敗しました: {error}
         </div>
       )}
 
@@ -377,7 +377,7 @@ export default function Home() {
         <header style={{ marginTop: 18, marginBottom: 20 }}>
           <div style={{ color: "var(--text)" }}>
             KGI:
-            <span style={{ marginLeft: 8, fontWeight: 600 }}>{kgiText || "KGI譛ｪ險ｭ螳夲ｼ・settings 縺ｧ險ｭ螳夲ｼ・}</span>
+            <span style={{ marginLeft: 8, fontWeight: 600 }}>{kgiText || "KGI未設定（Settingsで設定）"}</span>
           </div>
         </header>
       ) : null}
@@ -389,11 +389,11 @@ export default function Home() {
 
       <section style={{ ...cardStyle, marginBottom: 14 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 8 }}>
-          <h2 style={{ margin: 0, fontSize: 15, color: "var(--text)" }}>莉翫☆縺仙虚縺上ち繧ｹ繧ｯ</h2>
-          <span style={{ fontSize: 12, color: "var(--muted)" }}>蜆ｪ蜈亥ｺｦ鬆・/span>
+          <h2 style={{ margin: 0, fontSize: 15, color: "var(--text)" }}>今すぐ動くタスク</h2>
+          <span style={{ fontSize: 12, color: "var(--muted)" }}>重要度順</span>
         </div>
         {actionTasks.length === 0 ? (
-          <p style={{ margin: 0, fontSize: 13, color: "var(--muted)" }}>邱頑･繧ｿ繧ｹ繧ｯ縺ｯ縺ゅｊ縺ｾ縺帙ｓ縲る壼ｸｸ騾ｲ陦後ｒ邯ｭ謖√＠縺ｦ縺上□縺輔＞縲・/p>
+          <p style={{ margin: 0, fontSize: 13, color: "var(--muted)" }}>緊急タスクはありません。通常運用を継続してください。</p>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 8 }}>
             {actionTasks.map((task) => {
@@ -430,26 +430,26 @@ export default function Home() {
 
 
       <section style={{ marginBottom: 22 }}>
-        <h2 style={{ fontSize: 16, marginBottom: 10, color: "var(--text)" }}>莉頑律縺ｮ陦悟虚</h2>
+        <h2 style={{ fontSize: 16, marginBottom: 10, color: "var(--text)" }}>今日の行動</h2>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12 }}>
           <Link href="/contents?due=today" style={{ ...cardStyle, textDecoration: "none", color: "inherit" }}>
-            <div style={{ fontSize: 12, color: "var(--muted)" }}>莉頑律縺ｮ蜈域婿謠仙・</div>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>今日の先方提出数</div>
             <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>{todayTotal}</div>
           </Link>
           <Link href="/contents?due=tomorrow" style={{ ...cardStyle, textDecoration: "none", color: "inherit" }}>
-            <div style={{ fontSize: 12, color: "var(--muted)" }}>譏取律縺ｮ蜈域婿謠仙・</div>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>明日の先方提出数</div>
             <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>{tomorrowTotal}</div>
           </Link>
           <Link href="/contents?filter=editor_overdue" style={{ ...cardStyle, textDecoration: "none", color: "inherit", borderColor: editorOverdue > 0 ? "#f87171" : "var(--border)", background: editorOverdue > 0 ? "#fff5f5" : "var(--surface)" }}>
-            <div style={{ fontSize: 12, color: "var(--muted)" }}>螟匁ｳｨ譛ｪ謠仙・</div>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>外注未提出数</div>
             <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6, color: editorOverdue > 0 ? "#b91c1c" : "var(--text)" }}>{editorOverdue}</div>
           </Link>
           <Link href="/contents?filter=client_overdue" style={{ ...cardStyle, textDecoration: "none", color: "inherit", borderColor: clientOverdue > 0 ? "#f87171" : "var(--border)", background: clientOverdue > 0 ? "#fff5f5" : "var(--surface)" }}>
-            <div style={{ fontSize: 12, color: "var(--muted)" }}>邏肴悄驕・ｌ</div>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>納期遅れ</div>
             <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6, color: clientOverdue > 0 ? "#b91c1c" : "var(--text)" }}>{clientOverdue}</div>
           </Link>
           <Link href="/contents?filter=client_overdue" style={{ ...cardStyle, textDecoration: "none", color: "inherit" }}>
-            <div style={{ fontSize: 12, color: "var(--muted)" }}>蜆ｪ蜈亥ｯｾ蠢應ｻｶ謨ｰ</div>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>優先対応件数</div>
             <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6, color: clientOverdue + editorOverdue > 0 ? "#b91c1c" : "var(--text)" }}>
               {clientOverdue + editorOverdue}
             </div>
@@ -460,11 +460,11 @@ export default function Home() {
       <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12, marginBottom: 18 }}>
         <div style={cardStyle}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-            <h2 style={{ fontSize: 16, color: "var(--text)", margin: 0 }}>騾夂衍繧ｵ繝槭Μ</h2>
-            <Link href="/notifications" style={{ fontSize: 12, color: "var(--primary)", fontWeight: 600 }}>繧ゅ▲縺ｨ隕九ｋ</Link>
+            <h2 style={{ fontSize: 16, color: "var(--text)", margin: 0 }}>通知サマリ</h2>
+            <Link href="/notifications" style={{ fontSize: 12, color: "var(--primary)", fontWeight: 600 }}>もっと見る</Link>
           </div>
           {unreadNotifications.length === 0 ? (
-            <p style={{ margin: 0, fontSize: 13, color: "var(--muted)" }}>譛ｪ隱ｭ騾夂衍縺ｯ縺ゅｊ縺ｾ縺帙ｓ縲・/p>
+            <p style={{ margin: 0, fontSize: 13, color: "var(--muted)" }}>未読通知はありません。</p>
           ) : (
             <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 8 }}>
               {unreadNotifications.slice(0, 5).map((n) => (
@@ -501,7 +501,7 @@ export default function Home() {
                       }
                       style={{ fontSize: 12, color: "var(--primary)", fontWeight: 600 }}
                     >
-                      蟇ｾ蠢・
+                      対応
                     </Link>
                   </div>
                 </li>
@@ -511,15 +511,15 @@ export default function Home() {
         </div>
 
         <div style={cardStyle}>
-          <h2 style={{ fontSize: 16, color: "var(--text)", margin: "0 0 10px 0" }}>邱繧∫憾豕・/h2>
+          <h2 style={{ fontSize: 16, color: "var(--text)", margin: "0 0 10px 0" }}>進行サマリ</h2>
           <>
-            <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 6 }}>莉頑律繝ｻ譏取律縺ｮ謠仙・隕玖ｾｼ縺ｿ</div>
+            <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 6 }}>今日・明日の提出見込み</div>
             <div style={{ fontSize: 20, fontWeight: 700, color: "var(--text)", marginBottom: 12 }}>
-              {todayTotal + tomorrowTotal}莉ｶ
+              {todayTotal + tomorrowTotal}件
             </div>
-            <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 6 }}>驕・ｻｶ蟇ｾ蠢懊′蠢・ｦ・/div>
+            <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 6 }}>遅延対応が必要</div>
             <div style={{ fontSize: 18, fontWeight: 700, color: clientOverdue + editorOverdue > 0 ? "#b91c1c" : "var(--text)" }}>
-              {clientOverdue + editorOverdue}莉ｶ
+              {clientOverdue + editorOverdue}件
             </div>
           </>
         </div>
@@ -528,8 +528,8 @@ export default function Home() {
 
       <section>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <h2 style={{ fontSize: 18, marginBottom: 8, color: "var(--text)" }}>譛ｪ螳御ｺ・ｸ隕ｧ</h2>
-          <span style={{ fontSize: 12, color: "var(--muted)" }}>蜈域婿謠仙・譌･ 譏・・/span>
+          <h2 style={{ fontSize: 18, marginBottom: 8, color: "var(--text)" }}>未完了一覧</h2>
+          <span style={{ fontSize: 12, color: "var(--muted)" }}>先方提出日 昇順</span>
         </div>
         <div style={{ display: "grid", gap: 10 }}>
           {sortedIncomplete.slice(0, 12).map((row) => {
@@ -541,18 +541,18 @@ export default function Home() {
                   <div>
                     <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 4 }}>{row.clientName} / {row.projectName}</div>
                     <div style={{ fontSize: 16, fontWeight: 600, color: "var(--text)" }}>{row.title}</div>
-                    <div style={{ fontSize: 12, marginTop: 6, color: "var(--text)" }}>蜈域婿謠仙・: {row.dueClientAt} / 邱ｨ髮・・署蜃ｺ: {row.dueEditorAt}</div>
+                    <div style={{ fontSize: 12, marginTop: 6, color: "var(--text)" }}>先方提出: {row.dueClientAt} / 編集者提出: {row.dueEditorAt}</div>
                   </div>
                   <div style={{ textAlign: "right", display: "grid", gap: 4 }}>
-                    {isOverdue && <span style={{ fontSize: 11, borderRadius: 999, background: "#fee2e2", color: "#b91c1c", padding: "2px 8px" }}>邏肴悄驕・ｌ</span>}
-                    {isEditorLate && <span style={{ fontSize: 11, borderRadius: 999, background: "#fee2e2", color: "#b91c1c", padding: "2px 8px" }}>螟匁ｳｨ驕・ｌ</span>}
-                    {!row.thumbnailDone && <span style={{ fontSize: 11, borderRadius: 999, border: "1px solid var(--chip-border)", color: "var(--chip-text)", padding: "2px 8px" }}>繧ｵ繝繝肴悴</span>}
+                    {isOverdue && <span style={{ fontSize: 11, borderRadius: 999, background: "#fee2e2", color: "#b91c1c", padding: "2px 8px" }}>納期遅れ</span>}
+                    {isEditorLate && <span style={{ fontSize: 11, borderRadius: 999, background: "#fee2e2", color: "#b91c1c", padding: "2px 8px" }}>外注遅れ</span>}
+                    {!row.thumbnailDone && <span style={{ fontSize: 11, borderRadius: 999, border: "1px solid var(--chip-border)", color: "var(--chip-text)", padding: "2px 8px" }}>サムネ未</span>}
                   </div>
                 </div>
               </div>
             )
           })}
-          {sortedIncomplete.length === 0 && <p style={{ color: "var(--muted)" }}>譛ｪ螳御ｺ・・繧ｳ繝ｳ繝・Φ繝・・縺ゅｊ縺ｾ縺帙ｓ縲・/p>}
+          {sortedIncomplete.length === 0 && <p style={{ color: "var(--muted)" }}>未完了のコンテンツはありません。</p>}
         </div>
       </section>
     </div>

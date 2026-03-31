@@ -24,9 +24,9 @@ type GuideMeta = {
 }
 
 const GUIDE_GROUPS: Array<{ key: GuideGroupKey; label: string; description: string }> = [
-  { key: "setup", label: "始めましょう", description: "土台を先に揃える" },
-  { key: "ops", label: "運用を整える", description: "毎日触る導線をつくる" },
-  { key: "finance", label: "締めを整える", description: "月末の事故を防ぐ" },
+  { key: "setup", label: "準備する", description: "最初に土台を整えます" },
+  { key: "ops", label: "運用を整える", description: "日常の導線をつくります" },
+  { key: "finance", label: "締めを整える", description: "月末のミスを防ぎます" },
 ]
 
 const GUIDE_META: Record<string, GuideMeta> = {
@@ -90,7 +90,7 @@ export default function OnboardingGuide({ items, completionRate }: OnboardingGui
         <div className="guide-message-badge">N</div>
         <div className="guide-message-copy">
           <strong>NovaLoop Guide</strong>
-          <span>まずは設定と最初の導線だけ揃えましょう。細かい説明は必要なときにだけ見れば十分です。</span>
+          <span>まずは設定と最初の導線だけ整えましょう。詳しい説明は必要になったときに確認すれば十分です。</span>
         </div>
       </div>
 
@@ -123,13 +123,13 @@ export default function OnboardingGuide({ items, completionRate }: OnboardingGui
                           <span className="guide-task-detail-list">
                             {item.todo ? (
                               <span className="guide-task-detail">
-                                <strong>やること</strong>
+                                <strong>対応内容</strong>
                                 <span>{item.todo}</span>
                               </span>
                             ) : null}
                             {item.doneWhen ? (
                               <span className="guide-task-detail">
-                                <strong>おわり</strong>
+                                <strong>完了条件</strong>
                                 <span>{item.doneWhen}</span>
                               </span>
                             ) : null}

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
-import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
-import { getUserIdFromToken, getOrgRole, isOrgAdmin } from "@/lib/apiAuth"
+import { requireOrgPermission } from "@/lib/adminApi"
+import { resolveOrgRoleById, resolveOrgRoleByKey } from "@/lib/orgRoles"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -11,58 +11,82 @@ function randomToken(): string {
 
 export async function POST(req: NextRequest) {
   try {
-    const userId = await getUserIdFromToken(req)
-    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-
     const body = await req.json().catch(() => ({}))
     const orgId = typeof body?.orgId === "string" ? body.orgId.trim() : null
     const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : null
-    const roleKey = typeof body?.roleKey === "string" ? body.roleKey.trim() : "member"
+    const roleId = typeof body?.roleId === "string" ? body.roleId.trim() : null
+    const roleKey = typeof body?.roleKey === "string" ? body.roleKey.trim() : null
     if (!orgId || !email) {
       return NextResponse.json({ error: "orgId and email are required" }, { status: 400 })
     }
-    const allowedRoles = ["executive_assistant", "member"]
-    const role = allowedRoles.includes(roleKey) ? roleKey : "member"
 
-    const admin = createSupabaseAdmin()
-    const callerRole = await getOrgRole(admin, userId, orgId)
-    if (!isOrgAdmin(callerRole)) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+    const auth = await requireOrgPermission(req, "members_manage", orgId)
+    if (!auth.ok) return auth.response
+    const { admin, userId } = auth
+
+    let resolvedRole = roleId ? await resolveOrgRoleById(admin, orgId, roleId) : null
+    if (!resolvedRole && roleKey) {
+      resolvedRole = await resolveOrgRoleByKey(admin, orgId, roleKey)
+    }
+    if (!resolvedRole) {
+      resolvedRole = await resolveOrgRoleByKey(admin, orgId, "member")
+    }
+    if (!resolvedRole || resolvedRole.key === "owner") {
+      return NextResponse.json({ error: "Role not found" }, { status: 400 })
     }
 
     const expiresAt = new Date()
     expiresAt.setDate(expiresAt.getDate() + 7)
     const token = randomToken()
 
-    const { data: invite, error: insertErr } = await admin
+    const insertPayload = {
+      org_id: orgId,
+      email,
+      invited_by: userId,
+      role_key: resolvedRole.key,
+      role_id: resolvedRole.id,
+      token,
+      status: "pending",
+      expires_at: expiresAt.toISOString(),
+    }
+
+    let invite: { id: string; token: string; expires_at: string } | null = null
+    const primary = await admin
       .from("org_invites")
-      .insert({
-        org_id: orgId,
-        email,
-        invited_by: userId,
-        role_key: role,
-        token,
-        status: "pending",
-        expires_at: expiresAt.toISOString(),
-      })
+      .insert(insertPayload)
       .select("id, token, expires_at")
       .single()
 
-    if (insertErr || !invite) {
+    if (primary.error?.code === "42703") {
+      const fallback = await admin
+        .from("org_invites")
+        .insert({ ...insertPayload, role_id: undefined })
+        .select("id, token, expires_at")
+        .single()
+      if (fallback.error || !fallback.data) {
+        return NextResponse.json(
+          { error: fallback.error?.message ?? "Failed to create invite" },
+          { status: 500 }
+        )
+      }
+      invite = fallback.data as { id: string; token: string; expires_at: string }
+    } else if (primary.error || !primary.data) {
       return NextResponse.json(
-        { error: insertErr?.message ?? "Failed to create invite" },
+        { error: primary.error?.message ?? "Failed to create invite" },
         { status: 500 }
       )
+    } else {
+      invite = primary.data as { id: string; token: string; expires_at: string }
     }
 
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || (req.nextUrl.origin || "")
-    const inviteLink = `${baseUrl}/invite?token=${(invite as { token: string }).token}`
+    const inviteLink = `${baseUrl}/invite?token=${invite.token}`
 
     return NextResponse.json({
       ok: true,
-      inviteId: (invite as { id: string }).id,
+      inviteId: invite.id,
       inviteLink,
-      expiresAt: (invite as { expires_at: string }).expires_at,
+      expiresAt: invite.expires_at,
     })
   } catch (e) {
     return NextResponse.json(

@@ -1,4 +1,4 @@
-﻿"use client"
+"use client"
 
 import { useState, useCallback, useEffect, useMemo } from "react"
 import Link from "next/link"
@@ -17,7 +17,12 @@ import { CSS } from "@dnd-kit/utilities"
 import TemplateInstallDialog from "@/components/pages/TemplateInstallDialog"
 import { supabase } from "@/lib/supabase"
 import { useAuthOrg } from "@/hooks/useAuthOrg"
-import { hasClientSubmissionSignal, isContentClientOverdue, isContentEditorOverdue } from "@/lib/contentWorkflow"
+import {
+  hasClientSubmissionSignal,
+  isContentClientOverdue,
+  isContentEditorOverdue,
+  normalizeContentDueYmd,
+} from "@/lib/contentWorkflow"
 import { notificationActionHref, notificationPriority, notificationTitle } from "@/lib/notifications"
 
 const SIDEBAR_NAV_ORDER_KEY = "sidebar_nav_order"
@@ -27,6 +32,7 @@ const PRIMARY_NAV_HREFS = ["/home", "/contents", "/projects", "/billing", "/vend
 const NAV_ITEMS: { href: string; label: string; locked?: boolean; childPaths?: string[] }[] = [
   { href: "/home", label: "ホーム" },
   { href: "/members", label: "メンバー" },
+  { href: "/resources", label: "稼働管理" },
   { href: "/contents", label: "タスク" },
   { href: "/projects", label: "案件" },
   { href: "/billing", label: "請求", locked: true, childPaths: ["/invoices"] },
@@ -68,8 +74,15 @@ const EMPTY_STATUS_SNAPSHOT = {
 
 const SIDEBAR_FETCH_TTL_MS = 15_000
 
-const COMPLETED_CONTENT_STATUSES = new Set(["delivered", "published", "canceled", "cancelled"])
-const BILLABLE_DONE_STATUSES = new Set(["delivered", "published"])
+const COMPLETED_CONTENT_STATUSES = new Set([
+  "delivered",
+  "invoiced",
+  "completed",
+  "published",
+  "canceled",
+  "cancelled",
+])
+const BILLABLE_DONE_STATUSES = new Set(["delivered", "completed", "published"])
 
 let sidebarPagesCache: { orgId: string; loadedAt: number; pages: SidebarPageSummary[] } | null = null
 let sidebarUnreadCache: { orgId: string; loadedAt: number; notifications: UnreadNotification[] } | null = null
@@ -349,7 +362,7 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
 
       const dueTodayRows = openRows.filter(
         (row) =>
-          row.due_client_at === todayYmd &&
+          normalizeContentDueYmd(row.due_client_at) === todayYmd &&
           !hasClientSubmissionSignal(row.status, row.client_submitted_at)
       )
 
