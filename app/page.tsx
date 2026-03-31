@@ -1,3 +1,5 @@
+import GoogleLoginLanding from "@/components/auth/GoogleLoginLanding"
+
 export default function Page() {
-  return <main>公開できました！！！</main>
+  return <GoogleLoginLanding />
 }
