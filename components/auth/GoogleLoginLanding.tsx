@@ -401,13 +401,11 @@ export default function GoogleLoginLanding() {
     setAuthState("signing_in")
     setErrorMessage(null)
 
-    const origin = getAuthRedirectOrigin()
-    const finishUrl = new URL(`${origin}${AUTH_FINISH_PATH}`)
-    finishUrl.searchParams.set("next", target)
+    const origin = window.location.origin
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: finishUrl.toString(),
+        redirectTo: `${origin}/auth/finish`,
       },
     })
 
