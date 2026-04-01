@@ -154,7 +154,7 @@ export function notificationTitle(n: NotificationLike): string {
     case "platform.payment_pending":
       return "支払確認が必要です"
     case "platform.license_activated":
-      return "ライセンスが有効になりました"
+      return "新規組織作成が可能になりました"
     case "platform.transfer_completed":
       return "ライセンス移行が完了しました"
     case "contents.client_due_overdue":

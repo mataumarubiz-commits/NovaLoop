@@ -1,6 +1,8 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
+import Link from "next/link"
 import { supabase } from "@/lib/supabase"
 import PlatformAdminNav from "@/components/platform/PlatformAdminNav"
 
@@ -16,9 +18,19 @@ type PaymentRow = {
   receipt_document_status?: string | null
   invoice_signed_url?: string | null
   receipt_signed_url?: string | null
+  purchase?: {
+    full_name: string | null
+    company_name: string | null
+    contact_email: string | null
+  } | null
 }
 
 export default function PlatformPaymentsPage() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const qStr = searchParams.get("q") ?? ""
+  
+  const [queryInput, setQueryInput] = useState(qStr)
   const [rows, setRows] = useState<PaymentRow[]>([])
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState<string | null>(null)
@@ -32,7 +44,9 @@ export default function PlatformPaymentsPage() {
       setLoading(false)
       return
     }
-    const res = await fetch("/api/platform/payments", { headers: { Authorization: `Bearer ${token}` } })
+    const params = new URLSearchParams()
+    if (qStr) params.set("q", qStr)
+    const res = await fetch(`/api/platform/payments?${params.toString()}`, { headers: { Authorization: `Bearer ${token}` } })
     const json = await res.json().catch(() => null)
     if (!res.ok || !json?.ok) {
       setError(json?.error ?? "入金確認一覧を取得できませんでした。")
@@ -47,8 +61,19 @@ export default function PlatformPaymentsPage() {
   /* eslint-disable */
   useEffect(() => {
     void load()
-  }, [load])
+  }, [load, qStr])
   /* eslint-enable */
+  
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault()
+    const url = new URL(window.location.href)
+    if (queryInput.trim()) {
+      url.searchParams.set("q", queryInput.trim())
+    } else {
+      url.searchParams.delete("q")
+    }
+    router.push(url.pathname + url.search)
+  }
 
   const markPaid = useCallback(async (id: string) => {
     const token = (await supabase.auth.getSession()).data.session?.access_token
@@ -80,6 +105,36 @@ export default function PlatformPaymentsPage() {
 
         <PlatformAdminNav />
 
+        <form onSubmit={handleSearch} style={{ display: "flex", gap: 8 }}>
+          <input
+            type="search"
+            value={queryInput}
+            onChange={(e) => setQueryInput(e.target.value)}
+            placeholder="メールアドレス、リクエスト番号など..."
+            style={{
+              flex: 1,
+              padding: "10px 14px",
+              borderRadius: 10,
+              border: "1px solid var(--border)",
+              background: "var(--surface)",
+              color: "var(--text)",
+            }}
+          />
+          <button
+            type="submit"
+            style={{
+              padding: "10px 18px",
+              borderRadius: 10,
+              border: "1px solid var(--border)",
+              background: "var(--surface)",
+              color: "var(--text)",
+              cursor: "pointer",
+            }}
+          >
+            検索
+          </button>
+        </form>
+
         {loading ? <div style={{ color: "var(--muted)" }}>読み込み中...</div> : null}
         {!loading && rows.length === 0 ? <div style={{ color: "var(--muted)" }}>支払レコードはありません。</div> : null}
 
@@ -95,7 +150,16 @@ export default function PlatformPaymentsPage() {
               gap: 6,
             }}
           >
-            <div>{row.request_number} / {row.invoice_number}</div>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+              <div style={{ fontWeight: 600 }}>{row.request_number} / {row.invoice_number}</div>
+              <Link href={`/platform/payments/${row.id}`} style={{ color: "var(--primary)", textDecoration: "none" }}>
+                詳細を見る &rarr;
+              </Link>
+            </div>
+            <div style={{ fontWeight: 600 }}>
+              申込者: {row.purchase?.company_name ? `${row.purchase.company_name} ` : ""}{row.purchase?.full_name ?? "不明"}
+              {row.purchase?.contact_email ? ` (${row.purchase.contact_email})` : ""}
+            </div>
             <div>振込識別子: {row.transfer_reference}</div>
             <div>状態: {row.status}</div>
             <div>金額: {row.amount_jpy.toLocaleString("ja-JP")}円</div>
