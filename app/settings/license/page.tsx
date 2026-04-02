@@ -38,6 +38,7 @@ export default function LicenseSettingsPage() {
   const [data, setData] = useState<LicenseResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [busyKey, setBusyKey] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -59,6 +60,26 @@ export default function LicenseSettingsPage() {
     // eslint-disable-next-line
     void load()
   }, [load])
+
+  const openPaymentPdf = useCallback(async (paymentId: string, kind: "invoice" | "receipt") => {
+    const token = (await supabase.auth.getSession()).data.session?.access_token
+    if (!token) return
+    setBusyKey(`${kind}:${paymentId}`)
+    try {
+      const res = await fetch(`/api/platform/payments/${paymentId}/${kind}-pdf`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const json = await res.json().catch(() => null) as { ok?: boolean; signed_url?: string; error?: string } | null
+      if (!res.ok || !json?.ok || !json.signed_url) {
+        setError(json?.error ?? `${kind} pdf を開けませんでした。`)
+        return
+      }
+      window.open(json.signed_url, "_blank", "noopener,noreferrer")
+    } finally {
+      setBusyKey(null)
+    }
+  }, [])
 
   if (loading) {
     return <div style={{ padding: 32, color: "var(--muted)" }}>読み込み中...</div>
@@ -112,8 +133,24 @@ export default function LicenseSettingsPage() {
               <div>請求書PDF: {payment.invoice_document_status ?? "-"}</div>
               <div>領収書PDF: {payment.receipt_document_status ?? "-"}</div>
               <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                {payment.invoice_signed_url ? <a href={payment.invoice_signed_url} target="_blank" rel="noreferrer">請求書PDF</a> : null}
-                {payment.receipt_signed_url ? <a href={payment.receipt_signed_url} target="_blank" rel="noreferrer">領収書PDF</a> : null}
+                <button
+                  type="button"
+                  onClick={() => void openPaymentPdf(payment.id, "invoice")}
+                  disabled={busyKey === `invoice:${payment.id}`}
+                  style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", cursor: "pointer" }}
+                >
+                  {busyKey === `invoice:${payment.id}` ? "請求書PDF準備中..." : "請求書PDF"}
+                </button>
+                {payment.status === "paid" ? (
+                  <button
+                    type="button"
+                    onClick={() => void openPaymentPdf(payment.id, "receipt")}
+                    disabled={busyKey === `receipt:${payment.id}`}
+                    style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid var(--primary)", background: "var(--primary)", color: "#fff", cursor: "pointer" }}
+                  >
+                    {busyKey === `receipt:${payment.id}` ? "領収書PDF準備中..." : "領収書PDF"}
+                  </button>
+                ) : null}
               </div>
             </div>
           ))}

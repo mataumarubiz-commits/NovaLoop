@@ -16,6 +16,9 @@ type PaymentRow = {
   transfer_reference: string
   invoice_document_status?: string | null
   receipt_document_status?: string | null
+  client_notified_at?: string | null
+  client_paid_at_claimed?: string | null
+  client_paid_amount_claimed?: number | null
   invoice_signed_url?: string | null
   receipt_signed_url?: string | null
   purchase?: {
@@ -163,6 +166,7 @@ export default function PlatformPaymentsPage() {
             <div>振込識別子: {row.transfer_reference}</div>
             <div>状態: {row.status}</div>
             <div>金額: {row.amount_jpy.toLocaleString("ja-JP")}円</div>
+            {row.client_notified_at ? <div style={{ color: "var(--success-text)", fontWeight: 600 }}>購入者から振込完了連絡あり</div> : null}
             <div>領収書番号: {row.receipt_number ?? "-"}</div>
             <div>請求書PDF: {row.invoice_document_status ?? "-"}</div>
             <div>領収書PDF: {row.receipt_document_status ?? "-"}</div>

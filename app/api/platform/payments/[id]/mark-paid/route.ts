@@ -45,7 +45,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       return NextResponse.json({ ok: false, error: "failed to allocate receipt number" }, { status: 500 })
     }
 
-    const paidAt = payment.paid_at ? new Date(payment.paid_at) : new Date()
+    const paidAt = payment.client_paid_at_claimed
+      ? new Date(`${payment.client_paid_at_claimed}T00:00:00+09:00`)
+      : payment.paid_at
+        ? new Date(payment.paid_at)
+        : new Date()
     const paidAtIso = paidAt.toISOString()
     const activatedAt = entitlement.activated_at ?? paidAtIso
     const firstActivation = payment.status !== "paid" || entitlement.status !== "active"
@@ -58,7 +62,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           .update({
             status: "paid",
             paid_at: paidAtIso,
-            paid_note: paidNote || payment.paid_note,
+            paid_note:
+              paidNote ||
+              payment.paid_note ||
+              payment.client_notify_note ||
+              payment.client_transfer_name ||
+              null,
             receipt_number: receiptNumber,
             receipt_document_status: "pending_generation",
             updated_at: now,
@@ -96,81 +105,84 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
 
     let receiptPdfPath = typeof payment.receipt_pdf_path === "string" ? payment.receipt_pdf_path : null
-    if (!receiptPdfPath) {
-      const settings = await getPlatformBillingSettings()
-      const recipientName = (purchase.company_name || purchase.full_name || "").trim() || "license_holder"
-      const receiptHtml = renderPlatformReceiptHtml({
-        settings,
-        receiptNumber,
-        invoiceNumber: payment.invoice_number,
-        issueDate: formatDate(new Date()),
-        paidAt: formatDate(paidAt),
-        recipientName,
-        amountJpy: Number(payment.amount_jpy ?? settings.license_price_jpy),
-        payerNote: paidNote || payment.paid_note,
-      })
+    const settings = await getPlatformBillingSettings()
+    const recipientName = (purchase.company_name || purchase.full_name || "").trim() || "license_holder"
+    const receiptHtml = renderPlatformReceiptHtml({
+      settings,
+      receiptNumber,
+      invoiceNumber: payment.invoice_number,
+      issueDate: formatDate(new Date()),
+      paidAt: formatDate(paidAt),
+      recipientName,
+      amountJpy: Number(payment.client_paid_amount_claimed ?? payment.amount_jpy ?? settings.license_price_jpy),
+      payerNote:
+        paidNote ||
+        payment.client_transfer_name ||
+        payment.paid_note ||
+        payment.client_notify_note ||
+        null,
+    })
 
-      try {
-        receiptPdfPath = await uploadPlatformReceiptPdf(payment.request_number, receiptHtml)
-      } catch (error) {
-        const now = new Date().toISOString()
-        await Promise.allSettled([
-          admin
-            .from("platform_payment_requests")
-            .update({
-              receipt_number: receiptNumber,
-              receipt_document_status: "generation_failed",
-              updated_at: now,
-            })
-            .eq("id", paymentId),
-          admin
-            .from("entitlement_purchase_requests")
-            .update({
-              receipt_document_status: "generation_failed",
-              updated_at: now,
-            })
-            .eq("id", purchase.id),
-        ])
-
-        return NextResponse.json(
-          {
-            ok: false,
-            error: error instanceof Error ? error.message : "Failed to generate receipt PDF",
-            retryable: true,
-            request_number: payment.request_number,
-            receipt_number: receiptNumber,
-          },
-          { status: 503 }
-        )
-      }
-
+    try {
+      receiptPdfPath = await uploadPlatformReceiptPdf(payment.request_number, receiptHtml)
+    } catch (error) {
       const now = new Date().toISOString()
-      const [paymentReceiptUpdate, purchaseReceiptUpdate] = await Promise.all([
+      await Promise.allSettled([
         admin
           .from("platform_payment_requests")
           .update({
             receipt_number: receiptNumber,
-            receipt_pdf_path: receiptPdfPath,
-            receipt_document_status: "ready",
+            receipt_document_status: "generation_failed",
             updated_at: now,
           })
           .eq("id", paymentId),
         admin
           .from("entitlement_purchase_requests")
           .update({
-            receipt_pdf_path: receiptPdfPath,
-            receipt_document_status: "ready",
+            receipt_document_status: "generation_failed",
             updated_at: now,
           })
           .eq("id", purchase.id),
       ])
 
-      if (paymentReceiptUpdate.error) {
-        throw new Error(`Failed to store receipt on payment request: ${paymentReceiptUpdate.error.message}`)
-      }
-      if (purchaseReceiptUpdate.error) {
-        throw new Error(`Failed to store receipt on purchase request: ${purchaseReceiptUpdate.error.message}`)
-      }
+      return NextResponse.json(
+        {
+          ok: false,
+          error: error instanceof Error ? error.message : "Failed to generate receipt PDF",
+          retryable: true,
+          request_number: payment.request_number,
+          receipt_number: receiptNumber,
+        },
+        { status: 503 }
+      )
+    }
+
+    const now = new Date().toISOString()
+    const [paymentReceiptUpdate, purchaseReceiptUpdate] = await Promise.all([
+      admin
+        .from("platform_payment_requests")
+        .update({
+          receipt_number: receiptNumber,
+          receipt_pdf_path: receiptPdfPath,
+          receipt_document_status: "ready",
+          updated_at: now,
+        })
+        .eq("id", paymentId),
+      admin
+        .from("entitlement_purchase_requests")
+        .update({
+          receipt_pdf_path: receiptPdfPath,
+          receipt_document_status: "ready",
+          updated_at: now,
+        })
+        .eq("id", purchase.id),
+    ])
+
+    if (paymentReceiptUpdate.error) {
+      throw new Error(`Failed to store receipt on payment request: ${paymentReceiptUpdate.error.message}`)
+    }
+    if (purchaseReceiptUpdate.error) {
+      throw new Error(`Failed to store receipt on purchase request: ${purchaseReceiptUpdate.error.message}`)
     }
 
     if (firstActivation) {
