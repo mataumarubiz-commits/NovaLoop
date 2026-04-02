@@ -4,6 +4,7 @@ import "./globals.css"
 import ConditionalAppShell from "@/components/ConditionalAppShell"
 import AIPalette from "@/components/AIPalette"
 import RouteLoadingShell from "@/components/RouteLoadingShell"
+import { getRuntimePublicEnv } from "@/lib/publicEnv.server"
 
 export const metadata: Metadata = {
   title: "NovaLoop",
@@ -35,6 +36,8 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode
 }>) {
+  const runtimePublicEnv = getRuntimePublicEnv()
+
   return (
     <html lang="ja" suppressHydrationWarning>
       <body
@@ -42,6 +45,11 @@ export default function RootLayout({
         suppressHydrationWarning
         style={{ fontFamily: "var(--font-inter), var(--font-noto-sans-jp), sans-serif" }}
       >
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `window.__NOVALOOP_PUBLIC_ENV__=${JSON.stringify(runtimePublicEnv)};`,
+          }}
+        />
         <script
           dangerouslySetInnerHTML={{
             __html: `(function(){var t=localStorage.getItem("settings_theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);})();`,

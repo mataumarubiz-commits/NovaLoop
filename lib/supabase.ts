@@ -1,11 +1,29 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js"
 
+type BrowserRuntimePublicEnv = {
+  appUrl?: string
+  supabaseUrl?: string
+  supabaseAnonKey?: string
+}
+
 const MISSING_PUBLIC_SUPABASE_MESSAGE =
   "Supabase public settings are missing. " +
   "Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in .env.local or your deployment environment."
 
 let hasLoggedMissingPublicSupabase = false
 let hasInstalledSupabaseAuthConsoleFilter = false
+
+function getBrowserRuntimePublicEnv(): BrowserRuntimePublicEnv | null {
+  if (typeof window === "undefined") {
+    return null
+  }
+
+  const runtimeEnv = (window as typeof window & {
+    __NOVALOOP_PUBLIC_ENV__?: BrowserRuntimePublicEnv
+  }).__NOVALOOP_PUBLIC_ENV__
+
+  return runtimeEnv ?? null
+}
 
 function createMissingPublicSupabaseError() {
   if (!hasLoggedMissingPublicSupabase) {
@@ -55,6 +73,15 @@ function installSupabaseAuthConsoleFilter() {
   }
 
   hasInstalledSupabaseAuthConsoleFilter = true
+}
+
+function resolvePublicSupabaseConfig() {
+  const runtimeEnv = getBrowserRuntimePublicEnv()
+
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() || runtimeEnv?.supabaseUrl?.trim() || ""
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim() || runtimeEnv?.supabaseAnonKey?.trim() || ""
+
+  return { url, anonKey }
 }
 
 function createMissingQueryBuilder() {
@@ -152,8 +179,7 @@ function createMissingSupabaseClient() {
   } as unknown as SupabaseClient
 }
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim()
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim()
+const { url: supabaseUrl, anonKey: supabaseAnonKey } = resolvePublicSupabaseConfig()
 
 export const supabase =
   supabaseUrl && supabaseAnonKey
