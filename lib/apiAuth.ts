@@ -1,8 +1,60 @@
-import { NextRequest } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { normalizeAppOrgRole, type AppOrgRole } from "@/lib/orgRoles"
 import { buildOrgPermissions, type OrgPermissionKey, type OrgPermissions } from "@/lib/orgRolePermissions"
+import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
+
+export type AdminAuthResult = { userId: string; orgId: string; role: string }
+
+/**
+ * Validates Bearer token and requires owner or executive_assistant role.
+ * Returns AdminAuthResult or a NextResponse 401/403.
+ */
+export async function requireAdminAuth(
+  req: NextRequest
+): Promise<AdminAuthResult | NextResponse> {
+  const authHeader = req.headers.get("Authorization")
+  const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7).trim() : null
+  if (!token) {
+    return NextResponse.json({ error: "Authorization Bearer token required" }, { status: 401 })
+  }
+
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  if (!url || !anonKey) {
+    return NextResponse.json({ error: "Server configuration error" }, { status: 500 })
+  }
+
+  const supabase = createClient(url, anonKey)
+  const { data: { user }, error: userError } = await supabase.auth.getUser(token)
+  if (userError || !user) {
+    return NextResponse.json({ error: "Invalid or expired token" }, { status: 401 })
+  }
+
+  const admin = createSupabaseAdmin()
+  const { data: appUser, error: appError } = await admin
+    .from("app_users")
+    .select("org_id, role")
+    .eq("user_id", user.id)
+    .maybeSingle()
+
+  if (appError || !appUser) {
+    return NextResponse.json({ error: "User not found" }, { status: 403 })
+  }
+
+  const role = (appUser as { role: string; org_id: string }).role
+  const orgId = (appUser as { role: string; org_id: string }).org_id
+
+  if ((role !== "owner" && role !== "executive_assistant") || !orgId) {
+    return NextResponse.json(
+      { error: "この操作は owner または executive_assistant のみ実行できます" },
+      { status: 403 }
+    )
+  }
+
+  return { userId: user.id, orgId, role }
+}
 
 export async function getUserIdFromToken(req: NextRequest): Promise<string | null> {
   const authHeader = req.headers.get("Authorization")

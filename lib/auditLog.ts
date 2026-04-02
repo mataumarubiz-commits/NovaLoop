@@ -44,6 +44,13 @@ export type AuditAction =
   | "platform.entitlement.grant"
   | "platform.entitlement.revoke"
   | "org.create"
+  | "payment.recorded"
+  | "payment.updated"
+  | "receipt.created"
+  | "receipt.issued"
+  | "receipt.downloaded"
+  | "receipt.voided"
+  | "receipt.pdf_generate"
 
 type AuditParams = {
   org_id: string | null

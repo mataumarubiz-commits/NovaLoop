@@ -220,46 +220,225 @@ export function renderPlatformReceiptHtml(params: {
   amountJpy: number
   payerNote?: string | null
 }) {
+  const registrationRow = params.settings.invoice_registration_number
+    ? `<tr><td style="padding:6px 0;color:#6b7280;font-size:12px">適格請求書番号</td><td style="padding:6px 0;font-size:12px">${escapeHtml(params.settings.invoice_registration_number)}</td></tr>`
+    : ""
+
   const payerNoteRow = params.payerNote?.trim()
-    ? `<div>振込名義メモ: ${escapeHtml(params.payerNote.trim())}</div>`
+    ? `<tr><td style="padding:8px 12px;color:#6b7280;font-size:13px;white-space:nowrap">振込名義メモ</td><td style="padding:8px 12px;font-size:13px">${escapeHtml(params.payerNote.trim())}</td></tr>`
     : ""
 
   return `<!DOCTYPE html>
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <title>${escapeHtml(params.receiptNumber)}</title>
+  <title>領収書 ${escapeHtml(params.receiptNumber)}</title>
   <style>
-    body { font-family: sans-serif; color: #111827; margin: 0; padding: 24px; }
-    .card { border: 1px solid #e5e7eb; border-radius: 16px; padding: 28px; }
-    .muted { color: #64748b; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Yu Gothic", sans-serif;
+      color: #1a1a1a;
+      margin: 0;
+      padding: 40px 48px;
+      background: #fff;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 32px;
+    }
+    .seller-name {
+      font-size: 20px;
+      font-weight: 700;
+      color: #111;
+      letter-spacing: 0.02em;
+    }
+    .doc-title {
+      font-size: 36px;
+      font-weight: 300;
+      color: #555;
+      letter-spacing: 0.08em;
+    }
+    .info-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0;
+      border: 1px solid #d1d5db;
+      border-radius: 4px;
+      overflow: hidden;
+      margin-bottom: 32px;
+    }
+    .info-cell {
+      padding: 10px 16px;
+      border-bottom: 1px solid #d1d5db;
+    }
+    .info-cell:nth-child(odd) { border-right: 1px solid #d1d5db; }
+    .info-cell:nth-last-child(-n+2) { border-bottom: none; }
+    .info-cell-label {
+      font-size: 11px;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 2px;
+    }
+    .info-cell-value {
+      font-size: 14px;
+      font-weight: 500;
+      color: #111;
+    }
+    .info-cell-value.amount {
+      font-size: 22px;
+      font-weight: 700;
+      color: #111;
+      letter-spacing: -0.01em;
+    }
+    .items-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 0;
+    }
+    .items-table thead tr {
+      background: #f3f4f6;
+    }
+    .items-table th {
+      padding: 10px 16px;
+      text-align: left;
+      font-size: 12px;
+      font-weight: 600;
+      color: #6b7280;
+      letter-spacing: 0.04em;
+      border-bottom: 1px solid #d1d5db;
+    }
+    .items-table th:last-child { text-align: right; }
+    .items-table td {
+      padding: 14px 16px;
+      font-size: 14px;
+      color: #111;
+      border-bottom: 1px solid #e5e7eb;
+      vertical-align: middle;
+    }
+    .items-table td:last-child { text-align: right; font-weight: 500; }
+    .items-table .item-sub {
+      font-size: 12px;
+      color: #6b7280;
+      margin-top: 2px;
+    }
+    .total-row {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 32px;
+      padding: 14px 16px;
+      background: #f9fafb;
+      border-top: 2px solid #d1d5db;
+      border-bottom: 1px solid #d1d5db;
+    }
+    .total-label { font-size: 14px; color: #6b7280; font-weight: 600; }
+    .total-amount { font-size: 22px; font-weight: 700; color: #111; letter-spacing: -0.01em; }
+    .seller-section {
+      margin-top: 40px;
+      padding-top: 24px;
+      border-top: 1px solid #e5e7eb;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+    }
+    .seller-section table td { padding: 6px 0; font-size: 13px; vertical-align: top; }
+    .seller-section table td:first-child { color: #6b7280; white-space: nowrap; padding-right: 16px; }
+    .stamp-area {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      border: 1px dashed #d1d5db;
+      border-radius: 4px;
+      color: #9ca3af;
+      font-size: 12px;
+      padding: 16px;
+      min-height: 80px;
+    }
   </style>
 </head>
 <body>
-  <div class="card">
-    <h1 style="margin:0 0 8px;font-size:24px">領収書</h1>
-    <p class="muted" style="margin:0 0 20px">${escapeHtml(params.receiptNumber)}</p>
+  <div class="header">
+    <div class="seller-name">${escapeHtml(params.settings.seller_name)}</div>
+    <div class="doc-title">領収書</div>
+  </div>
 
-    <div style="display:grid;gap:8px">
-      <div>領収書番号: ${escapeHtml(params.receiptNumber)}</div>
-      <div>発行日: ${escapeHtml(params.issueDate)}</div>
-      <div>請求書番号: ${escapeHtml(params.invoiceNumber)}</div>
-      <div>入金日: ${escapeHtml(params.paidAt)}</div>
-      <div>宛名: ${escapeHtml(params.recipientName)}</div>
-      <div>金額: ${escapeHtml(formatJpy(params.amountJpy))}</div>
-      <div>但し書き: 新規組織作成ライセンス代として</div>
-      <div>支払方法: 銀行振込</div>
-      ${payerNoteRow}
+  <div class="info-grid">
+    <div class="info-cell">
+      <div class="info-cell-label">領収書番号</div>
+      <div class="info-cell-value">${escapeHtml(params.receiptNumber)}</div>
     </div>
+    <div class="info-cell">
+      <div class="info-cell-label">請求先</div>
+      <div class="info-cell-value">${escapeHtml(params.recipientName)} 様</div>
+    </div>
+    <div class="info-cell">
+      <div class="info-cell-label">発行日</div>
+      <div class="info-cell-value">${escapeHtml(params.issueDate)}</div>
+    </div>
+    <div class="info-cell">
+      <div class="info-cell-label">合計</div>
+      <div class="info-cell-value amount">${escapeHtml(formatJpy(params.amountJpy))}</div>
+    </div>
+    <div class="info-cell">
+      <div class="info-cell-label">入金日</div>
+      <div class="info-cell-value">${escapeHtml(params.paidAt)}</div>
+    </div>
+    <div class="info-cell">
+      <div class="info-cell-label">支払方法</div>
+      <div class="info-cell-value">銀行振込</div>
+    </div>
+    <div class="info-cell" style="border-bottom:none">
+      <div class="info-cell-label">請求書番号</div>
+      <div class="info-cell-value">${escapeHtml(params.invoiceNumber)}</div>
+    </div>
+    <div class="info-cell" style="border-bottom:none">
+      <div class="info-cell-label">但し書き</div>
+      <div class="info-cell-value">新規組織作成ライセンス代として</div>
+    </div>
+  </div>
 
-    <section style="margin-top:28px;display:grid;gap:8px">
-      <h2 style="margin:0;font-size:16px">発行者情報</h2>
-      <div>発行者名: ${escapeHtml(params.settings.seller_name)}</div>
-      <div>住所: ${escapeHtml(params.settings.seller_address)}</div>
-      <div>電話番号: ${escapeHtml(params.settings.seller_phone)}</div>
-      <div>メール: ${escapeHtml(params.settings.seller_email)}</div>
-      <div>適格請求書発行事業者番号: ${escapeHtml(params.settings.invoice_registration_number ?? "なし")}</div>
-    </section>
+  <table class="items-table">
+    <thead>
+      <tr>
+        <th>品目</th>
+        <th>種類</th>
+        <th>金額</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>
+          新規組織作成ライセンス
+          <div class="item-sub">NovaLoop</div>
+        </td>
+        <td style="color:#6b7280">ライセンス購入</td>
+        <td>${escapeHtml(formatJpy(params.amountJpy))}</td>
+      </tr>
+      ${payerNoteRow}
+    </tbody>
+  </table>
+  <div class="total-row">
+    <span class="total-label">合計</span>
+    <span class="total-amount">${escapeHtml(formatJpy(params.amountJpy))}</span>
+  </div>
+
+  <div class="seller-section">
+    <table>
+      <tbody>
+        <tr><td>発行者名</td><td>${escapeHtml(params.settings.seller_name)}</td></tr>
+        <tr><td>住所</td><td>${escapeHtml(params.settings.seller_address)}</td></tr>
+        <tr><td>電話番号</td><td>${escapeHtml(params.settings.seller_phone)}</td></tr>
+        <tr><td>メール</td><td>${escapeHtml(params.settings.seller_email)}</td></tr>
+        ${registrationRow}
+      </tbody>
+    </table>
+    <div class="stamp-area">印</div>
   </div>
 </body>
 </html>`

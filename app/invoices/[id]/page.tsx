@@ -54,6 +54,14 @@ type Invoice = {
   guest_client_address: string | null
   issuer_snapshot: Record<string, unknown> | null
   bank_snapshot: Record<string, unknown> | null
+  // 入金フィールド（068_receipts.sql で追加）
+  payment_status: string | null
+  paid_at: string | null
+  paid_amount: number | null
+  payment_method: string | null
+  payment_memo: string | null
+  payment_note: string | null
+  latest_receipt_id: string | null
   clients?: { name: string } | null
   invoice_lines?: InvoiceLine[] | null
 }
@@ -80,6 +88,179 @@ async function getAccessToken() {
   return data.session?.access_token ?? null
 }
 
+// ─── 入金記録モーダル ──────────────────────────────────────────────────────
+function RecordPaymentModal({
+  invoiceId,
+  invoiceTotal,
+  onClose,
+  onSaved,
+}: {
+  invoiceId: string
+  invoiceTotal: number
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const [paidAt, setPaidAt] = useState(new Date().toISOString().slice(0, 10))
+  const [paidAmount, setPaidAmount] = useState(String(invoiceTotal))
+  const [method, setMethod] = useState("bank_transfer")
+  const [memo, setMemo] = useState("")
+  const [note, setNote] = useState("")
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const [warning, setWarning] = useState<string | null>(null)
+
+  const handleSubmit = async () => {
+    setErr(null)
+    setWarning(null)
+    const amount = Number(paidAmount)
+    if (!paidAt || isNaN(amount) || amount <= 0) {
+      setErr("入金日と入金金額（正の数値）は必須です")
+      return
+    }
+    setSaving(true)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const token = session?.access_token
+      if (!token) { setErr("ログイン状態を確認してください"); setSaving(false); return }
+
+      const res = await fetch(`/api/invoices/${invoiceId}/record-payment`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ paid_at: paidAt, paid_amount: amount, payment_method: method, payment_memo: memo || null, payment_note: note || null }),
+      })
+      const json = await res.json().catch(() => null) as { ok?: boolean; warning?: string; error?: string } | null
+      if (!res.ok) { setErr(json?.error ?? "入金の記録に失敗しました"); setSaving(false); return }
+      if (json?.warning) setWarning(json.warning)
+      onSaved()
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "通信エラーが発生しました")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ background: "var(--surface)", borderRadius: 16, padding: 28, width: "100%", maxWidth: 480, boxShadow: "0 8px 32px rgba(0,0,0,0.18)" }}>
+        <h2 style={{ margin: "0 0 20px", fontSize: 18 }}>入金を記録</h2>
+        {err && <p style={{ color: "var(--error-text)", margin: "0 0 12px", fontSize: 14 }}>{err}</p>}
+        {warning && <p style={{ color: "#b45309", background: "#fef3c7", padding: "8px 12px", borderRadius: 8, margin: "0 0 12px", fontSize: 13 }}>{warning}</p>}
+        <div style={{ display: "grid", gap: 14 }}>
+          <label style={{ display: "grid", gap: 4 }}>
+            <span style={{ fontSize: 13, color: "var(--muted)" }}>入金日 <span style={{ color: "var(--error-text)" }}>*</span></span>
+            <input type="date" value={paidAt} onChange={e => setPaidAt(e.target.value)} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)" }} />
+          </label>
+          <label style={{ display: "grid", gap: 4 }}>
+            <span style={{ fontSize: 13, color: "var(--muted)" }}>入金金額（円） <span style={{ color: "var(--error-text)" }}>*</span></span>
+            <input type="number" value={paidAmount} onChange={e => setPaidAmount(e.target.value)} min={1} step={1} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)" }} />
+            <span style={{ fontSize: 12, color: "var(--muted)" }}>請求額: {formatCurrency(invoiceTotal)}</span>
+          </label>
+          <label style={{ display: "grid", gap: 4 }}>
+            <span style={{ fontSize: 13, color: "var(--muted)" }}>決済方法 <span style={{ color: "var(--error-text)" }}>*</span></span>
+            <select value={method} onChange={e => setMethod(e.target.value)} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)" }}>
+              <option value="bank_transfer">銀行振込</option>
+              <option value="cash">現金</option>
+              <option value="card">クレジットカード</option>
+              <option value="other">その他</option>
+            </select>
+          </label>
+          <label style={{ display: "grid", gap: 4 }}>
+            <span style={{ fontSize: 13, color: "var(--muted)" }}>振込名義メモ（任意）</span>
+            <input type="text" value={memo} onChange={e => setMemo(e.target.value)} placeholder="例: ヤマダタロウ" style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)" }} />
+          </label>
+          <label style={{ display: "grid", gap: 4 }}>
+            <span style={{ fontSize: 13, color: "var(--muted)" }}>備考（任意）</span>
+            <textarea value={note} onChange={e => setNote(e.target.value)} rows={2} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", resize: "vertical" }} />
+          </label>
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 20 }}>
+          <button type="button" onClick={onClose} disabled={saving} style={{ padding: "9px 16px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", cursor: "pointer" }}>キャンセル</button>
+          <button type="button" onClick={() => void handleSubmit()} disabled={saving} style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: "var(--primary)", color: "#fff", fontWeight: 700, cursor: saving ? "not-allowed" : "pointer" }}>
+            {saving ? "保存中..." : "入金を記録する"}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── 領収書発行モーダル ────────────────────────────────────────────────────
+function IssueReceiptModal({
+  invoiceId,
+  onClose,
+  onIssued,
+}: {
+  invoiceId: string
+  onClose: () => void
+  onIssued: (receiptId: string) => void
+}) {
+  const [issueDate, setIssueDate] = useState(new Date().toISOString().slice(0, 10))
+  const [note, setNote] = useState("")
+  const [issuing, setIssuing] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  const handleIssue = async () => {
+    setErr(null)
+    setIssuing(true)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const token = session?.access_token
+      if (!token) { setErr("ログイン状態を確認してください"); setIssuing(false); return }
+
+      const res = await fetch("/api/receipts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ invoice_id: invoiceId, issue_date: issueDate, note: note || null }),
+      })
+      const json = await res.json().catch(() => null) as { receipt?: { id: string }; error?: string; existing_receipt_id?: string } | null
+      if (!res.ok) {
+        setErr(json?.error ?? "領収書の発行に失敗しました")
+        setIssuing(false)
+        return
+      }
+      onIssued(json?.receipt?.id ?? "")
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "通信エラーが発生しました")
+    } finally {
+      setIssuing(false)
+    }
+  }
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ background: "var(--surface)", borderRadius: 16, padding: 28, width: "100%", maxWidth: 460, boxShadow: "0 8px 32px rgba(0,0,0,0.18)" }}>
+        <h2 style={{ margin: "0 0 8px", fontSize: 18 }}>領収書を発行</h2>
+        <p style={{ margin: "0 0 20px", fontSize: 13, color: "var(--muted)" }}>発行後は内容を変更できません。内容を確認してから発行してください。</p>
+        {err && <p style={{ color: "var(--error-text)", margin: "0 0 12px", fontSize: 14 }}>{err}</p>}
+        <div style={{ display: "grid", gap: 14 }}>
+          <label style={{ display: "grid", gap: 4 }}>
+            <span style={{ fontSize: 13, color: "var(--muted)" }}>発行日 <span style={{ color: "var(--error-text)" }}>*</span></span>
+            <input type="date" value={issueDate} onChange={e => setIssueDate(e.target.value)} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)" }} />
+          </label>
+          <label style={{ display: "grid", gap: 4 }}>
+            <span style={{ fontSize: 13, color: "var(--muted)" }}>備考（任意・PDF に記載されます）</span>
+            <textarea value={note} onChange={e => setNote(e.target.value)} rows={3} placeholder="経費処理のための補足情報など" style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", resize: "vertical" }} />
+          </label>
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 20 }}>
+          <button type="button" onClick={onClose} disabled={issuing} style={{ padding: "9px 16px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", cursor: "pointer" }}>キャンセル</button>
+          <button type="button" onClick={() => void handleIssue()} disabled={issuing} style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: "#16a34a", color: "#fff", fontWeight: 700, cursor: issuing ? "not-allowed" : "pointer" }}>
+            {issuing ? "発行中（PDF生成）..." : "領収書を発行する"}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── 入金ステータスラベル ─────────────────────────────────────────────────
+const PAYMENT_STATUS_LABEL: Record<string, { label: string; color: string; bg: string }> = {
+  unpaid:   { label: "未入金",   color: "#92400e", bg: "#fef3c7" },
+  partial:  { label: "一部入金", color: "#1d4ed8", bg: "#dbeafe" },
+  paid:     { label: "入金済み", color: "#166534", bg: "#dcfce7" },
+  overpaid: { label: "過入金",   color: "#7c3aed", bg: "#ede9fe" },
+}
+
 export default function InvoiceDetailPage() {
   const params = useParams()
   const id = typeof params.id === "string" ? params.id : null
@@ -92,6 +273,9 @@ export default function InvoiceDetailPage() {
   const [pdfLoading, setPdfLoading] = useState(false)
   const [notesDraft, setNotesDraft] = useState("")
   const [sendDraft, setSendDraft] = useState("")
+  const [showRecordPayment, setShowRecordPayment] = useState(false)
+  const [showIssueReceipt, setShowIssueReceipt] = useState(false)
+  const [receiptLoading, setReceiptLoading] = useState(false)
 
   useEffect(() => {
     if (authLoading || !id || !orgId || !canAccess) {
@@ -104,7 +288,7 @@ export default function InvoiceDetailPage() {
       const { data, error: fetchError } = await supabase
         .from("invoices")
         .select(
-          "id, org_id, client_id, invoice_month, invoice_title, invoice_no, issue_date, due_date, status, subtotal, total, tax_mode, tax_amount, withholding_enabled, withholding_amount, notes, source_type, guest_client_name, guest_company_name, guest_client_email, guest_client_address, issuer_snapshot, bank_snapshot, clients(name), invoice_lines(id, quantity, unit_price, amount, description, content_id, project_name, title)"
+          "id, org_id, client_id, invoice_month, invoice_title, invoice_no, issue_date, due_date, status, subtotal, total, tax_mode, tax_amount, withholding_enabled, withholding_amount, notes, source_type, guest_client_name, guest_company_name, guest_client_email, guest_client_address, issuer_snapshot, bank_snapshot, payment_status, paid_at, paid_amount, payment_method, payment_memo, payment_note, latest_receipt_id, clients(name), invoice_lines(id, quantity, unit_price, amount, description, content_id, project_name, title)"
         )
         .eq("id", id)
         .eq("org_id", orgId)
@@ -178,6 +362,35 @@ export default function InvoiceDetailPage() {
     }
   }
 
+  const openReceipt = async (receiptId: string) => {
+    if (!receiptId) return
+    const token = await getAccessToken()
+    if (!token) { setError("ログイン状態を確認してください。"); return }
+    setReceiptLoading(true)
+    try {
+      const res = await fetch(`/api/receipts/${receiptId}/pdf`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const json = await res.json().catch(() => null) as { signed_url?: string; error?: string } | null
+      if (json?.signed_url) {
+        window.open(json.signed_url, "_blank", "noopener,noreferrer")
+      } else {
+        setError(json?.error ?? "領収書PDFを開けませんでした。")
+      }
+    } finally {
+      setReceiptLoading(false)
+    }
+  }
+
+  const reloadInvoice = async () => {
+    if (!id || !orgId) return
+    const { data } = await supabase
+      .from("invoices")
+      .select("id, org_id, client_id, invoice_month, invoice_title, invoice_no, issue_date, due_date, status, subtotal, total, tax_mode, tax_amount, withholding_enabled, withholding_amount, notes, source_type, guest_client_name, guest_company_name, guest_client_email, guest_client_address, issuer_snapshot, bank_snapshot, payment_status, paid_at, paid_amount, payment_method, payment_memo, payment_note, latest_receipt_id, clients(name), invoice_lines(id, quantity, unit_price, amount, description, content_id, project_name, title)")
+      .eq("id", id).eq("org_id", orgId).maybeSingle()
+    if (data) setInvoice(data as unknown as Invoice)
+  }
+
   if (authLoading || loading) {
     return <div style={{ padding: 32, color: "var(--muted)" }}>読み込み中...</div>
   }
@@ -225,6 +438,21 @@ export default function InvoiceDetailPage() {
 
   return (
     <div style={{ padding: "24px 20px 48px" }}>
+      {showRecordPayment && invoice && (
+        <RecordPaymentModal
+          invoiceId={invoice.id}
+          invoiceTotal={Number(invoice.total ?? invoice.subtotal)}
+          onClose={() => setShowRecordPayment(false)}
+          onSaved={() => { setShowRecordPayment(false); void reloadInvoice() }}
+        />
+      )}
+      {showIssueReceipt && invoice && (
+        <IssueReceiptModal
+          invoiceId={invoice.id}
+          onClose={() => setShowIssueReceipt(false)}
+          onIssued={(receiptId) => { setShowIssueReceipt(false); void reloadInvoice(); void openReceipt(receiptId) }}
+        />
+      )}
       <div style={cardStyle}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
           <div>
@@ -244,6 +472,65 @@ export default function InvoiceDetailPage() {
         </div>
 
         {error ? <p style={{ color: "var(--error-text)", marginTop: 0 }}>{error}</p> : null}
+
+        {/* ─── 入金・領収書ステータスセクション ─── */}
+        {(() => {
+          const ps = invoice.payment_status ?? "unpaid"
+          const statusInfo = PAYMENT_STATUS_LABEL[ps] ?? PAYMENT_STATUS_LABEL.unpaid
+          const canIssueReceipt = ps === "paid" || ps === "overpaid"
+          const hasReceipt = !!invoice.latest_receipt_id
+          const paymentMethodLabel: Record<string, string> = {
+            bank_transfer: "銀行振込", cash: "現金", card: "クレジットカード", other: "その他",
+          }
+          return (
+            <div style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 20, marginBottom: 20, background: "var(--surface-2)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: ps !== "unpaid" ? 14 : 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <strong style={{ fontSize: 15 }}>入金ステータス</strong>
+                  <span style={{ padding: "3px 10px", borderRadius: 20, fontSize: 12, fontWeight: 700, color: statusInfo.color, background: statusInfo.bg }}>{statusInfo.label}</span>
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button type="button" onClick={() => setShowRecordPayment(true)} style={{ padding: "7px 14px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface)", cursor: "pointer", fontSize: 13 }}>
+                    {ps === "unpaid" ? "入金を記録" : "入金情報を更新"}
+                  </button>
+                  {canIssueReceipt && !hasReceipt && (
+                    <button type="button" onClick={() => setShowIssueReceipt(true)} style={{ padding: "7px 14px", borderRadius: 8, border: "none", background: "#16a34a", color: "#fff", fontWeight: 700, cursor: "pointer", fontSize: 13 }}>
+                      領収書を発行
+                    </button>
+                  )}
+                  {hasReceipt && (
+                    <>
+                      <button type="button" onClick={() => void openReceipt(invoice.latest_receipt_id!)} disabled={receiptLoading} style={{ padding: "7px 14px", borderRadius: 8, border: "none", background: "var(--primary)", color: "#fff", fontWeight: 700, cursor: receiptLoading ? "not-allowed" : "pointer", fontSize: 13 }}>
+                        {receiptLoading ? "準備中..." : "領収書を開く"}
+                      </button>
+                      <Link href={`/receipts/${invoice.latest_receipt_id}`} style={{ padding: "7px 14px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)", textDecoration: "none", fontSize: 13 }}>
+                        領収書詳細
+                      </Link>
+                    </>
+                  )}
+                </div>
+              </div>
+              {ps !== "unpaid" && invoice.paid_at && (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, fontSize: 13, color: "var(--muted)" }}>
+                  <div><span style={{ color: "var(--text)", fontWeight: 500 }}>入金日:</span> {invoice.paid_at}</div>
+                  <div><span style={{ color: "var(--text)", fontWeight: 500 }}>入金額:</span> {formatCurrency(invoice.paid_amount)}</div>
+                  <div><span style={{ color: "var(--text)", fontWeight: 500 }}>決済方法:</span> {paymentMethodLabel[invoice.payment_method ?? ""] ?? invoice.payment_method ?? "-"}</div>
+                  {invoice.payment_memo && <div><span style={{ color: "var(--text)", fontWeight: 500 }}>振込名義:</span> {invoice.payment_memo}</div>}
+                </div>
+              )}
+              {canIssueReceipt && !hasReceipt && (
+                <p style={{ margin: "12px 0 0", fontSize: 12, color: "#166534", background: "#dcfce7", padding: "6px 10px", borderRadius: 6 }}>
+                  入金が確認されました。「領収書を発行」から経費証憑用PDFを発行できます。
+                </p>
+              )}
+              {ps === "unpaid" && invoice.status === "issued" && (
+                <p style={{ margin: "12px 0 0", fontSize: 12, color: "var(--muted)" }}>
+                  入金を確認したら「入金を記録」を押してください。入金確認後に領収書を発行できます。
+                </p>
+              )}
+            </div>
+          )
+        })()}
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10, marginBottom: 16 }}>
           <div><strong>請求先:</strong> {counterparty}</div>

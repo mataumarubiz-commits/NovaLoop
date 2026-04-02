@@ -5,6 +5,7 @@ const MISSING_PUBLIC_SUPABASE_MESSAGE =
   "Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in .env.local or your deployment environment."
 
 let hasLoggedMissingPublicSupabase = false
+let hasInstalledSupabaseAuthConsoleFilter = false
 
 function createMissingPublicSupabaseError() {
   if (!hasLoggedMissingPublicSupabase) {
@@ -13,6 +14,47 @@ function createMissingPublicSupabaseError() {
   }
 
   return new Error(MISSING_PUBLIC_SUPABASE_MESSAGE)
+}
+
+function hasInvalidRefreshTokenText(value: string) {
+  return /invalid refresh token|refresh token not found/i.test(value)
+}
+
+function isInvalidRefreshTokenError(value: unknown): boolean {
+  if (typeof value === "string") {
+    return hasInvalidRefreshTokenText(value)
+  }
+
+  if (value instanceof Error) {
+    return hasInvalidRefreshTokenText(value.message) || hasInvalidRefreshTokenText(value.name)
+  }
+
+  if (typeof value === "object" && value !== null) {
+    const maybeMessage = "message" in value && typeof value.message === "string" ? value.message : null
+    const maybeName = "name" in value && typeof value.name === "string" ? value.name : null
+    return Boolean(
+      (maybeMessage && hasInvalidRefreshTokenText(maybeMessage)) ||
+        (maybeName && hasInvalidRefreshTokenText(maybeName))
+    )
+  }
+
+  return false
+}
+
+function installSupabaseAuthConsoleFilter() {
+  if (hasInstalledSupabaseAuthConsoleFilter || typeof window === "undefined") {
+    return
+  }
+
+  const originalConsoleError = console.error.bind(console)
+  console.error = (...args: unknown[]) => {
+    if (args.some((arg) => isInvalidRefreshTokenError(arg))) {
+      return
+    }
+    originalConsoleError(...args)
+  }
+
+  hasInstalledSupabaseAuthConsoleFilter = true
 }
 
 function createMissingQueryBuilder() {
@@ -115,5 +157,5 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim()
 
 export const supabase =
   supabaseUrl && supabaseAnonKey
-    ? createClient(supabaseUrl, supabaseAnonKey)
+    ? (installSupabaseAuthConsoleFilter(), createClient(supabaseUrl, supabaseAnonKey))
     : createMissingSupabaseClient()
