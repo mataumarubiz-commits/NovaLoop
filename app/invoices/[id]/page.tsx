@@ -62,6 +62,12 @@ type Invoice = {
   payment_memo: string | null
   payment_note: string | null
   latest_receipt_id: string | null
+  public_token: string | null
+  client_notified_at: string | null
+  client_paid_at_claimed: string | null
+  client_paid_amount_claimed: number | null
+  client_transfer_name: string | null
+  client_notify_note: string | null
   clients?: { name: string } | null
   invoice_lines?: InvoiceLine[] | null
 }
@@ -86,6 +92,16 @@ function defaultFileName(inv: Invoice) {
 async function getAccessToken() {
   const { data } = await supabase.auth.getSession()
   return data.session?.access_token ?? null
+}
+
+function resolveRuntimeAppUrl() {
+  if (typeof window === "undefined") return ""
+  const runtimeEnv = (
+    window as typeof window & {
+      __NOVALOOP_PUBLIC_ENV__?: { appUrl?: string }
+    }
+  ).__NOVALOOP_PUBLIC_ENV__
+  return runtimeEnv?.appUrl?.trim() || process.env.NEXT_PUBLIC_APP_URL?.trim() || window.location.origin
 }
 
 // ─── 入金記録モーダル ──────────────────────────────────────────────────────
@@ -288,7 +304,7 @@ export default function InvoiceDetailPage() {
       const { data, error: fetchError } = await supabase
         .from("invoices")
         .select(
-          "id, org_id, client_id, invoice_month, invoice_title, invoice_no, issue_date, due_date, status, subtotal, total, tax_mode, tax_amount, withholding_enabled, withholding_amount, notes, source_type, guest_client_name, guest_company_name, guest_client_email, guest_client_address, issuer_snapshot, bank_snapshot, payment_status, paid_at, paid_amount, payment_method, payment_memo, payment_note, latest_receipt_id, clients(name), invoice_lines(id, quantity, unit_price, amount, description, content_id, project_name, title)"
+          "id, org_id, client_id, invoice_month, invoice_title, invoice_no, issue_date, due_date, status, subtotal, total, tax_mode, tax_amount, withholding_enabled, withholding_amount, notes, source_type, guest_client_name, guest_company_name, guest_client_email, guest_client_address, issuer_snapshot, bank_snapshot, payment_status, paid_at, paid_amount, payment_method, payment_memo, payment_note, latest_receipt_id, public_token, client_notified_at, client_paid_at_claimed, client_paid_amount_claimed, client_transfer_name, client_notify_note, clients(name), invoice_lines(id, quantity, unit_price, amount, description, content_id, project_name, title)"
         )
         .eq("id", id)
         .eq("org_id", orgId)
@@ -340,6 +356,7 @@ export default function InvoiceDetailPage() {
     setPdfLoading(true)
     try {
       const res = await fetch(`/api/invoices/${id}/pdf`, {
+        method: "POST",
         headers: { Authorization: `Bearer ${token}` },
       })
       const json = (await res.json().catch(() => null)) as { signed_url?: string; error?: string } | null
@@ -359,6 +376,15 @@ export default function InvoiceDetailPage() {
       await navigator.clipboard.writeText(sendDraft)
     } catch {
       setError("送付前文のコピーに失敗しました。")
+    }
+  }
+
+  const copyNotifyUrl = async () => {
+    if (!invoice?.public_token) return
+    try {
+      await navigator.clipboard.writeText(`${resolveRuntimeAppUrl().replace(/\/$/, "")}/pay/${invoice.public_token}`)
+    } catch {
+      setError("支払完了通知URLのコピーに失敗しました。")
     }
   }
 
@@ -386,7 +412,7 @@ export default function InvoiceDetailPage() {
     if (!id || !orgId) return
     const { data } = await supabase
       .from("invoices")
-      .select("id, org_id, client_id, invoice_month, invoice_title, invoice_no, issue_date, due_date, status, subtotal, total, tax_mode, tax_amount, withholding_enabled, withholding_amount, notes, source_type, guest_client_name, guest_company_name, guest_client_email, guest_client_address, issuer_snapshot, bank_snapshot, payment_status, paid_at, paid_amount, payment_method, payment_memo, payment_note, latest_receipt_id, clients(name), invoice_lines(id, quantity, unit_price, amount, description, content_id, project_name, title)")
+      .select("id, org_id, client_id, invoice_month, invoice_title, invoice_no, issue_date, due_date, status, subtotal, total, tax_mode, tax_amount, withholding_enabled, withholding_amount, notes, source_type, guest_client_name, guest_company_name, guest_client_email, guest_client_address, issuer_snapshot, bank_snapshot, payment_status, paid_at, paid_amount, payment_method, payment_memo, payment_note, latest_receipt_id, public_token, client_notified_at, client_paid_at_claimed, client_paid_amount_claimed, client_transfer_name, client_notify_note, clients(name), invoice_lines(id, quantity, unit_price, amount, description, content_id, project_name, title)")
       .eq("id", id).eq("org_id", orgId).maybeSingle()
     if (data) setInvoice(data as unknown as Invoice)
   }
@@ -435,6 +461,9 @@ export default function InvoiceDetailPage() {
     `既存メモ: ${invoice.notes || "-"}`,
     `送付前文: ${sendDraft || "-"}`,
   ].join("\n")
+  const notifyUrl = invoice.public_token
+    ? `${resolveRuntimeAppUrl().replace(/\/$/, "")}/pay/${invoice.public_token}`
+    : ""
 
   return (
     <div style={{ padding: "24px 20px 48px" }}>
@@ -531,6 +560,62 @@ export default function InvoiceDetailPage() {
             </div>
           )
         })()}
+
+        <div style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 20, marginBottom: 20, background: "var(--surface)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+            <div>
+              <strong style={{ fontSize: 15, color: "var(--text)" }}>支払完了通知導線</strong>
+              <div style={{ marginTop: 6, fontSize: 13, color: "var(--muted)" }}>
+                請求書PDFに記載している振込後フォームです。必要に応じてこのURLを相手に共有できます。
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                onClick={() => void copyNotifyUrl()}
+                disabled={!notifyUrl}
+                style={{ padding: "7px 14px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", cursor: notifyUrl ? "pointer" : "not-allowed", fontSize: 13 }}
+              >
+                URLをコピー
+              </button>
+              {notifyUrl && (
+                <a
+                  href={notifyUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ padding: "7px 14px", borderRadius: 8, border: "none", background: "var(--primary)", color: "#fff", textDecoration: "none", fontWeight: 700, fontSize: 13 }}
+                >
+                  公開フォームを開く
+                </a>
+              )}
+            </div>
+          </div>
+
+          {notifyUrl ? (
+            <div style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface-2)", fontSize: 12, color: "var(--muted)", wordBreak: "break-all", marginBottom: 12 }}>
+              {notifyUrl}
+            </div>
+          ) : (
+            <div style={{ marginBottom: 12, fontSize: 12, color: "var(--muted)" }}>
+              公開フォームURLを生成できませんでした。`NEXT_PUBLIC_APP_URL` または現在の起点URLを確認してください。
+            </div>
+          )}
+
+          {invoice.client_notified_at ? (
+            <div style={{ borderRadius: 10, border: "1px solid #bbf7d0", background: "#f0fdf4", padding: 14, display: "grid", gap: 6 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#166534" }}>先方から支払完了通知が届いています</div>
+              <div style={{ fontSize: 13, color: "#166534" }}>通知受信: {invoice.client_notified_at}</div>
+              {invoice.client_paid_at_claimed && <div style={{ fontSize: 13, color: "#166534" }}>振込日: {invoice.client_paid_at_claimed}</div>}
+              {invoice.client_paid_amount_claimed != null && <div style={{ fontSize: 13, color: "#166534" }}>振込金額: {formatCurrency(invoice.client_paid_amount_claimed)}</div>}
+              {invoice.client_transfer_name && <div style={{ fontSize: 13, color: "#166534" }}>振込名義: {invoice.client_transfer_name}</div>}
+              {invoice.client_notify_note && <div style={{ fontSize: 13, color: "#166534" }}>備考: {invoice.client_notify_note}</div>}
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>
+              まだ支払完了通知は届いていません。PDFダウンロード後に相手がそのまま使えるよう、今回この導線を強化しています。
+            </div>
+          )}
+        </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10, marginBottom: 16 }}>
           <div><strong>請求先:</strong> {counterparty}</div>

@@ -196,7 +196,7 @@ export async function POST(
     clientContactName = (clientFull as { contact_name?: string | null } | null)?.contact_name ?? null
   }
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? ""
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || req.nextUrl.origin || ""
 
   const html = renderInvoiceHtml({
     invoice: inv as Parameters<typeof renderInvoiceHtml>[0]["invoice"],

@@ -25,6 +25,8 @@ type InvoiceRow = {
   guest_client_email: string | null
   pdf_path: string | null
   send_prepared_at: string | null
+  payment_status: string | null
+  client_notified_at: string | null
 }
 
 type ClientRow = {
@@ -127,7 +129,7 @@ export default function InvoicesPage() {
       setError(null)
       const { data, error: invoiceError } = await supabase
         .from("invoices")
-        .select("id, invoice_month, invoice_title, invoice_no, status, issue_date, due_date, subtotal, total, created_at, client_id, guest_client_name, guest_company_name, guest_client_email, pdf_path, send_prepared_at")
+        .select("id, invoice_month, invoice_title, invoice_no, status, issue_date, due_date, subtotal, total, created_at, client_id, guest_client_name, guest_company_name, guest_client_email, pdf_path, send_prepared_at, payment_status, client_notified_at")
         .eq("org_id", orgId)
         .order("created_at", { ascending: false })
 
@@ -233,7 +235,7 @@ export default function InvoicesPage() {
     if (!orgId) return
     const { data } = await supabase
       .from("invoices")
-      .select("id, invoice_month, invoice_title, invoice_no, status, issue_date, due_date, subtotal, total, created_at, client_id, guest_client_name, guest_company_name, guest_client_email, pdf_path, send_prepared_at")
+      .select("id, invoice_month, invoice_title, invoice_no, status, issue_date, due_date, subtotal, total, created_at, client_id, guest_client_name, guest_company_name, guest_client_email, pdf_path, send_prepared_at, payment_status, client_notified_at")
       .eq("org_id", orgId)
       .order("created_at", { ascending: false })
     setRows((data ?? []) as InvoiceRow[])
@@ -248,18 +250,10 @@ export default function InvoicesPage() {
     setBusyKey(`pdf:${invoiceId}`)
     setError(null)
     try {
-      let res = await fetch(`/api/invoices/${invoiceId}/pdf`, {
+      const res = await fetch(`/api/invoices/${invoiceId}/pdf`, {
+        method: "POST",
         headers: { Authorization: `Bearer ${token}` },
       })
-      if (res.status === 404) {
-        await fetch(`/api/invoices/${invoiceId}/pdf`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}` },
-        })
-        res = await fetch(`/api/invoices/${invoiceId}/pdf`, {
-          headers: { Authorization: `Bearer ${token}` },
-        })
-      }
       const json = (await res.json().catch(() => null)) as { signed_url?: string; error?: string } | null
       if (!res.ok || !json?.signed_url) {
         setError(json?.error ?? "PDFを開けませんでした。")
@@ -529,11 +523,12 @@ export default function InvoicesPage() {
             </select>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
             <SummaryCard label="表示件数" value={String(filteredRows.length)} />
             <SummaryCard label="選択件数" value={String(selectedRows.length)} />
             <SummaryCard label="選択合計" value={formatCurrency(totalSelectedAmount)} />
             <SummaryCard label="送付準備済み" value={String(filteredRows.filter((row) => row.send_prepared_at).length)} />
+            <SummaryCard label="入金連絡あり" value={String(filteredRows.filter((row) => row.client_notified_at && row.payment_status !== "paid" && row.payment_status !== "overpaid").length)} />
           </div>
         </section>
 
@@ -644,6 +639,9 @@ export default function InvoicesPage() {
                         ) : null}
                         {row.send_prepared_at ? (
                           <span style={{ ...badgeBase, background: "#ecfeff", color: "#155e75" }}>送付準備済み</span>
+                        ) : null}
+                        {row.client_notified_at && row.payment_status !== "paid" && row.payment_status !== "overpaid" ? (
+                          <span style={{ ...badgeBase, background: "#dcfce7", color: "#166534" }}>入金連絡あり</span>
                         ) : null}
                       </div>
                       <div style={{ marginTop: 8, display: "flex", gap: 14, flexWrap: "wrap", fontSize: 13, color: "var(--muted)" }}>

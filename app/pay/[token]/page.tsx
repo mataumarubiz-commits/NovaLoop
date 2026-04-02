@@ -1,16 +1,6 @@
 "use client"
 
-/**
- * /pay/[token] — 認証不要の公開ページ
- *
- * 請求書受取人が銀行振込後に「支払い完了」を通知するためのフォーム。
- * - public_token（UUID）でページを特定
- * - 請求書の基本情報を表示（金額・件名・支払期限）
- * - 振込日・振込金額・振込名義・備考を送信
- * - 既に通知済みの場合は完了メッセージを表示
- */
-
-import { useEffect, useState } from "react"
+import { useEffect, useState, type CSSProperties, type FormEvent } from "react"
 import { useParams } from "next/navigation"
 
 type InvoiceSummary = {
@@ -26,13 +16,76 @@ type InvoiceSummary = {
   client_paid_amount_claimed: number | null
 }
 
-const fmtCur = (v: number) =>
-  new Intl.NumberFormat("ja-JP", { style: "currency", currency: "JPY", maximumFractionDigits: 0 }).format(v)
+const fmtCur = (value: number) =>
+  new Intl.NumberFormat("ja-JP", {
+    style: "currency",
+    currency: "JPY",
+    maximumFractionDigits: 0,
+  }).format(value)
 
-const fmtDate = (d: string) => {
-  const m = d.match(/^(\d{4})-(\d{2})-(\d{2})$/)
-  if (!m) return d
-  return `${m[1]}年${parseInt(m[2])}月${parseInt(m[3])}日`
+const fmtDate = (value: string) => {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!match) return value
+  return `${match[1]}年${Number(match[2])}月${Number(match[3])}日`
+}
+
+const pageStyle: CSSProperties = {
+  minHeight: "100vh",
+  background:
+    "radial-gradient(circle at top left, rgba(219,234,254,0.9), rgba(255,255,255,0) 36%), linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%)",
+  padding: "48px 16px 72px",
+  display: "flex",
+  justifyContent: "center",
+  fontFamily: '"Hiragino Sans", "Yu Gothic", sans-serif',
+}
+
+const shellStyle: CSSProperties = {
+  width: "100%",
+  maxWidth: 760,
+  display: "grid",
+  gap: 18,
+}
+
+const cardStyle: CSSProperties = {
+  background: "rgba(255,255,255,0.92)",
+  border: "1px solid rgba(203,213,225,0.9)",
+  borderRadius: 24,
+  padding: 28,
+  boxShadow: "0 20px 60px rgba(15,23,42,0.08)",
+  backdropFilter: "blur(10px)",
+}
+
+const fieldStyle: CSSProperties = {
+  width: "100%",
+  borderRadius: 12,
+  border: "1px solid #cbd5e1",
+  background: "#fff",
+  padding: "12px 14px",
+  fontSize: 15,
+  color: "#0f172a",
+}
+
+const labelStyle: CSSProperties = {
+  display: "grid",
+  gap: 6,
+}
+
+function SummaryCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div
+      style={{
+        border: "1px solid #e2e8f0",
+        borderRadius: 16,
+        padding: "14px 16px",
+        background: "#fff",
+      }}
+    >
+      <div style={{ fontSize: 11, color: "#64748b", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+        {label}
+      </div>
+      <div style={{ marginTop: 6, fontSize: 18, fontWeight: 700, color: "#0f172a" }}>{value}</div>
+    </div>
+  )
 }
 
 export default function PayNotifyPage() {
@@ -40,10 +93,9 @@ export default function PayNotifyPage() {
   const token = typeof params.token === "string" ? params.token : null
 
   const [summary, setSummary] = useState<InvoiceSummary | null>(null)
-  const [loadError, setLoadError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
-  // フォーム
   const [paidAt, setPaidAt] = useState(new Date().toISOString().slice(0, 10))
   const [paidAmount, setPaidAmount] = useState("")
   const [transferName, setTransferName] = useState("")
@@ -53,32 +105,47 @@ export default function PayNotifyPage() {
   const [done, setDone] = useState(false)
 
   useEffect(() => {
-    if (!token) { setLoadError("URLが正しくありません"); setLoading(false); return }
+    if (!token) {
+      setLoadError("URL が正しくありません。")
+      setLoading(false)
+      return
+    }
+
     const load = async () => {
       try {
         const res = await fetch(`/api/public/invoices/${token}/notify`)
-        const json = await res.json().catch(() => null) as InvoiceSummary & { error?: string } | null
-        if (!res.ok || !json) { setLoadError(json?.error ?? "請求書が見つかりません"); return }
-        if (json.error) { setLoadError(json.error); return }
+        const json = (await res.json().catch(() => null)) as (InvoiceSummary & { error?: string }) | null
+        if (!res.ok || !json) {
+          setLoadError(json?.error ?? "請求情報を読み込めませんでした。")
+          return
+        }
+        if (json.error) {
+          setLoadError(json.error)
+          return
+        }
         setSummary(json)
-        if (json.total) setPaidAmount(String(json.total))
+        setPaidAmount(String(json.total))
       } catch {
-        setLoadError("読み込みに失敗しました。URLをご確認ください")
+        setLoadError("通信に失敗しました。時間をおいて再度お試しください。")
       } finally {
         setLoading(false)
       }
     }
+
     void load()
   }, [token])
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const handleSubmit = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!token) return
+
     setSubmitError(null)
     const amount = Number(paidAmount)
-    if (!paidAt || isNaN(amount) || amount <= 0) {
-      setSubmitError("振込日と振込金額は必須です")
+    if (!paidAt || Number.isNaN(amount) || amount <= 0) {
+      setSubmitError("振込日と振込金額を正しく入力してください。")
       return
     }
+
     setSubmitting(true)
     try {
       const res = await fetch(`/api/public/invoices/${token}/notify`, {
@@ -91,240 +158,291 @@ export default function PayNotifyPage() {
           note: note.trim() || null,
         }),
       })
-      const json = await res.json().catch(() => null) as { ok?: boolean; message?: string; error?: string } | null
-      if (!res.ok) { setSubmitError(json?.error ?? "送信に失敗しました"); return }
+      const json = (await res.json().catch(() => null)) as { error?: string } | null
+      if (!res.ok) {
+        setSubmitError(json?.error ?? "送信に失敗しました。")
+        return
+      }
       setDone(true)
     } catch {
-      setSubmitError("通信エラーが発生しました。再度お試しください")
+      setSubmitError("送信に失敗しました。時間をおいて再度お試しください。")
     } finally {
       setSubmitting(false)
     }
   }
 
-  // ── スタイル定数 ────────────────────────────────────────────────
-  const pageStyle: React.CSSProperties = {
-    minHeight: "100vh",
-    background: "#f8fafc",
-    display: "flex",
-    alignItems: "flex-start",
-    justifyContent: "center",
-    padding: "48px 16px 80px",
-    fontFamily: '"Hiragino Kaku Gothic ProN", "Hiragino Sans", "Yu Gothic", sans-serif',
-  }
-  const cardStyle: React.CSSProperties = {
-    background: "#fff",
-    borderRadius: 16,
-    padding: "36px 32px",
-    maxWidth: 520,
-    width: "100%",
-    boxShadow: "0 4px 24px rgba(0,0,0,0.08)",
-  }
-  const inputStyle: React.CSSProperties = {
-    width: "100%",
-    padding: "10px 12px",
-    borderRadius: 8,
-    border: "1px solid #d1d5db",
-    fontSize: 15,
-    background: "#fff",
-    outline: "none",
-  }
-  const labelStyle: React.CSSProperties = {
-    display: "block",
-    fontSize: 13,
-    fontWeight: 600,
-    color: "#374151",
-    marginBottom: 5,
-  }
-
-  // ── ローディング ─────────────────────────────────────────────────
   if (loading) {
     return (
       <div style={pageStyle}>
-        <div style={cardStyle}>
-          <p style={{ textAlign: "center", color: "#6b7280", padding: "40px 0" }}>読み込み中...</p>
+        <div style={shellStyle}>
+          <section style={cardStyle}>
+            <p style={{ margin: 0, textAlign: "center", color: "#64748b", padding: "36px 0" }}>読み込み中...</p>
+          </section>
         </div>
       </div>
     )
   }
 
-  // ── エラー ───────────────────────────────────────────────────────
   if (loadError || !summary) {
     return (
       <div style={pageStyle}>
-        <div style={cardStyle}>
-          <div style={{ textAlign: "center", padding: "24px 0" }}>
-            <div style={{ fontSize: 40, marginBottom: 16 }}>⚠️</div>
-            <p style={{ color: "#dc2626", fontWeight: 600 }}>{loadError ?? "ページを読み込めませんでした"}</p>
-            <p style={{ color: "#6b7280", fontSize: 13, marginTop: 8 }}>URLをご確認いただくか、請求書を送付した担当者までお問い合わせください。</p>
-          </div>
+        <div style={shellStyle}>
+          <section style={cardStyle}>
+            <div style={{ textAlign: "center", padding: "12px 0 6px" }}>
+              <p style={{ margin: 0, fontSize: 42 }}>!</p>
+              <h1 style={{ margin: "12px 0 8px", fontSize: 24, color: "#0f172a" }}>ページを表示できません</h1>
+              <p style={{ margin: 0, color: "#dc2626", fontWeight: 700 }}>{loadError ?? "URL を確認してください。"}</p>
+              <p style={{ margin: "10px 0 0", color: "#64748b", fontSize: 14, lineHeight: 1.7 }}>
+                期限切れまたは無効なURLの可能性があります。請求元に確認してください。
+              </p>
+            </div>
+          </section>
         </div>
       </div>
     )
   }
 
-  // ── 送信完了 ─────────────────────────────────────────────────────
   if (done || summary.already_notified) {
     return (
       <div style={pageStyle}>
-        <div style={cardStyle}>
-          <div style={{ textAlign: "center", padding: "16px 0 24px" }}>
-            <div style={{ fontSize: 48, marginBottom: 12 }}>✅</div>
-            <h1 style={{ fontSize: 20, fontWeight: 700, margin: "0 0 10px", color: "#111" }}>
-              {done ? "ご連絡ありがとうございます" : "既にご連絡いただいています"}
-            </h1>
-            <p style={{ color: "#374151", lineHeight: 1.8, fontSize: 14, margin: "0 0 16px" }}>
-              お支払い完了のご連絡を受け付けました。<br/>
-              担当者が確認の上、領収書をお送りいたします。
-            </p>
-            {summary.client_paid_at_claimed && (
-              <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, padding: "12px 16px", fontSize: 13, color: "#166534", textAlign: "left", display: "inline-block", minWidth: 240 }}>
-                <div>振込日：{fmtDate(summary.client_paid_at_claimed)}</div>
-                {summary.client_paid_amount_claimed && (
-                  <div>振込金額：{fmtCur(summary.client_paid_amount_claimed)}</div>
-                )}
+        <div style={shellStyle}>
+          <section style={cardStyle}>
+            <div style={{ textAlign: "center", padding: "8px 0 2px" }}>
+              <div
+                style={{
+                  width: 72,
+                  height: 72,
+                  borderRadius: "50%",
+                  margin: "0 auto 16px",
+                  background: "#dcfce7",
+                  color: "#166534",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: 30,
+                  fontWeight: 700,
+                }}
+              >
+                ✓
+              </div>
+              <h1 style={{ margin: "0 0 10px", fontSize: 28, color: "#0f172a" }}>
+                {done ? "お支払い完了通知を受け付けました" : "すでにご連絡を受け付けています"}
+              </h1>
+              <p style={{ margin: 0, color: "#475569", lineHeight: 1.8 }}>
+                ご連絡ありがとうございます。担当者が確認のうえ、入金処理と領収書発行を進めます。
+              </p>
+            </div>
+
+            {(summary.client_paid_at_claimed || summary.client_paid_amount_claimed) && (
+              <div
+                style={{
+                  marginTop: 22,
+                  padding: 18,
+                  borderRadius: 18,
+                  border: "1px solid #bbf7d0",
+                  background: "#f0fdf4",
+                  color: "#166534",
+                  display: "grid",
+                  gap: 6,
+                }}
+              >
+                {summary.client_paid_at_claimed && <div>振込日: {fmtDate(summary.client_paid_at_claimed)}</div>}
+                {summary.client_paid_amount_claimed && <div>振込金額: {fmtCur(summary.client_paid_amount_claimed)}</div>}
               </div>
             )}
-          </div>
+          </section>
 
-          {/* 請求書情報 */}
-          <div style={{ borderTop: "1px solid #e5e7eb", paddingTop: 20, marginTop: 8 }}>
-            <p style={{ fontSize: 12, color: "#9ca3af", marginBottom: 6 }}>ご請求情報</p>
-            {summary.invoice_no && <p style={{ fontSize: 13, color: "#374151" }}>請求書番号：{summary.invoice_no}</p>}
-            <p style={{ fontSize: 13, color: "#374151" }}>ご請求金額：<strong>{fmtCur(summary.total)}</strong></p>
-            {summary.issuer_name && <p style={{ fontSize: 13, color: "#6b7280", marginTop: 4 }}>発行者：{summary.issuer_name}</p>}
-          </div>
+          <section style={cardStyle}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+              {summary.invoice_no ? <SummaryCard label="Invoice No." value={summary.invoice_no} /> : null}
+              <SummaryCard label="Amount" value={fmtCur(summary.total)} />
+              <SummaryCard label="Due Date" value={fmtDate(summary.due_date)} />
+            </div>
+          </section>
         </div>
       </div>
     )
   }
 
-  // ── メインフォーム ────────────────────────────────────────────────
   return (
     <div style={pageStyle}>
-      <div style={cardStyle}>
-        {/* ヘッダー */}
-        <div style={{ marginBottom: 24 }}>
-          <p style={{ fontSize: 12, color: "#9ca3af", marginBottom: 4 }}>
-            {summary.issuer_name ? `${summary.issuer_name} より` : "請求書"}
-          </p>
-          <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 8px", color: "#111" }}>
-            お支払い完了のご連絡
-          </h1>
-          <p style={{ fontSize: 13, color: "#6b7280", lineHeight: 1.7, margin: 0 }}>
-            銀行振込が完了しましたら、下記フォームよりご連絡ください。<br/>
-            担当者が確認の上、領収書をお送りいたします。
-          </p>
-        </div>
-
-        {/* 請求書サマリー */}
-        <div style={{ background: "#f8fafc", border: "1px solid #e5e7eb", borderRadius: 10, padding: "14px 16px", marginBottom: 24 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
-            <div>
-              {summary.invoice_no && <div style={{ fontSize: 12, color: "#9ca3af" }}>請求書番号：{summary.invoice_no}</div>}
-              {(summary.invoice_title || summary.invoice_month) && (
-                <div style={{ fontSize: 14, fontWeight: 600, color: "#111", marginTop: 2 }}>
-                  {summary.invoice_title ?? `${summary.invoice_month} 分`}
-                </div>
-              )}
-              <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>
-                お支払期限：<strong style={{ color: "#374151" }}>{fmtDate(summary.due_date)}</strong>
-              </div>
-            </div>
-            <div style={{ textAlign: "right", flexShrink: 0 }}>
-              <div style={{ fontSize: 11, color: "#9ca3af" }}>ご請求金額</div>
-              <div style={{ fontSize: 22, fontWeight: 700, color: "#111", letterSpacing: "-0.01em" }}>
-                {fmtCur(summary.total)}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* フォーム */}
-        <form onSubmit={(e) => void handleSubmit(e)} noValidate>
-          {submitError && (
-            <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: "10px 14px", marginBottom: 16, color: "#dc2626", fontSize: 13 }}>
-              {submitError}
-            </div>
-          )}
-
-          <div style={{ display: "grid", gap: 18 }}>
-            <label>
-              <span style={labelStyle}>振込日 <span style={{ color: "#dc2626" }}>*</span></span>
-              <input
-                type="date"
-                value={paidAt}
-                onChange={e => setPaidAt(e.target.value)}
-                required
-                style={inputStyle}
-              />
-            </label>
-
-            <label>
-              <span style={labelStyle}>振込金額（円） <span style={{ color: "#dc2626" }}>*</span></span>
-              <input
-                type="number"
-                value={paidAmount}
-                onChange={e => setPaidAmount(e.target.value)}
-                min={1}
-                step={1}
-                required
-                placeholder={String(summary.total)}
-                style={inputStyle}
-              />
-              <span style={{ fontSize: 12, color: "#9ca3af", marginTop: 3, display: "block" }}>
-                ご請求金額：{fmtCur(summary.total)}
-              </span>
-            </label>
-
-            <label>
-              <span style={labelStyle}>振込名義（任意）</span>
-              <input
-                type="text"
-                value={transferName}
-                onChange={e => setTransferName(e.target.value)}
-                placeholder="例：ヤマダ タロウ"
-                maxLength={100}
-                style={inputStyle}
-              />
-            </label>
-
-            <label>
-              <span style={labelStyle}>備考（任意）</span>
-              <textarea
-                value={note}
-                onChange={e => setNote(e.target.value)}
-                placeholder="分割振込など、特記事項があればご記入ください"
-                maxLength={500}
-                rows={3}
-                style={{ ...inputStyle, resize: "vertical" }}
-              />
-            </label>
+      <div style={shellStyle}>
+        <section style={cardStyle}>
+          <div style={{ display: "grid", gap: 10 }}>
+            <p style={{ margin: 0, fontSize: 12, letterSpacing: "0.14em", textTransform: "uppercase", color: "#64748b" }}>
+              Payment Notification
+            </p>
+            <h1 style={{ margin: 0, fontSize: 30, lineHeight: 1.2, color: "#0f172a" }}>お振込後のご連絡</h1>
+            <p style={{ margin: 0, color: "#475569", lineHeight: 1.8 }}>
+              お振込が完了したら、下記フォームからご連絡ください。振込日と振込金額が分かれば受け付けできます。
+            </p>
           </div>
 
-          <button
-            type="submit"
-            disabled={submitting}
+          <div
             style={{
-              marginTop: 24,
-              width: "100%",
-              padding: "13px 0",
-              borderRadius: 10,
-              border: "none",
-              background: submitting ? "#9ca3af" : "#1d4ed8",
-              color: "#fff",
-              fontSize: 15,
-              fontWeight: 700,
-              cursor: submitting ? "not-allowed" : "pointer",
-              letterSpacing: "0.02em",
+              marginTop: 20,
+              border: "1px solid #dbe2ea",
+              borderRadius: 20,
+              padding: 18,
+              background: "linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)",
             }}
           >
-            {submitting ? "送信中..." : "支払い完了を通知する"}
-          </button>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+              {summary.invoice_no ? <SummaryCard label="Invoice No." value={summary.invoice_no} /> : null}
+              <SummaryCard label="Amount" value={fmtCur(summary.total)} />
+              <SummaryCard label="Due Date" value={fmtDate(summary.due_date)} />
+            </div>
+            {(summary.invoice_title || summary.invoice_month || summary.issuer_name) && (
+              <div style={{ marginTop: 14, color: "#475569", fontSize: 14, lineHeight: 1.8 }}>
+                {summary.invoice_title ? <div>件名: {summary.invoice_title}</div> : null}
+                {summary.invoice_month ? <div>対象月: {summary.invoice_month}</div> : null}
+                {summary.issuer_name ? <div>請求元: {summary.issuer_name}</div> : null}
+              </div>
+            )}
+          </div>
+        </section>
 
-          <p style={{ textAlign: "center", fontSize: 11.5, color: "#9ca3af", marginTop: 12, lineHeight: 1.6 }}>
-            このフォームの情報は請求書を発行した担当者にのみ共有されます。
-          </p>
-        </form>
+        <section style={cardStyle}>
+          <div style={{ display: "grid", gap: 12 }}>
+            <div style={{ display: "grid", gap: 4 }}>
+              <h2 style={{ margin: 0, fontSize: 20, color: "#0f172a" }}>ご連絡の流れ</h2>
+              <p style={{ margin: 0, color: "#64748b", lineHeight: 1.8 }}>
+                次の3点だけ入力してください。担当者側で入金確認を行います。
+              </p>
+            </div>
+            <div style={{ display: "grid", gap: 10 }}>
+              {[
+                ["1", "振込日を入力", "実際にお振込いただいた日付を選択してください。"],
+                ["2", "振込金額を入力", `通常は ${fmtCur(summary.total)} です。差額がある場合は実際の振込額を入力してください。`],
+                ["3", "振込名義を入力", "必要に応じて、通帳に表示される名義や補足事項を記載してください。"],
+              ].map(([index, title, copy]) => (
+                <div
+                  key={index}
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "28px 1fr",
+                    gap: 12,
+                    alignItems: "start",
+                    padding: 14,
+                    borderRadius: 16,
+                    background: "#f8fafc",
+                    border: "1px solid #e2e8f0",
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 28,
+                      height: 28,
+                      borderRadius: "50%",
+                      background: "#0f172a",
+                      color: "#fff",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: 12,
+                      fontWeight: 700,
+                    }}
+                  >
+                    {index}
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: "#0f172a" }}>{title}</div>
+                    <div style={{ marginTop: 3, color: "#475569", fontSize: 13, lineHeight: 1.7 }}>{copy}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section style={cardStyle}>
+          <form onSubmit={(event) => void handleSubmit(event)} noValidate style={{ display: "grid", gap: 18 }}>
+            <div style={{ display: "grid", gap: 6 }}>
+              <h2 style={{ margin: 0, fontSize: 20, color: "#0f172a" }}>支払完了通知フォーム</h2>
+              <p style={{ margin: 0, color: "#64748b", lineHeight: 1.8 }}>
+                入力内容は請求元の担当者に共有されます。
+              </p>
+            </div>
+
+            {submitError && (
+              <div
+                style={{
+                  borderRadius: 14,
+                  padding: "12px 14px",
+                  background: "#fef2f2",
+                  border: "1px solid #fecaca",
+                  color: "#dc2626",
+                  fontSize: 14,
+                  fontWeight: 600,
+                }}
+              >
+                {submitError}
+              </div>
+            )}
+
+            <div style={{ display: "grid", gap: 16 }}>
+              <label style={labelStyle}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "#334155" }}>振込日 *</span>
+                <input type="date" value={paidAt} onChange={(e) => setPaidAt(e.target.value)} required style={fieldStyle} />
+              </label>
+
+              <label style={labelStyle}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "#334155" }}>振込金額 *</span>
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={paidAmount}
+                  onChange={(e) => setPaidAmount(e.target.value)}
+                  required
+                  style={fieldStyle}
+                />
+                <span style={{ fontSize: 12, color: "#64748b" }}>請求金額: {fmtCur(summary.total)}</span>
+              </label>
+
+              <label style={labelStyle}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "#334155" }}>振込名義</span>
+                <input
+                  type="text"
+                  maxLength={100}
+                  value={transferName}
+                  onChange={(e) => setTransferName(e.target.value)}
+                  placeholder="例: カ)ノヴァループ"
+                  style={fieldStyle}
+                />
+              </label>
+
+              <label style={labelStyle}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "#334155" }}>備考</span>
+                <textarea
+                  rows={4}
+                  maxLength={500}
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="分割振込や差額がある場合のみご記入ください。"
+                  style={{ ...fieldStyle, resize: "vertical" }}
+                />
+              </label>
+            </div>
+
+            <button
+              type="submit"
+              disabled={submitting}
+              style={{
+                border: "none",
+                borderRadius: 14,
+                padding: "14px 18px",
+                background: submitting ? "#94a3b8" : "#0f172a",
+                color: "#fff",
+                fontSize: 15,
+                fontWeight: 700,
+                cursor: submitting ? "not-allowed" : "pointer",
+              }}
+            >
+              {submitting ? "送信中..." : "支払完了を通知する"}
+            </button>
+          </form>
+        </section>
       </div>
     </div>
   )
