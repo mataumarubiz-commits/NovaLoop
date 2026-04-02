@@ -183,11 +183,31 @@ export async function POST(
   )
   const storagePath = `${orgId}/invoices/${invoiceMonth}/${safeName}.pdf`
 
+  // クライアント情報（billing_name / contact_name も取得）
+  let clientBillingName: string | null = null
+  let clientContactName: string | null = null
+  if (clientId) {
+    const { data: clientFull } = await admin
+      .from("clients")
+      .select("billing_name, contact_name")
+      .eq("id", clientId)
+      .maybeSingle()
+    clientBillingName = (clientFull as { billing_name?: string | null } | null)?.billing_name ?? null
+    clientContactName = (clientFull as { contact_name?: string | null } | null)?.contact_name ?? null
+  }
+
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? ""
+
   const html = renderInvoiceHtml({
     invoice: inv as Parameters<typeof renderInvoiceHtml>[0]["invoice"],
-    client: { name: recipientName },
+    client: {
+      name: recipientName,
+      billing_name: clientBillingName ?? (typeof inv.guest_company_name === "string" ? inv.guest_company_name : null),
+      contact_name: clientContactName ?? (typeof inv.guest_client_name === "string" ? inv.guest_client_name : null),
+    },
     org: null,
     lines: (lines ?? []) as Parameters<typeof renderInvoiceHtml>[0]["lines"],
+    appUrl,
   })
 
   let browser
