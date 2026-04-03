@@ -4,6 +4,7 @@ import Link from "next/link"
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react"
 import { useParams } from "next/navigation"
 import type { ApplyAiResultDetail } from "@/lib/aiClientEvents"
+import { selectWithColumnFallback } from "@/lib/postgrestCompat"
 import { supabase } from "@/lib/supabase"
 import { useAuthOrg } from "@/hooks/useAuthOrg"
 
@@ -24,9 +25,9 @@ type VendorInvoiceRow = {
   total: number
   rejected_reason: string | null
   submitted_at: string | null
-  first_submitted_at: string | null
-  resubmitted_at: string | null
-  return_count: number
+  first_submitted_at?: string | null
+  resubmitted_at?: string | null
+  return_count?: number
 }
 
 type VendorProfileRow = {
@@ -132,42 +133,74 @@ export default function VendorDetailPage() {
   const load = useCallback(async () => {
     if (!id || !activeOrgId || !canAccess) return
     setLoading(true)
-    const [vendorRes, invoiceRes, profileRes, bankRes, vendorUserRes] = await Promise.all([
-      supabase
-        .from("vendors")
-        .select("id, name, email, notes, is_active, vendor_portal_invited_at")
-        .eq("id", id)
-        .eq("org_id", activeOrgId)
-        .maybeSingle(),
-      supabase
-        .from("vendor_invoices")
-        .select("id, billing_month, status, pay_date, total, rejected_reason, submitted_at, first_submitted_at, resubmitted_at, return_count")
-        .eq("vendor_id", id)
-        .eq("org_id", activeOrgId)
-        .order("billing_month", { ascending: false }),
-      supabase.from("vendor_profiles").select("display_name, billing_name").eq("vendor_id", id).eq("org_id", activeOrgId).maybeSingle(),
-      supabase
-        .from("vendor_bank_accounts")
-        .select("bank_name, branch_name, account_type, account_number, account_holder")
-        .eq("vendor_id", id)
-        .eq("org_id", activeOrgId)
-        .eq("is_default", true)
-        .maybeSingle(),
-      supabase.from("vendor_users").select("vendor_id").eq("vendor_id", id).eq("org_id", activeOrgId).maybeSingle(),
-    ])
+    setError(null)
 
-    if (vendorRes.error || !vendorRes.data) {
-      setError("外注詳細の読み込みに失敗しました。")
+    try {
+      const [vendorRes, invoiceRes, profileRes, bankRes, vendorUserRes] = await Promise.all([
+        supabase
+          .from("vendors")
+          .select("id, name, email, notes, is_active, vendor_portal_invited_at")
+          .eq("id", id)
+          .eq("org_id", activeOrgId)
+          .maybeSingle(),
+        selectWithColumnFallback<VendorInvoiceRow[]>({
+          table: "vendor_invoices",
+          columns: [
+            "id",
+            "billing_month",
+            "status",
+            "pay_date",
+            "total",
+            "rejected_reason",
+            "submitted_at",
+            "first_submitted_at",
+            "resubmitted_at",
+            "return_count",
+          ],
+          execute: async (columnsCsv) => {
+            const result = await supabase
+              .from("vendor_invoices")
+              .select(columnsCsv)
+              .eq("vendor_id", id)
+              .eq("org_id", activeOrgId)
+              .order("billing_month", { ascending: false })
+            return {
+              data: (result.data ?? []) as unknown as VendorInvoiceRow[],
+              error: result.error,
+            }
+          },
+        }),
+        supabase.from("vendor_profiles").select("display_name, billing_name").eq("vendor_id", id).eq("org_id", activeOrgId).maybeSingle(),
+        supabase
+          .from("vendor_bank_accounts")
+          .select("bank_name, branch_name, account_type, account_number, account_holder")
+          .eq("vendor_id", id)
+          .eq("org_id", activeOrgId)
+          .eq("is_default", true)
+          .maybeSingle(),
+        supabase.from("vendor_users").select("vendor_id").eq("vendor_id", id).eq("org_id", activeOrgId).maybeSingle(),
+      ])
+
+      if (vendorRes.error || !vendorRes.data) {
+        setError("外注詳細の読み込みに失敗しました。")
+        return
+      }
+
+      setVendor(vendorRes.data as VendorRow)
+      setInvoices(invoiceRes.data ?? [])
+      setProfile((profileRes.data ?? null) as VendorProfileRow | null)
+      setBank((bankRes.data ?? null) as VendorBankRow | null)
+      setVendorUser((vendorUserRes.data ?? null) as VendorUserRow | null)
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "外注詳細の読み込みに失敗しました。")
+      setVendor(null)
+      setInvoices([])
+      setProfile(null)
+      setBank(null)
+      setVendorUser(null)
+    } finally {
       setLoading(false)
-      return
     }
-
-    setVendor(vendorRes.data as VendorRow)
-    setInvoices((invoiceRes.data ?? []) as VendorInvoiceRow[])
-    setProfile((profileRes.data ?? null) as VendorProfileRow | null)
-    setBank((bankRes.data ?? null) as VendorBankRow | null)
-    setVendorUser((vendorUserRes.data ?? null) as VendorUserRow | null)
-    setLoading(false)
   }, [activeOrgId, canAccess, id])
 
   useEffect(() => {
@@ -313,7 +346,7 @@ export default function VendorDetailPage() {
               Payouts
             </Link>
             <Link href={`/documents?tab=vendor${currentInvoice?.billing_month ? `&month=${encodeURIComponent(currentInvoice.billing_month)}` : ""}`} style={{ ...buttonStyle, textDecoration: "none" }}>
-              証憑アーカイブ
+              請求書保管
             </Link>
             <Link href="/help/vendors-payouts" style={{ ...buttonStyle, textDecoration: "none" }}>
               使い方
@@ -393,7 +426,7 @@ export default function VendorDetailPage() {
                 詳細を見る
               </Link>
               <Link href={`/documents?tab=vendor&month=${encodeURIComponent(currentInvoice.billing_month)}`} style={{ color: "var(--primary)", fontWeight: 700, textDecoration: "none" }}>
-                証憑アーカイブで見る
+                請求書保管で見る
               </Link>
             </div>
           ) : null}

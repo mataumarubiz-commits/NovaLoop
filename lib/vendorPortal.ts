@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
+import { selectWithColumnFallback, writeWithColumnFallback } from "@/lib/postgrestCompat"
 
 const BILLABLE_VENDOR_CONTENT_STATUSES = new Set(["delivered", "published"])
 const LOCKED_VENDOR_INVOICE_STATUSES = new Set(["submitted", "approved", "paid"])
@@ -418,15 +419,48 @@ export async function buildVendorInvoicePreview(actor: VendorActor, month: strin
     ((clientsData ?? []) as Array<{ id: string; name: string | null }>).map((row) => [row.id, row.name?.trim() || "クライアント"])
   )
 
-  const { data: existingInvoiceData } = await admin
-    .from("vendor_invoices")
-    .select(
-      "id, invoice_number, status, billing_month, submit_deadline, pay_date, total, item_count, memo, pdf_path, submitted_at, first_submitted_at, resubmitted_at, approved_at, confirmed_at, returned_at, rejected_category, rejected_reason, return_count, return_history, recipient_snapshot, vendor_profile_snapshot, vendor_bank_snapshot, created_at"
-    )
-    .eq("org_id", actor.orgId)
-    .eq("vendor_id", actor.vendorId)
-    .eq("billing_month", month)
-    .order("created_at", { ascending: false })
+  const { data: existingInvoiceData } = await selectWithColumnFallback<Record<string, unknown>[]>({
+    table: "vendor_invoices",
+    columns: [
+      "id",
+      "invoice_number",
+      "status",
+      "billing_month",
+      "submit_deadline",
+      "pay_date",
+      "total",
+      "item_count",
+      "memo",
+      "pdf_path",
+      "submitted_at",
+      "first_submitted_at",
+      "resubmitted_at",
+      "approved_at",
+      "confirmed_at",
+      "returned_at",
+      "rejected_category",
+      "rejected_reason",
+      "return_count",
+      "return_history",
+      "recipient_snapshot",
+      "vendor_profile_snapshot",
+      "vendor_bank_snapshot",
+      "created_at",
+    ],
+    execute: async (columnsCsv) => {
+      const result = await admin
+        .from("vendor_invoices")
+        .select(columnsCsv)
+        .eq("org_id", actor.orgId)
+        .eq("vendor_id", actor.vendorId)
+        .eq("billing_month", month)
+        .order("created_at", { ascending: false })
+      return {
+        data: (result.data ?? []) as unknown as Record<string, unknown>[],
+        error: result.error,
+      }
+    },
+  })
 
   const existingInvoices = ((existingInvoiceData ?? []) as Record<string, unknown>[]).map(normalizeExistingInvoice)
   const lockedInvoice = existingInvoices.find((row) => LOCKED_VENDOR_INVOICE_STATUSES.has(row.status)) ?? null
@@ -676,12 +710,24 @@ export async function upsertVendorDraftInvoice(params: UpsertVendorDraftParams):
   }
 
   if (preview.editableInvoice?.id) {
-    const { error } = await admin.from("vendor_invoices").update(payload).eq("id", preview.editableInvoice.id).eq("org_id", actor.orgId)
-    if (error) throw new Error(error.message)
+    await writeWithColumnFallback({
+      table: "vendor_invoices",
+      payload,
+      execute: async (safePayload) => {
+        const result = await admin.from("vendor_invoices").update(safePayload).eq("id", preview.editableInvoice!.id).eq("org_id", actor.orgId)
+        return { data: null, error: result.error }
+      },
+    })
     await admin.from("vendor_invoice_lines").delete().eq("vendor_invoice_id", preview.editableInvoice.id)
   } else {
-    const { error } = await admin.from("vendor_invoices").insert({ ...payload, created_at: now })
-    if (error) throw new Error(error.message)
+    await writeWithColumnFallback({
+      table: "vendor_invoices",
+      payload: { ...payload, created_at: now },
+      execute: async (safePayload) => {
+        const result = await admin.from("vendor_invoices").insert(safePayload)
+        return { data: null, error: result.error }
+      },
+    })
   }
 
   const lineRows = preview.lines.map((line) => ({

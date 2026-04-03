@@ -20,6 +20,12 @@ type RecordItem = {
 const STORAGE_KEY = "settings_e2e_checklist_v2"
 
 const CHECKLIST: ChecklistItem[] = [
+  {
+    id: "lp_purchase_flow",
+    category: "導線",
+    label: "LP から購入完了と初回セットアップまで進める",
+    hint: "LP 主CTA、request-org、purchase-license、pending-payment、thanks、post-purchase onboarding のつながりを確認",
+  },
   { id: "login", category: "基本導線", label: "ログイン後に Home が開く", hint: "/home で KGI と制作一覧が見える" },
   { id: "contents", category: "基本導線", label: "Contents を追加・編集できる", hint: "due_editor_at と delivery_month の自動計算も確認" },
   { id: "billing", category: "請求", label: "Billing で月次請求プレビューが出る", hint: "対象件数、金額、重複警告が見える" },

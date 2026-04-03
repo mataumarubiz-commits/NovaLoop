@@ -6,6 +6,7 @@ import ChecklistReturnButton from "@/components/home/ChecklistReturnButton"
 import GuideEmptyState from "@/components/shared/GuideEmptyState"
 import VendorSubmitLinkDialog from "@/components/vendor/VendorSubmitLinkDialog"
 import { useAuthOrg } from "@/hooks/useAuthOrg"
+import { selectWithColumnFallback } from "@/lib/postgrestCompat"
 import { supabase } from "@/lib/supabase"
 
 type VendorRow = {
@@ -177,61 +178,92 @@ export default function VendorsPage() {
     setLoading(true)
     setError(null)
 
-    const [vendorRes, vendorUserRes, profileRes, bankRes, invoiceRes] = await Promise.all([
-      supabase
-        .from("vendors")
-        .select("id, name, email, notes, is_active, vendor_portal_invited_at, vendor_portal_invited_email")
-        .eq("org_id", orgId)
-        .eq("is_active", true)
-        .order("name"),
-      supabase.from("vendor_users").select("vendor_id").eq("org_id", orgId),
-      supabase.from("vendor_profiles").select("vendor_id").eq("org_id", orgId),
-      supabase.from("vendor_bank_accounts").select("vendor_id").eq("org_id", orgId).eq("is_default", true),
-      supabase
-        .from("vendor_invoices")
-        .select("id, vendor_id, billing_month, status, total, submitted_at, request_sent_at, submit_deadline, pay_date, rejected_reason, return_count")
-        .eq("org_id", orgId)
-        .eq("billing_month", month),
-    ])
+    try {
+      const [vendorRes, vendorUserRes, profileRes, bankRes, invoiceRes] = await Promise.all([
+        supabase
+          .from("vendors")
+          .select("id, name, email, notes, is_active, vendor_portal_invited_at, vendor_portal_invited_email")
+          .eq("org_id", orgId)
+          .eq("is_active", true)
+          .order("name"),
+        supabase.from("vendor_users").select("vendor_id").eq("org_id", orgId),
+        supabase.from("vendor_profiles").select("vendor_id").eq("org_id", orgId),
+        supabase.from("vendor_bank_accounts").select("vendor_id").eq("org_id", orgId).eq("is_default", true),
+        selectWithColumnFallback<InvoiceRow[]>({
+          table: "vendor_invoices",
+          columns: [
+            "id",
+            "vendor_id",
+            "billing_month",
+            "status",
+            "total",
+            "submitted_at",
+            "request_sent_at",
+            "submit_deadline",
+            "pay_date",
+            "rejected_reason",
+            "return_count",
+          ],
+          execute: async (columnsCsv) => {
+            const result = await supabase
+              .from("vendor_invoices")
+              .select(columnsCsv)
+              .eq("org_id", orgId)
+              .eq("billing_month", month)
+            return {
+              data: (result.data ?? []) as unknown as InvoiceRow[],
+              error: result.error,
+            }
+          },
+        }),
+      ])
 
-    if (vendorRes.error) {
-      setError(`外注先一覧の取得に失敗しました: ${vendorRes.error.message}`)
-      setVendors([])
-      setLoading(false)
-      return
-    }
-
-    const invoiceRows = (invoiceRes.data ?? []) as InvoiceRow[]
-    let reminderLogs: InvoiceReminderLog[] = []
-    if (invoiceRows.length > 0) {
-      const { data: reminderData, error: reminderError } = await supabase
-        .from("invoice_reminder_logs")
-        .select("id, vendor_invoice_id, reminder_type, created_at")
-        .eq("org_id", orgId)
-        .in("vendor_invoice_id", invoiceRows.map((row) => row.id))
-        .order("created_at", { ascending: false })
-        .limit(200)
-      if (reminderError) {
-        setError(`依頼履歴の取得に失敗しました: ${reminderError.message}`)
-      } else {
-        reminderLogs = (reminderData ?? []) as InvoiceReminderLog[]
+      if (vendorRes.error) {
+        setError(`外注先一覧の取得に失敗しました: ${vendorRes.error.message}`)
+        setVendors([])
+        return
       }
-    }
 
-    const reminderLogsByInvoiceId = new Map<string, InvoiceReminderLog[]>()
-    for (const log of reminderLogs) {
-      if (!log.vendor_invoice_id) continue
-      const list = reminderLogsByInvoiceId.get(log.vendor_invoice_id) ?? []
-      list.push(log)
-      reminderLogsByInvoiceId.set(log.vendor_invoice_id, list)
-    }
+      const invoiceRows = invoiceRes.data ?? []
+      let reminderLogs: InvoiceReminderLog[] = []
+      if (invoiceRows.length > 0) {
+        const { data: reminderData, error: reminderError } = await supabase
+          .from("invoice_reminder_logs")
+          .select("id, vendor_invoice_id, reminder_type, created_at")
+          .eq("org_id", orgId)
+          .in("vendor_invoice_id", invoiceRows.map((row) => row.id))
+          .order("created_at", { ascending: false })
+          .limit(200)
+        if (reminderError) {
+          setError(`依頼履歴の取得に失敗しました: ${reminderError.message}`)
+        } else {
+          reminderLogs = (reminderData ?? []) as InvoiceReminderLog[]
+        }
+      }
 
-    setVendors((vendorRes.data ?? []) as VendorRow[])
-    setVendorUsers((vendorUserRes.data ?? []) as VendorUserRow[])
-    setProfiles((profileRes.data ?? []) as ProfileRow[])
-    setBanks((bankRes.data ?? []) as BankRow[])
-    setCurrentInvoices(invoiceRows.map((row) => ({ ...row, reminder_logs: reminderLogsByInvoiceId.get(row.id) ?? [] })))
-    setLoading(false)
+      const reminderLogsByInvoiceId = new Map<string, InvoiceReminderLog[]>()
+      for (const log of reminderLogs) {
+        if (!log.vendor_invoice_id) continue
+        const list = reminderLogsByInvoiceId.get(log.vendor_invoice_id) ?? []
+        list.push(log)
+        reminderLogsByInvoiceId.set(log.vendor_invoice_id, list)
+      }
+
+      setVendors((vendorRes.data ?? []) as VendorRow[])
+      setVendorUsers((vendorUserRes.data ?? []) as VendorUserRow[])
+      setProfiles((profileRes.data ?? []) as ProfileRow[])
+      setBanks((bankRes.data ?? []) as BankRow[])
+      setCurrentInvoices(invoiceRows.map((row) => ({ ...row, reminder_logs: reminderLogsByInvoiceId.get(row.id) ?? [] })))
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "外注先一覧の取得に失敗しました。")
+      setVendors([])
+      setVendorUsers([])
+      setProfiles([])
+      setBanks([])
+      setCurrentInvoices([])
+    } finally {
+      setLoading(false)
+    }
   }, [canAccess, month, orgId])
 
   useEffect(() => {
@@ -468,7 +500,7 @@ export default function VendorsPage() {
               振込
             </Link>
             <Link href={`/documents?tab=vendor${month ? `&month=${encodeURIComponent(month)}` : ""}`} data-active="false">
-              証憑
+              請求書保管
             </Link>
           </nav>
         </div>
@@ -488,7 +520,7 @@ export default function VendorsPage() {
               Payouts を開く
             </Link>
             <Link href={`/documents?tab=vendor${month ? `&month=${encodeURIComponent(month)}` : ""}`} style={{ ...secondaryButtonStyle, textDecoration: "none" }}>
-              証憑アーカイブで見る
+              請求書保管で見る
             </Link>
             <Link href="/help/vendors-payouts" style={{ ...secondaryButtonStyle, textDecoration: "none" }}>
               使い方を見る

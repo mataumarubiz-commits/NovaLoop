@@ -37,7 +37,7 @@ const NAV_ITEMS: { href: string; label: string; locked?: boolean; childPaths?: s
   { href: "/projects", label: "案件" },
   { href: "/billing", label: "請求", locked: true, childPaths: ["/invoices"] },
   { href: "/vendors", label: "外注", locked: true, childPaths: ["/payouts"] },
-  { href: "/documents", label: "証憑", locked: true },
+  { href: "/documents", label: "請求書保管", locked: true },
   { href: "/settings", label: "設定" },
   { href: "/notifications", label: "通知" },
 ]

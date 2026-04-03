@@ -6,6 +6,7 @@ import { useParams } from "next/navigation"
 import { supabase } from "@/lib/supabase"
 import { useAuthOrg } from "@/hooks/useAuthOrg"
 import type { ApplyAiResultDetail } from "@/lib/aiClientEvents"
+import { selectWithColumnFallback } from "@/lib/postgrestCompat"
 
 const RETURN_CATEGORIES = [
   ["profile_missing", "プロフィール不足"],
@@ -32,18 +33,19 @@ type InvoiceRow = {
   total: number
   pdf_path: string | null
   memo: string | null
-  item_count: number
-  rejected_category: string | null
-  rejected_reason: string | null
-  submitted_at: string | null
-  first_submitted_at: string | null
-  resubmitted_at: string | null
-  confirmed_at: string | null
-  returned_at: string | null
-  return_count: number
-  return_history: Array<{ category?: string; reason?: string; returned_at?: string }>
-  vendor_profile_snapshot: Record<string, unknown> | null
-  vendor_bank_snapshot: Record<string, unknown> | null
+  item_count?: number
+  rejected_category?: string | null
+  rejected_reason?: string | null
+  submitted_at?: string | null
+  first_submitted_at?: string | null
+  resubmitted_at?: string | null
+  approved_at?: string | null
+  confirmed_at?: string | null
+  returned_at?: string | null
+  return_count?: number
+  return_history?: Array<{ category?: string; reason?: string; returned_at?: string }>
+  vendor_profile_snapshot?: Record<string, unknown> | null
+  vendor_bank_snapshot?: Record<string, unknown> | null
 }
 
 type VendorRow = { id: string; name: string; email: string | null }
@@ -112,39 +114,79 @@ export default function VendorInvoiceDetailPage() {
   const load = useCallback(async () => {
     if (!activeOrgId || !canAccess || !invoiceId || !vendorId) return
     setLoading(true)
-    const [invoiceRes, vendorRes, linesRes, evidenceRes] = await Promise.all([
-      supabase
-        .from("vendor_invoices")
-        .select(
-          "id, billing_month, status, submit_deadline, pay_date, total, pdf_path, memo, item_count, rejected_category, rejected_reason, submitted_at, first_submitted_at, resubmitted_at, confirmed_at, returned_at, return_count, return_history, vendor_profile_snapshot, vendor_bank_snapshot"
-        )
-        .eq("id", invoiceId)
-        .eq("org_id", activeOrgId)
-        .maybeSingle(),
-      supabase.from("vendors").select("id, name, email").eq("id", vendorId).eq("org_id", activeOrgId).maybeSingle(),
-      supabase.from("vendor_invoice_lines").select("id, content_id, work_type, description, qty, unit_price, amount").eq("vendor_invoice_id", invoiceId),
-      supabase
-        .from("vendor_invoice_evidence_files")
-        .select("id, file_name, storage_path, mime_type, file_size, created_at")
-        .eq("vendor_invoice_id", invoiceId)
-        .order("created_at", { ascending: false }),
-    ])
+    setError(null)
 
-    if (invoiceRes.error || !invoiceRes.data) {
-      setError("外注請求の取得に失敗しました。")
+    try {
+      const [invoiceRes, vendorRes, linesRes, evidenceRes] = await Promise.all([
+        selectWithColumnFallback<InvoiceRow>({
+          table: "vendor_invoices",
+          columns: [
+            "id",
+            "billing_month",
+            "status",
+            "submit_deadline",
+            "pay_date",
+            "total",
+            "pdf_path",
+            "memo",
+            "item_count",
+            "rejected_category",
+            "rejected_reason",
+            "submitted_at",
+            "first_submitted_at",
+            "resubmitted_at",
+            "approved_at",
+            "confirmed_at",
+            "returned_at",
+            "return_count",
+            "return_history",
+            "vendor_profile_snapshot",
+            "vendor_bank_snapshot",
+          ],
+          execute: async (columnsCsv) => {
+            const result = await supabase
+              .from("vendor_invoices")
+              .select(columnsCsv)
+              .eq("id", invoiceId)
+              .eq("org_id", activeOrgId)
+              .maybeSingle()
+            return {
+              data: (result.data ?? null) as InvoiceRow | null,
+              error: result.error,
+            }
+          },
+        }),
+        supabase.from("vendors").select("id, name, email").eq("id", vendorId).eq("org_id", activeOrgId).maybeSingle(),
+        supabase.from("vendor_invoice_lines").select("id, content_id, work_type, description, qty, unit_price, amount").eq("vendor_invoice_id", invoiceId),
+        supabase
+          .from("vendor_invoice_evidence_files")
+          .select("id, file_name, storage_path, mime_type, file_size, created_at")
+          .eq("vendor_invoice_id", invoiceId)
+          .order("created_at", { ascending: false }),
+      ])
+
+      if (!invoiceRes.data) {
+        setError("外注請求の取得に失敗しました。")
+        return
+      }
+
+      const nextInvoice = invoiceRes.data
+      setInvoice(nextInvoice)
+      setVendor((vendorRes.data ?? null) as VendorRow | null)
+      setLines((linesRes.data ?? []) as LineRow[])
+      setEvidenceFiles((evidenceRes.data ?? []) as EvidenceRow[])
+      setRejectCategory(nextInvoice.rejected_category ?? "profile_missing")
+      setRejectReason(nextInvoice.rejected_reason ?? "")
+      setMemoDraft(nextInvoice.memo ?? "")
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "外注請求の取得に失敗しました。")
+      setInvoice(null)
+      setVendor(null)
+      setLines([])
+      setEvidenceFiles([])
+    } finally {
       setLoading(false)
-      return
     }
-
-    const nextInvoice = invoiceRes.data as InvoiceRow
-    setInvoice(nextInvoice)
-    setVendor((vendorRes.data ?? null) as VendorRow | null)
-    setLines((linesRes.data ?? []) as LineRow[])
-    setEvidenceFiles((evidenceRes.data ?? []) as EvidenceRow[])
-    setRejectCategory(nextInvoice.rejected_category ?? "profile_missing")
-    setRejectReason(nextInvoice.rejected_reason ?? "")
-    setMemoDraft(nextInvoice.memo ?? "")
-    setLoading(false)
   }, [activeOrgId, canAccess, invoiceId, vendorId])
 
   useEffect(() => {
@@ -328,7 +370,7 @@ export default function VendorInvoiceDetailPage() {
               PDFを開く
             </button>
             <Link href={`/documents?tab=vendor&month=${encodeURIComponent(invoice.billing_month)}`} style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", textDecoration: "none" }}>
-              証憑アーカイブ
+              請求書保管
             </Link>
           </div>
         </header>
@@ -339,7 +381,7 @@ export default function VendorInvoiceDetailPage() {
           <Info title="ベンダー" value={vendor.name} sub={vendor.email || "メール未登録"} />
           <Info title="請求金額" value={yen(total)} sub={`${invoice.item_count ?? lines.length}行`} />
           <Info title="差し戻し回数" value={String(invoice.return_count ?? 0)} sub={`最終差し戻し ${fmt(invoice.returned_at)}`} />
-          <Info title="承認日 / 支払日" value={fmt(invoice.confirmed_at)} sub={`支払予定 ${invoice.pay_date || "-"}`} />
+          <Info title="承認日 / 支払日" value={fmt(invoice.confirmed_at ?? invoice.approved_at)} sub={`支払予定 ${invoice.pay_date || "-"}`} />
         </section>
 
         {invoice.status === "rejected" ? (

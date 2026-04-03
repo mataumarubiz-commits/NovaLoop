@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { selectWithColumnFallback, writeWithColumnFallback } from "@/lib/postgrestCompat"
 import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
 import {
   isLinkValid,
@@ -59,18 +60,35 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       .single()
 
     // Check existing submission
-    const { data: existingSub } = await admin
-      .from("vendor_invoices")
-      .select("id, status, total, submitted_at, submitter_name")
-      .eq("org_id", link.org_id)
-      .eq("vendor_id", link.vendor_id)
-      .eq("billing_month", link.target_month)
-      .eq("submission_link_id", link.id)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle()
+    const { data: existingSub } = await selectWithColumnFallback<Record<string, unknown>>({
+      table: "vendor_invoices",
+      columns: ["id", "status", "total", "submitted_at", "submitter_name"],
+      execute: async (columnsCsv) => {
+        const result = await admin
+          .from("vendor_invoices")
+          .select(columnsCsv)
+          .eq("org_id", link.org_id)
+          .eq("vendor_id", link.vendor_id)
+          .eq("billing_month", link.target_month)
+          .eq("submission_link_id", link.id)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        return {
+          data: (result.data ?? null) as Record<string, unknown> | null,
+          error: result.error,
+        }
+      },
+    })
+    const existingSubmission = existingSub as {
+      id?: string
+      status?: string
+      total?: number
+      submitted_at?: string | null
+      submitter_name?: string | null
+    } | null
 
-    const alreadySubmitted = !!existingSub && existingSub.status !== "rejected"
+    const alreadySubmitted = !!existingSubmission && existingSubmission.status !== "rejected"
 
     // Fetch content candidates for this vendor + month
     let contentCandidates: ContentCandidate[] = []
@@ -130,13 +148,13 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       expires_at: link.expires_at,
       allow_resubmission: link.allow_resubmission,
       already_submitted: alreadySubmitted,
-      existing_submission: existingSub
+      existing_submission: existingSubmission
         ? {
-            id: existingSub.id,
-            status: existingSub.status,
-            total: existingSub.total,
-            submitted_at: existingSub.submitted_at,
-            submitter_name: existingSub.submitter_name,
+            id: existingSubmission.id ?? "",
+            status: existingSubmission.status ?? "",
+            total: Number(existingSubmission.total ?? 0),
+            submitted_at: existingSubmission.submitted_at ?? null,
+            submitter_name: existingSubmission.submitter_name ?? null,
           }
         : null,
       content_candidates: contentCandidates,
@@ -183,18 +201,33 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     }
 
     // Check existing submission
-    const { data: existingSub } = await admin
-      .from("vendor_invoices")
-      .select("id, status, submission_count")
-      .eq("org_id", link.org_id)
-      .eq("vendor_id", link.vendor_id)
-      .eq("billing_month", link.target_month)
-      .eq("submission_link_id", link.id)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle()
+    const { data: existingSub } = await selectWithColumnFallback<Record<string, unknown>>({
+      table: "vendor_invoices",
+      columns: ["id", "status", "submission_count"],
+      execute: async (columnsCsv) => {
+        const result = await admin
+          .from("vendor_invoices")
+          .select(columnsCsv)
+          .eq("org_id", link.org_id)
+          .eq("vendor_id", link.vendor_id)
+          .eq("billing_month", link.target_month)
+          .eq("submission_link_id", link.id)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        return {
+          data: (result.data ?? null) as Record<string, unknown> | null,
+          error: result.error,
+        }
+      },
+    })
+    const existingSubmission = existingSub as {
+      id?: string
+      status?: string
+      submission_count?: number
+    } | null
 
-    if (existingSub && existingSub.status !== "rejected" && !link.allow_resubmission) {
+    if (existingSubmission && existingSubmission.status !== "rejected" && !link.allow_resubmission) {
       return NextResponse.json(
         { ok: false, error: "すでに提出済みです。修正が必要な場合は担当者へご連絡ください。" },
         { status: 409 }
@@ -219,29 +252,36 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       account_holder: payload.account_holder.trim(),
     }
 
-    const newCount = (existingSub?.submission_count ?? 0) + 1
+    const newCount = (existingSubmission?.submission_count ?? 0) + 1
 
-    if (existingSub && (existingSub.status === "rejected" || link.allow_resubmission)) {
+    if (existingSubmission && (existingSubmission.status === "rejected" || link.allow_resubmission)) {
       // Update existing invoice (resubmission)
-      const { error } = await admin
-        .from("vendor_invoices")
-        .update({
-          status: "submitted",
-          total: payload.amount,
-          submitter_name: payload.submitter_name.trim(),
-          submitter_email: payload.submitter_email.trim(),
-          submitter_bank_json: bankJson,
-          submitter_notes: payload.notes?.trim() || null,
-          vendor_bank_snapshot: bankJson,
-          submitted_at: now,
-          resubmitted_at: now,
-          submission_count: newCount,
-          updated_at: now,
+      try {
+        await writeWithColumnFallback({
+          table: "vendor_invoices",
+          payload: {
+            status: "submitted",
+            total: payload.amount,
+            submitter_name: payload.submitter_name.trim(),
+            submitter_email: payload.submitter_email.trim(),
+            submitter_bank_json: bankJson,
+            submitter_notes: payload.notes?.trim() || null,
+            vendor_bank_snapshot: bankJson,
+            submitted_at: now,
+            resubmitted_at: now,
+            submission_count: newCount,
+            updated_at: now,
+          },
+          execute: async (safePayload) => {
+            const result = await admin.from("vendor_invoices").update(safePayload).eq("id", existingSubmission.id)
+            return { data: null, error: result.error }
+          },
         })
-        .eq("id", existingSub.id)
-
-      if (error) {
-        return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+      } catch (error) {
+        return NextResponse.json(
+          { ok: false, error: error instanceof Error ? error.message : "再提出の保存に失敗しました。" },
+          { status: 500 }
+        )
       }
 
       // Replace line items if provided
@@ -249,10 +289,10 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         await admin
           .from("vendor_invoice_lines")
           .delete()
-          .eq("vendor_invoice_id", existingSub.id)
+          .eq("vendor_invoice_id", existingSubmission.id)
 
         const lines = payload.line_items.map((item, idx) => ({
-          vendor_invoice_id: existingSub.id,
+          vendor_invoice_id: existingSubmission.id,
           content_id: item.content_id || null,
           description: item.description,
           qty: item.qty,
@@ -267,7 +307,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
       return NextResponse.json({
         ok: true,
-        invoiceId: existingSub.id,
+        invoiceId: existingSubmission.id,
         submittedAt: now,
         isResubmission: true,
       })
@@ -275,29 +315,37 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
     // Create new vendor_invoice
     const invoiceId = crypto.randomUUID()
-    const { error: insertError } = await admin
-      .from("vendor_invoices")
-      .insert({
-        id: invoiceId,
-        org_id: link.org_id,
-        vendor_id: link.vendor_id,
-        billing_month: link.target_month,
-        status: "submitted",
-        total: payload.amount,
-        submitter_name: payload.submitter_name.trim(),
-        submitter_email: payload.submitter_email.trim(),
-        submitter_bank_json: bankJson,
-        submitter_notes: payload.notes?.trim() || null,
-        vendor_bank_snapshot: bankJson,
-        submitted_at: now,
-        first_submitted_at: now,
-        submission_count: 1,
-        submission_link_id: link.id,
-        item_count: payload.line_items?.length ?? 0,
+    try {
+      await writeWithColumnFallback({
+        table: "vendor_invoices",
+        payload: {
+          id: invoiceId,
+          org_id: link.org_id,
+          vendor_id: link.vendor_id,
+          billing_month: link.target_month,
+          status: "submitted",
+          total: payload.amount,
+          submitter_name: payload.submitter_name.trim(),
+          submitter_email: payload.submitter_email.trim(),
+          submitter_bank_json: bankJson,
+          submitter_notes: payload.notes?.trim() || null,
+          vendor_bank_snapshot: bankJson,
+          submitted_at: now,
+          first_submitted_at: now,
+          submission_count: 1,
+          submission_link_id: link.id,
+          item_count: payload.line_items?.length ?? 0,
+        },
+        execute: async (safePayload) => {
+          const result = await admin.from("vendor_invoices").insert(safePayload)
+          return { data: null, error: result.error }
+        },
       })
-
-    if (insertError) {
-      return NextResponse.json({ ok: false, error: insertError.message }, { status: 500 })
+    } catch (error) {
+      return NextResponse.json(
+        { ok: false, error: error instanceof Error ? error.message : "請求提出の保存に失敗しました。" },
+        { status: 500 }
+      )
     }
 
     // Insert line items if provided

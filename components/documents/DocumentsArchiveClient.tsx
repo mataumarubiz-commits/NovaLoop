@@ -124,13 +124,13 @@ export default function DocumentsArchiveClient() {
           | null
         if (!active) return
         if (!res.ok || !json?.ok || !json.archive) {
-          throw new Error(json?.error ?? "証憑アーカイブを読み込めませんでした。")
+          throw new Error(json?.error ?? "請求書保管を読み込めませんでした。")
         }
         setArchive(json.archive)
       } catch (loadError) {
         if (!active) return
         setArchive(null)
-        setError(loadError instanceof Error ? loadError.message : "証憑アーカイブを読み込めませんでした。")
+        setError(loadError instanceof Error ? loadError.message : "請求書保管を読み込めませんでした。")
       } finally {
         if (active) setLoading(false)
       }
@@ -293,9 +293,9 @@ export default function DocumentsArchiveClient() {
     return (
       <div style={{ padding: 32 }}>
         <div style={{ ...sectionCardStyle, padding: 24 }}>
-          <h1 style={{ margin: 0, fontSize: 24, color: "var(--text)" }}>証憑</h1>
+          <h1 style={{ margin: 0, fontSize: 24, color: "var(--text)" }}>請求書保管</h1>
           <p style={{ margin: "10px 0 0", color: "var(--muted)" }}>
-            証憑アーカイブは owner / executive_assistant のみ利用できます。
+            請求書保管は owner / executive_assistant のみ利用できます。
           </p>
           <Link href="/home" style={{ display: "inline-flex", marginTop: 14, color: "var(--primary)", fontWeight: 700, textDecoration: "none" }}>
             Home に戻る
@@ -334,7 +334,7 @@ export default function DocumentsArchiveClient() {
             <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "start" }}>
               <div style={{ maxWidth: 760 }}>
                 <p style={{ margin: 0, fontSize: 12, letterSpacing: "0.14em", opacity: 0.72 }}>DOCUMENTS</p>
-                <h1 style={{ margin: "10px 0 10px", fontSize: 34, lineHeight: 1.1 }}>証憑アーカイブ</h1>
+                <h1 style={{ margin: "10px 0 10px", fontSize: 34, lineHeight: 1.1 }}>請求書保管</h1>
                 <p style={{ margin: 0, fontSize: 15, lineHeight: 1.8, color: "rgba(241,245,249,0.84)" }}>
                   請求済み請求書と外注請求書を、月ごとにまとめて探せる画面です。PDF の有無、要対応、対象月が一目で分かり、その場で再生成や添付まで完了できます。
                 </p>

@@ -4,6 +4,7 @@ import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useEffect, useMemo, useState } from "react"
 import { PLATFORM_PURCHASE_ENTRY_PATH } from "@/lib/platformFlow"
+import { buildAuthFinishRedirectPath, normalizePublicAuthTarget } from "@/lib/publicAuthFlow"
 import { supabase } from "@/lib/supabase"
 
 type AuthState = "checking" | "ready" | "signing_in"
@@ -11,13 +12,6 @@ type AuthState = "checking" | "ready" | "signing_in"
 type FeatureTone = "progress" | "close" | "playbook"
 type PriorityTone = "success" | "alert" | "info"
 
-function normalizeRedirectTarget(value: string | null) {
-  if (!value || !value.startsWith("/")) return "/onboarding"
-  if (value.startsWith("//")) return "/onboarding"
-  return value
-}
-
-const AUTH_FINISH_PATH = "/auth/finish"
 const SHOW_LP_QUERY_VALUE = "1"
 const INITIAL_AUTH_CHECK_TIMEOUT_MS = 1500
 
@@ -305,7 +299,7 @@ export default function GoogleLoginLanding() {
   const reloginMessage = searchParams?.get("message") === "relogin"
   const showLp = searchParams?.get("showLp") === SHOW_LP_QUERY_VALUE
   const redirectTarget = useMemo(
-    () => normalizeRedirectTarget(searchParams?.get("redirectTo") ?? null),
+    () => normalizePublicAuthTarget(searchParams?.get("redirectTo") ?? null),
     [searchParams]
   )
 
@@ -405,7 +399,7 @@ export default function GoogleLoginLanding() {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: `${origin}${AUTH_FINISH_PATH}?next=${encodeURIComponent(target)}`,
+        redirectTo: buildAuthFinishRedirectPath(origin, target),
       },
     })
 

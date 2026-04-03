@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
 import { notifyAdminRoles, notifyVendorUser } from "@/lib/opsNotifications"
+import { selectWithColumnFallback, writeWithColumnFallback } from "@/lib/postgrestCompat"
 import { requireAdminActor } from "@/lib/vendorPortal"
 import { trackServerEvent } from "@/lib/analyticsServer"
 
@@ -23,12 +24,22 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
 
     const admin = createSupabaseAdmin()
-    const { data: invoice } = await admin
-      .from("vendor_invoices")
-      .select("id, org_id, status, vendor_id, billing_month, total, invoice_number, return_count, return_history")
-      .eq("id", id)
-      .eq("org_id", actor.orgId)
-      .maybeSingle()
+    const { data: invoice } = await selectWithColumnFallback<Record<string, unknown>>({
+      table: "vendor_invoices",
+      columns: ["id", "org_id", "status", "vendor_id", "billing_month", "total", "invoice_number", "return_count", "return_history"],
+      execute: async (columnsCsv) => {
+        const result = await admin
+          .from("vendor_invoices")
+          .select(columnsCsv)
+          .eq("id", id)
+          .eq("org_id", actor.orgId)
+          .maybeSingle()
+        return {
+          data: (result.data ?? null) as Record<string, unknown> | null,
+          error: result.error,
+        }
+      },
+    })
 
     if (!invoice) {
       return NextResponse.json({ ok: false, error: "請求が見つかりません。" }, { status: 404 })
@@ -71,8 +82,23 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             updated_at: now,
           }
 
-    const { error } = await admin.from("vendor_invoices").update(payload).eq("id", id).eq("org_id", actor.orgId)
-    if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+    let appliedPayload = payload
+    try {
+      const result = await writeWithColumnFallback({
+        table: "vendor_invoices",
+        payload,
+        execute: async (safePayload) => {
+          const updateResult = await admin.from("vendor_invoices").update(safePayload).eq("id", id).eq("org_id", actor.orgId)
+          return { data: null, error: updateResult.error }
+        },
+      })
+      appliedPayload = result.payload as typeof payload
+    } catch (error) {
+      return NextResponse.json(
+        { ok: false, error: error instanceof Error ? error.message : "レビュー更新に失敗しました。" },
+        { status: 500 }
+      )
+    }
 
     const { data: vendor } = await admin.from("vendors").select("name").eq("id", (invoice as { vendor_id: string }).vendor_id).maybeSingle()
     const vendorName = (vendor as { name?: string | null } | null)?.name ?? ""
@@ -125,10 +151,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({
       ok: true,
       status: payload.status,
-      approved_at: action === "approve" ? now : null,
-      rejected_category: action === "reject" ? category : null,
-      rejected_reason: action === "reject" ? reason : null,
-      returned_at: action === "reject" ? now : null,
+      approved_at: action === "approve" && "approved_at" in appliedPayload ? now : null,
+      rejected_category: action === "reject" && "rejected_category" in appliedPayload ? category : null,
+      rejected_reason: action === "reject" && "rejected_reason" in appliedPayload ? reason : null,
+      returned_at: action === "reject" && "returned_at" in appliedPayload ? now : null,
     })
   } catch (error) {
     return NextResponse.json(

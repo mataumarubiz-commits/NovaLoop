@@ -498,7 +498,7 @@ export default function InvoiceDetailPage() {
               この月の一覧へ
             </Link>
             <Link href={`/documents?tab=sales&month=${encodeURIComponent(invoice.invoice_month)}`} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", textDecoration: "none" }}>
-              証憑アーカイブ
+              請求書保管
             </Link>
           </div>
         </div>

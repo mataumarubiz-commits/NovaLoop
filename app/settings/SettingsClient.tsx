@@ -54,6 +54,7 @@ export default function SettingsClient({ initialData }: { initialData: SettingsI
   const [integrationOpen, setIntegrationOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteMessage, setDeleteMessage] = useState("")
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false)
 
   useEffect(() => {
     applyTheme(theme)
@@ -74,14 +75,50 @@ export default function SettingsClient({ initialData }: { initialData: SettingsI
     router.push("/")
   }
 
+  const getAccessToken = async () => {
+    const session = await supabase.auth.getSession()
+    if (session.data.session?.access_token) {
+      return session.data.session.access_token
+    }
+    const refreshed = await supabase.auth.refreshSession()
+    return refreshed.data.session?.access_token ?? null
+  }
+
   const handleDelete = async () => {
-    setDeleteMessage("アカウント削除は現在準備中です。ログアウトしてサポートへ連絡してください。")
-    await supabase.auth.signOut()
-    setTimeout(() => {
-      setDeleteOpen(false)
-      setDeleteMessage("")
-      router.push("/")
-    }, 1200)
+    setDeleteSubmitting(true)
+    setDeleteMessage("")
+
+    try {
+      const token = await getAccessToken()
+      if (!token) {
+        setDeleteMessage("認証に失敗しました。ログインし直してから再試行してください。")
+        return
+      }
+
+      const res = await fetch("/api/account/delete", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      })
+      const json = (await res.json().catch(() => null)) as { ok?: boolean; message?: string } | null
+      if (!res.ok || !json?.ok) {
+        setDeleteMessage(json?.message ?? "アカウント削除に失敗しました。しばらくしてから再試行してください。")
+        return
+      }
+
+      await supabase.auth.signOut()
+      setDeleteMessage("アカウントを削除しました。")
+      setTimeout(() => {
+        setDeleteOpen(false)
+        setDeleteMessage("")
+        router.push("/")
+      }, 500)
+    } catch {
+      setDeleteMessage("アカウント削除に失敗しました。しばらくしてから再試行してください。")
+    } finally {
+      setDeleteSubmitting(false)
+    }
   }
 
   const buttonStyle: React.CSSProperties = {
@@ -232,15 +269,20 @@ export default function SettingsClient({ initialData }: { initialData: SettingsI
 
       <Modal open={deleteOpen} onClose={() => setDeleteOpen(false)} title="アカウント削除">
         <p style={{ color: "var(--muted)", marginBottom: 16, lineHeight: 1.7 }}>
-          現在この操作は無効化されています。ログアウト後にサポートへ連絡してください。
+          この操作は取り消せません。オーナーとして所属中のワークスペースがある場合は先に退出または削除してください。
         </p>
         {deleteMessage ? <p style={{ color: "var(--text)", marginBottom: 16 }}>{deleteMessage}</p> : null}
         <div style={{ display: "flex", gap: 12 }}>
-          <button type="button" onClick={() => setDeleteOpen(false)} style={buttonStyle}>
+          <button type="button" onClick={() => setDeleteOpen(false)} style={buttonStyle} disabled={deleteSubmitting}>
             キャンセル
           </button>
-          <button type="button" onClick={() => void handleDelete()} style={{ ...dangerButtonStyle, background: "var(--error-text)", color: "var(--primary-contrast)", borderColor: "var(--error-text)" }}>
-            ログアウトして閉じる
+          <button
+            type="button"
+            onClick={() => void handleDelete()}
+            disabled={deleteSubmitting}
+            style={{ ...dangerButtonStyle, background: "var(--error-text)", color: "var(--primary-contrast)", borderColor: "var(--error-text)" }}
+          >
+            {deleteSubmitting ? "削除中..." : "アカウントを削除する"}
           </button>
         </div>
       </Modal>

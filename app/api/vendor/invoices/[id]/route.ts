@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { selectWithColumnFallback } from "@/lib/postgrestCompat"
 import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
 import { requireVendorActor } from "@/lib/vendorPortal"
 
@@ -12,17 +13,72 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     if (!id) return NextResponse.json({ ok: false, error: "請求IDが不正です。" }, { status: 400 })
 
     const admin = createSupabaseAdmin()
-    const { data: invoice } = await admin
-      .from("vendor_invoices")
-      .select(
-        "id, invoice_number, billing_month, status, total, item_count, memo, submit_deadline, pay_date, submitted_at, first_submitted_at, resubmitted_at, approved_at, returned_at, rejected_category, rejected_reason, return_count, return_history, recipient_snapshot, vendor_profile_snapshot, vendor_bank_snapshot, pdf_path"
-      )
-      .eq("id", id)
-      .eq("org_id", actor.orgId)
-      .eq("vendor_id", actor.vendorId)
-      .maybeSingle()
+    const { data: invoice } = await selectWithColumnFallback<Record<string, unknown>>({
+      table: "vendor_invoices",
+      columns: [
+        "id",
+        "invoice_number",
+        "billing_month",
+        "status",
+        "total",
+        "item_count",
+        "memo",
+        "submit_deadline",
+        "pay_date",
+        "submitted_at",
+        "first_submitted_at",
+        "resubmitted_at",
+        "approved_at",
+        "returned_at",
+        "rejected_category",
+        "rejected_reason",
+        "return_count",
+        "return_history",
+        "recipient_snapshot",
+        "vendor_profile_snapshot",
+        "vendor_bank_snapshot",
+        "pdf_path",
+      ],
+      execute: async (columnsCsv) => {
+        const result = await admin
+          .from("vendor_invoices")
+          .select(columnsCsv)
+          .eq("id", id)
+          .eq("org_id", actor.orgId)
+          .eq("vendor_id", actor.vendorId)
+          .maybeSingle()
+        return {
+          data: (result.data ?? null) as Record<string, unknown> | null,
+          error: result.error,
+        }
+      },
+    })
 
     if (!invoice) return NextResponse.json({ ok: false, error: "請求が見つかりません。" }, { status: 404 })
+    const invoiceRow = invoice as {
+      id?: string
+      invoice_number?: string | null
+      billing_month?: string | null
+      status?: string | null
+      total?: number | null
+      item_count?: number | null
+      memo?: string | null
+      submit_deadline?: string | null
+      pay_date?: string | null
+      submitted_at?: string | null
+      first_submitted_at?: string | null
+      resubmitted_at?: string | null
+      approved_at?: string | null
+      returned_at?: string | null
+      rejected_category?: string | null
+      rejected_reason?: string | null
+      return_count?: number | null
+      return_history?: Array<Record<string, unknown>>
+      recipient_snapshot?: Record<string, unknown> | null
+      vendor_profile_snapshot?: Record<string, unknown> | null
+      vendor_bank_snapshot?: Record<string, unknown> | null
+      pdf_path?: string | null
+    }
 
     const { data: lines } = await admin
       .from("vendor_invoice_lines")
@@ -48,28 +104,28 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     return NextResponse.json({
       ok: true,
       invoice: {
-        id: invoice.id,
-        invoice_number: invoice.invoice_number,
-        billing_month: invoice.billing_month,
-        status: invoice.status,
-        total: invoice.total,
-        item_count: invoice.item_count,
-        memo: invoice.memo,
-        submit_deadline: invoice.submit_deadline,
-        pay_date: invoice.pay_date,
-        submitted_at: invoice.submitted_at,
-        first_submitted_at: invoice.first_submitted_at,
-        resubmitted_at: invoice.resubmitted_at,
-        approved_at: invoice.approved_at,
-        returned_at: invoice.returned_at,
-        rejected_category: invoice.rejected_category,
-        rejected_reason: invoice.rejected_reason,
-        return_count: invoice.return_count,
-        return_history: invoice.return_history ?? [],
-        recipient_snapshot: invoice.recipient_snapshot,
-        profile_snapshot: invoice.vendor_profile_snapshot,
-        bank_snapshot: invoice.vendor_bank_snapshot,
-        pdf_path: invoice.pdf_path,
+        id: invoiceRow.id ?? null,
+        invoice_number: invoiceRow.invoice_number ?? null,
+        billing_month: invoiceRow.billing_month ?? null,
+        status: invoiceRow.status ?? null,
+        total: Number(invoiceRow.total ?? 0),
+        item_count: Number(invoiceRow.item_count ?? 0),
+        memo: invoiceRow.memo ?? null,
+        submit_deadline: invoiceRow.submit_deadline ?? null,
+        pay_date: invoiceRow.pay_date ?? null,
+        submitted_at: invoiceRow.submitted_at ?? null,
+        first_submitted_at: invoiceRow.first_submitted_at ?? null,
+        resubmitted_at: invoiceRow.resubmitted_at ?? null,
+        approved_at: invoiceRow.approved_at ?? null,
+        returned_at: invoiceRow.returned_at ?? null,
+        rejected_category: invoiceRow.rejected_category ?? null,
+        rejected_reason: invoiceRow.rejected_reason ?? null,
+        return_count: Number(invoiceRow.return_count ?? 0),
+        return_history: invoiceRow.return_history ?? [],
+        recipient_snapshot: invoiceRow.recipient_snapshot ?? null,
+        profile_snapshot: invoiceRow.vendor_profile_snapshot ?? null,
+        bank_snapshot: invoiceRow.vendor_bank_snapshot ?? null,
+        pdf_path: invoiceRow.pdf_path ?? null,
         lines: normalizedLines,
       },
     })

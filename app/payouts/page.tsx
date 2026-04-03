@@ -443,7 +443,7 @@ export default function PayoutsPage() {
         <nav className="page-tab-bar">
           <Link href="/vendors" data-active="false">外注管理</Link>
           <Link href="/payouts" data-active="true">支払</Link>
-          <Link href={`/documents?tab=vendor${month ? `&month=${encodeURIComponent(month)}` : ""}`} data-active="false">証憑</Link>
+          <Link href={`/documents?tab=vendor${month ? `&month=${encodeURIComponent(month)}` : ""}`} data-active="false">請求書保管</Link>
         </nav>
 
         <header style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "end" }}>
@@ -465,7 +465,7 @@ export default function PayoutsPage() {
 
         <section style={{ display: "flex", justifyContent: "flex-end" }}>
           <Link href={`/documents?tab=vendor${month ? `&month=${encodeURIComponent(month)}` : ""}`} style={{ ...linkButtonStyle, textDecoration: "none" }}>
-            証憑アーカイブで見る
+            請求書保管で見る
           </Link>
         </section>
 

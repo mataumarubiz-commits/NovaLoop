@@ -59,7 +59,7 @@ export async function GET(req: NextRequest) {
     })
   } catch (error) {
     return NextResponse.json(
-      { ok: false, error: error instanceof Error ? error.message : "証憑アーカイブの取得に失敗しました。" },
+      { ok: false, error: error instanceof Error ? error.message : "請求書保管の取得に失敗しました。" },
       { status: 400 }
     )
   }

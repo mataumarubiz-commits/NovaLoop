@@ -1,4 +1,5 @@
 import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
+import { selectWithColumnFallback } from "@/lib/postgrestCompat"
 
 export const DOCUMENT_SCOPE_OPTIONS = ["sales", "vendor"] as const
 export const DOCUMENT_PDF_FILTER_OPTIONS = ["all", "with_pdf", "missing_pdf"] as const
@@ -114,17 +115,33 @@ type VendorInvoiceArchiveRow = {
   id: string
   vendor_id: string
   billing_month: string
-  invoice_number: string | null
+  invoice_number?: string | null
   status: string
   total: number | null
   pdf_path: string | null
-  submitted_at: string | null
-  first_submitted_at: string | null
-  resubmitted_at: string | null
-  approved_at: string | null
-  confirmed_at: string | null
+  submitted_at?: string | null
+  first_submitted_at?: string | null
+  resubmitted_at?: string | null
+  approved_at?: string | null
+  confirmed_at?: string | null
   created_at: string | null
 }
+
+const VENDOR_ARCHIVE_COLUMNS = [
+  "id",
+  "vendor_id",
+  "billing_month",
+  "invoice_number",
+  "status",
+  "total",
+  "pdf_path",
+  "submitted_at",
+  "first_submitted_at",
+  "resubmitted_at",
+  "approved_at",
+  "confirmed_at",
+  "created_at",
+]
 
 const SALES_STATUS_OPTIONS: DocumentsArchiveStatusOption[] = [
   { value: "draft", label: "Draft" },
@@ -306,22 +323,22 @@ async function loadSalesItems(query: DocumentsArchiveQuery) {
 
 async function loadVendorItems(query: DocumentsArchiveQuery) {
   const admin = createSupabaseAdmin()
-  let request = admin
-    .from("vendor_invoices")
-    .select(
-      "id, vendor_id, billing_month, invoice_number, status, total, pdf_path, submitted_at, first_submitted_at, resubmitted_at, approved_at, confirmed_at, created_at"
-    )
-    .eq("org_id", query.orgId)
-
-  if (query.month) request = request.eq("billing_month", query.month)
-  if (query.status) request = request.eq("status", query.status)
-  if (query.pdfFilter === "with_pdf") request = request.not("pdf_path", "is", null)
-  if (query.pdfFilter === "missing_pdf") request = request.is("pdf_path", null)
-
-  request = request.order("billing_month", { ascending: false }).order("created_at", { ascending: false })
-
-  const { data, error } = await request
-  if (error) throw new Error(`外注請求アーカイブの取得に失敗しました: ${error.message}`)
+  const { data } = await selectWithColumnFallback<VendorInvoiceArchiveRow[]>({
+    table: "vendor_invoices",
+    columns: VENDOR_ARCHIVE_COLUMNS,
+    execute: async (columnsCsv) => {
+      let request = admin.from("vendor_invoices").select(columnsCsv).eq("org_id", query.orgId)
+      if (query.month) request = request.eq("billing_month", query.month)
+      if (query.status) request = request.eq("status", query.status)
+      if (query.pdfFilter === "with_pdf") request = request.not("pdf_path", "is", null)
+      if (query.pdfFilter === "missing_pdf") request = request.is("pdf_path", null)
+      const result = await request.order("billing_month", { ascending: false }).order("created_at", { ascending: false })
+      return {
+        data: (result.data ?? []) as unknown as VendorInvoiceArchiveRow[],
+        error: result.error,
+      }
+    },
+  })
 
   const rows = (data ?? []) as VendorInvoiceArchiveRow[]
   const vendorIds = Array.from(new Set(rows.map((row) => row.vendor_id).filter(Boolean))) as string[]

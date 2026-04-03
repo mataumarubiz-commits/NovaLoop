@@ -3,18 +3,13 @@
 import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
+import { normalizePublicAuthTarget } from "@/lib/publicAuthFlow"
 import { supabase } from "@/lib/supabase"
-
-function normalizeNextTarget(value: string | null) {
-  if (!value || !value.startsWith("/")) return "/onboarding"
-  if (value.startsWith("//")) return "/onboarding"
-  return value
-}
 
 export default function AuthFinishPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const nextTarget = useMemo(() => normalizeNextTarget(searchParams?.get("next") ?? null), [searchParams])
+  const nextTarget = useMemo(() => normalizePublicAuthTarget(searchParams?.get("next") ?? null), [searchParams])
   const [failed, setFailed] = useState(false)
 
   useEffect(() => {

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
 import { getOrgRole, getUserIdFromToken, isOrgAdmin } from "@/lib/apiAuth"
 import { writeAuditLog } from "@/lib/auditLog"
+import { selectWithColumnFallback, writeWithColumnFallback } from "@/lib/postgrestCompat"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -44,20 +45,39 @@ export async function POST(req: NextRequest) {
     }
 
     // Fetch invoice
-    const { data: invoice } = await admin
-      .from("vendor_invoices")
-      .select("id, vendor_id, status, total, pay_date, billing_month")
-      .eq("id", invoiceId)
-      .eq("org_id", orgId)
-      .maybeSingle()
+    const { data: invoice } = await selectWithColumnFallback<Record<string, unknown>>({
+      table: "vendor_invoices",
+      columns: ["id", "vendor_id", "status", "total", "pay_date", "billing_month", "return_count"],
+      execute: async (columnsCsv) => {
+        const result = await admin
+          .from("vendor_invoices")
+          .select(columnsCsv)
+          .eq("id", invoiceId)
+          .eq("org_id", orgId)
+          .maybeSingle()
+        return {
+          data: (result.data ?? null) as Record<string, unknown> | null,
+          error: result.error,
+        }
+      },
+    })
 
     if (!invoice) {
       return NextResponse.json({ ok: false, error: "請求が見つかりません" }, { status: 404 })
     }
 
-    if (invoice.status !== "submitted") {
+    const invoiceRow = invoice as {
+      vendor_id?: string
+      status?: string
+      total?: number
+      pay_date?: string | null
+      billing_month?: string | null
+      return_count?: number
+    }
+
+    if (invoiceRow.status !== "submitted") {
       return NextResponse.json(
-        { ok: false, error: `現在のステータス（${invoice.status}）では${action === "approve" ? "承認" : "差し戻し"}できません` },
+        { ok: false, error: `現在のステータス（${invoiceRow.status ?? "-"}）では${action === "approve" ? "承認" : "差し戻し"}できません` },
         { status: 400 }
       )
     }
@@ -65,17 +85,24 @@ export async function POST(req: NextRequest) {
     const now = new Date().toISOString()
 
     if (action === "approve") {
-      const { error } = await admin
-        .from("vendor_invoices")
-        .update({
-          status: "approved",
-          approved_at: now,
-          updated_at: now,
+      try {
+        await writeWithColumnFallback({
+          table: "vendor_invoices",
+          payload: {
+            status: "approved",
+            approved_at: now,
+            updated_at: now,
+          },
+          execute: async (safePayload) => {
+            const result = await admin.from("vendor_invoices").update(safePayload).eq("id", invoiceId)
+            return { data: null, error: result.error }
+          },
         })
-        .eq("id", invoiceId)
-
-      if (error) {
-        return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+      } catch (error) {
+        return NextResponse.json(
+          { ok: false, error: error instanceof Error ? error.message : "承認処理に失敗しました。" },
+          { status: 500 }
+        )
       }
 
       // Auto-create payout record
@@ -83,10 +110,10 @@ export async function POST(req: NextRequest) {
       await admin.from("payouts").insert({
         id: payoutId,
         org_id: orgId,
-        vendor_id: invoice.vendor_id,
+        vendor_id: invoiceRow.vendor_id ?? null,
         vendor_invoice_id: invoiceId,
-        pay_date: invoice.pay_date || now.slice(0, 10),
-        amount: invoice.total,
+        pay_date: invoiceRow.pay_date || now.slice(0, 10),
+        amount: Number(invoiceRow.total ?? 0),
         status: "scheduled",
       })
 
@@ -96,27 +123,34 @@ export async function POST(req: NextRequest) {
         action: "vendor_invoice.approve",
         resource_type: "vendor_invoice",
         resource_id: invoiceId,
-        meta: { source: "submission_review", amount: invoice.total },
+        meta: { source: "submission_review", amount: Number(invoiceRow.total ?? 0) },
       })
 
       return NextResponse.json({ ok: true, status: "approved", payoutId })
     }
 
     // Reject
-    const returnCount = (invoice as Record<string, unknown>).return_count
-    const { error } = await admin
-      .from("vendor_invoices")
-      .update({
-        status: "rejected",
-        rejected_reason: reason || null,
-        returned_at: now,
-        return_count: (typeof returnCount === "number" ? returnCount : 0) + 1,
-        updated_at: now,
+    const returnCount = invoiceRow.return_count
+    try {
+      await writeWithColumnFallback({
+        table: "vendor_invoices",
+        payload: {
+          status: "rejected",
+          rejected_reason: reason || null,
+          returned_at: now,
+          return_count: (typeof returnCount === "number" ? returnCount : 0) + 1,
+          updated_at: now,
+        },
+        execute: async (safePayload) => {
+          const result = await admin.from("vendor_invoices").update(safePayload).eq("id", invoiceId)
+          return { data: null, error: result.error }
+        },
       })
-      .eq("id", invoiceId)
-
-    if (error) {
-      return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+    } catch (error) {
+      return NextResponse.json(
+        { ok: false, error: error instanceof Error ? error.message : "差し戻し処理に失敗しました。" },
+        { status: 500 }
+      )
     }
 
     await writeAuditLog(admin, {

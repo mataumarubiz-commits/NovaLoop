@@ -1,3 +1,5 @@
+import { resolvePlatformNotificationHref } from "./notificationLinks"
+
 export const NOTIFICATION_TYPES = [
   "membership.requested",
   "membership.approved",
@@ -224,17 +226,14 @@ export function notificationActionHref(n: NotificationLike): string {
   const payload = n.payload ?? {}
   const month = String(payload.target_month ?? payload.month ?? "")
   const monthQuery = month ? `?month=${encodeURIComponent(month)}` : ""
+  const platformHref = resolvePlatformNotificationHref(n.type, payload)
+  if (platformHref) return platformHref
 
   switch (normalizeNotificationType(n.type)) {
     case "membership.requested":
     case "membership.approved":
     case "membership.rejected":
       return "/settings/members"
-    case "platform.payment_pending":
-      return "/pending-payment"
-    case "platform.license_activated":
-    case "platform.transfer_completed":
-      return "/settings/license"
     case "contents.client_due_overdue":
       return "/contents?filter=client_overdue"
     case "contents.editor_due_overdue":

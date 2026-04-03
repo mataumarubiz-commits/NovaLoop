@@ -3,6 +3,7 @@ import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
 import { writeAuditLog } from "@/lib/auditLog"
 import { generateVendorInvoicePdf } from "@/lib/vendorInvoicePdf"
 import { notifyAdminRoles } from "@/lib/opsNotifications"
+import { selectWithColumnFallback, writeWithColumnFallback } from "@/lib/postgrestCompat"
 import {
   buildVendorInvoicePreview,
   loadRecipientSnapshot,
@@ -20,15 +21,41 @@ export const dynamic = "force-dynamic"
 
 async function loadHistory(orgId: string, vendorId: string) {
   const admin = createSupabaseAdmin()
-  const { data } = await admin
-    .from("vendor_invoices")
-    .select(
-      "id, invoice_number, billing_month, status, total, item_count, memo, pdf_path, submitted_at, first_submitted_at, resubmitted_at, approved_at, returned_at, rejected_category, rejected_reason, return_count, pay_date"
-    )
-    .eq("org_id", orgId)
-    .eq("vendor_id", vendorId)
-    .order("billing_month", { ascending: false })
-    .limit(12)
+  const { data } = await selectWithColumnFallback<Record<string, unknown>[]>({
+    table: "vendor_invoices",
+    columns: [
+      "id",
+      "invoice_number",
+      "billing_month",
+      "status",
+      "total",
+      "item_count",
+      "memo",
+      "pdf_path",
+      "submitted_at",
+      "first_submitted_at",
+      "resubmitted_at",
+      "approved_at",
+      "returned_at",
+      "rejected_category",
+      "rejected_reason",
+      "return_count",
+      "pay_date",
+    ],
+    execute: async (columnsCsv) => {
+      const result = await admin
+        .from("vendor_invoices")
+        .select(columnsCsv)
+        .eq("org_id", orgId)
+        .eq("vendor_id", vendorId)
+        .order("billing_month", { ascending: false })
+        .limit(12)
+      return {
+        data: (result.data ?? []) as unknown as Record<string, unknown>[],
+        error: result.error,
+      }
+    },
+  })
 
   return data ?? []
 }
@@ -189,17 +216,43 @@ export async function POST(req: NextRequest) {
     }
 
     if (existing?.id) {
-      const { error } = await admin
-        .from("vendor_invoices")
-        .update(invoicePayload)
-        .eq("id", existing.id)
-        .eq("org_id", actor.orgId)
-      if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+      try {
+        await writeWithColumnFallback({
+          table: "vendor_invoices",
+          payload: invoicePayload,
+          execute: async (safePayload) => {
+            const result = await admin
+              .from("vendor_invoices")
+              .update(safePayload)
+              .eq("id", existing.id)
+              .eq("org_id", actor.orgId)
+            return { data: null, error: result.error }
+          },
+        })
+      } catch (error) {
+        return NextResponse.json(
+          { ok: false, error: error instanceof Error ? error.message : "外注請求の更新に失敗しました。" },
+          { status: 500 }
+        )
+      }
 
       await admin.from("vendor_invoice_lines").delete().eq("vendor_invoice_id", existing.id)
     } else {
-      const { error } = await admin.from("vendor_invoices").insert({ ...invoicePayload, created_at: now })
-      if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+      try {
+        await writeWithColumnFallback({
+          table: "vendor_invoices",
+          payload: { ...invoicePayload, created_at: now },
+          execute: async (safePayload) => {
+            const result = await admin.from("vendor_invoices").insert(safePayload)
+            return { data: null, error: result.error }
+          },
+        })
+      } catch (error) {
+        return NextResponse.json(
+          { ok: false, error: error instanceof Error ? error.message : "外注請求の作成に失敗しました。" },
+          { status: 500 }
+        )
+      }
     }
 
     const lineRows = preview.lines.map((line) => ({

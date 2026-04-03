@@ -1,4 +1,5 @@
 import { writeAuditLog } from "@/lib/auditLog"
+import { PLATFORM_THANKS_PATH } from "@/lib/platformFlow"
 import {
   buildPlatformReceiptPayload,
   renderPlatformReceiptHtmlFromPayload,
@@ -156,6 +157,7 @@ export async function processPlatformPaymentSuccess(params: ProcessSuccessParams
           invoice_number: payment.invoice_number,
           receipt_number: receipt.receipt_number,
           activated_at: paidAtIso,
+          action_href: `${PLATFORM_THANKS_PATH}?from=notification`,
         },
       }),
     ]

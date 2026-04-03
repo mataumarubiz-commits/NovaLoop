@@ -96,6 +96,7 @@ export async function POST(req: NextRequest) {
             invoice_number: result.invoice_number,
             due_date: result.due_date,
             transfer_reference: result.transfer_reference,
+            action_href: "/pending-payment",
           },
         }),
         writePlatformAudit({
