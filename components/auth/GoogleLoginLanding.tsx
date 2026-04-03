@@ -125,7 +125,7 @@ function LoginButton({
       ? "ログイン状態を確認中..."
       : authState === "signing_in"
         ? "Googleで接続中..."
-        : readyLabel ?? "Googleで始める"
+        : readyLabel ?? "Googleで購入を始める"
 
   return (
     <button

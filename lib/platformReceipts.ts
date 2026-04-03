@@ -139,7 +139,9 @@ export function buildPlatformReceiptPayload(params: {
     tax_rate_breakdown_json: computed.breakdown,
     paid_at: params.paidAt,
     issued_at: params.issuedAt,
-    payment_method: "bank_transfer",
+    payment_method:
+      stringOrNull(params.payment.payment_method) ??
+      (stringOrNull(params.payment.payment_provider) === "stripe" ? "stripe_checkout" : "bank_transfer"),
     payer_note:
       stringOrNull(params.payerNote) ??
       stringOrNull(params.payment.client_transfer_name) ??
@@ -174,6 +176,7 @@ export function renderPlatformReceiptHtmlFromPayload(
     taxAmount: payload.tax_amount,
     taxMode: payload.tax_mode,
     taxRateBreakdown: payload.tax_rate_breakdown_json,
+    paymentMethod: payload.payment_method,
     payerNote: payload.payer_note,
     paymentReference: payload.payment_reference,
     serviceTitle: payload.service_title,

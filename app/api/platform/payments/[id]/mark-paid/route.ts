@@ -31,6 +31,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         source: "platform_admin_mark_paid",
         request_body: body,
       },
+      paymentProvider: "manual",
+      paymentChannel: "bank_transfer",
+      paymentMethod: "bank_transfer",
     })
 
     return NextResponse.json({

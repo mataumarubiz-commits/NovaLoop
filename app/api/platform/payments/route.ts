@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server"
 import { requirePlatformAdmin } from "@/lib/platformAuth"
 import { createPlatformDocumentSignedUrl } from "@/lib/platformDocuments"
+import {
+  getLatestPlatformCheckoutSessionsByPaymentId,
+  mergeLatestCheckoutSessionFields,
+} from "@/lib/platformServer"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -44,10 +48,17 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
   }
 
+  const checkoutSessionsByPaymentId = await getLatestPlatformCheckoutSessionsByPaymentId(
+    admin,
+    (data ?? []).map((row) => String((row as Record<string, unknown>).id ?? "")).filter(Boolean)
+  )
+
   const rows = await Promise.all(
     (data ?? []).map(async (row: Record<string, unknown>) => ({
-      ...row,
-      receipt_signed_url: await createPlatformDocumentSignedUrl(typeof row.receipt_pdf_path === "string" ? row.receipt_pdf_path : null),
+      ...mergeLatestCheckoutSessionFields(row, checkoutSessionsByPaymentId.get(String(row.id ?? "")) ?? null),
+      receipt_signed_url: await createPlatformDocumentSignedUrl(
+        typeof row.receipt_pdf_path === "string" ? row.receipt_pdf_path : null
+      ),
     }))
   )
 

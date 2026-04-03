@@ -8,6 +8,14 @@ import {
 import { createPlatformDocumentSignedUrl } from "@/lib/platformDocuments"
 import { writeAuditLog } from "@/lib/auditLog"
 
+type PaymentLikeRow = Record<string, unknown> & {
+  id?: string
+}
+
+type CheckoutSessionLikeRow = Record<string, unknown> & {
+  payment_request_id?: string
+}
+
 export async function getPlatformBillingSettings(): Promise<PlatformBillingSettings> {
   const admin = createSupabaseAdmin()
   const { data } = await admin.from("platform_billing_settings").select("*").eq("id", true).maybeSingle()
@@ -96,10 +104,18 @@ export async function getMyLicenseSnapshot(userId: string) {
       : Promise.resolve({ data: [], error: null }),
   ])
 
+  const paymentRows = (paymentsRes.data ?? []) as PaymentLikeRow[]
+  const checkoutSessionsByPaymentId = await getLatestPlatformCheckoutSessionsByPaymentId(
+    admin,
+    paymentRows.map((row) => String(row.id ?? "")).filter(Boolean)
+  )
+
   const paymentRequests = await Promise.all(
-    (paymentsRes.data ?? []).map(async (row) => ({
-      ...row,
-      receipt_signed_url: await createPlatformDocumentSignedUrl(row.receipt_pdf_path),
+    paymentRows.map(async (row) => ({
+      ...mergeLatestCheckoutSessionFields(row, checkoutSessionsByPaymentId.get(String(row.id ?? "")) ?? null),
+      receipt_signed_url: await createPlatformDocumentSignedUrl(
+        typeof row.receipt_pdf_path === "string" ? row.receipt_pdf_path : null
+      ),
     }))
   )
 
@@ -130,5 +146,46 @@ export async function getMyLicenseSnapshot(userId: string) {
     paymentRequests,
     receipts,
     latestTransferRequest: transferRes.data ?? null,
+  }
+}
+
+export async function getLatestPlatformCheckoutSessionsByPaymentId(
+  admin: ReturnType<typeof createSupabaseAdmin>,
+  paymentRequestIds: string[]
+) {
+  const ids = Array.from(new Set(paymentRequestIds.filter(Boolean)))
+  if (ids.length === 0) {
+    return new Map<string, CheckoutSessionLikeRow>()
+  }
+
+  const { data } = await admin
+    .from("platform_checkout_sessions")
+    .select("*")
+    .in("payment_request_id", ids)
+    .order("created_at", { ascending: false })
+
+  const latestByPaymentId = new Map<string, CheckoutSessionLikeRow>()
+  for (const row of (data ?? []) as CheckoutSessionLikeRow[]) {
+    const paymentRequestId = typeof row.payment_request_id === "string" ? row.payment_request_id : null
+    if (!paymentRequestId || latestByPaymentId.has(paymentRequestId)) continue
+    latestByPaymentId.set(paymentRequestId, row)
+  }
+
+  return latestByPaymentId
+}
+
+export function mergeLatestCheckoutSessionFields(
+  payment: PaymentLikeRow,
+  checkoutSession: CheckoutSessionLikeRow | null
+) {
+  if (!checkoutSession) return payment
+
+  return {
+    ...payment,
+    latest_checkout_session_id:
+      typeof checkoutSession.checkout_session_id === "string" ? checkoutSession.checkout_session_id : null,
+    latest_checkout_status: typeof checkoutSession.status === "string" ? checkoutSession.status : null,
+    latest_checkout_payment_intent_id:
+      typeof checkoutSession.payment_intent_id === "string" ? checkoutSession.payment_intent_id : null,
   }
 }

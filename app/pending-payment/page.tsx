@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
-import { shouldRedirectPendingPaymentToThanks } from "@/lib/platformFlow"
+import { shouldRedirectPendingPaymentToThanks, shouldUseManualPendingPayment } from "@/lib/platformFlow"
 import { supabase } from "@/lib/supabase"
 
 type BillingSettings = {
@@ -32,6 +32,9 @@ type LicenseResponse = {
     due_date: string | null
     transfer_reference: string
     status: string
+    payment_provider?: string | null
+    payment_channel?: string | null
+    latest_checkout_status?: string | null
     client_notified_at?: string | null
     client_paid_at_claimed?: string | null
     client_paid_amount_claimed?: number | null
@@ -88,12 +91,12 @@ export default function PendingPaymentPage() {
     const settingsJson = await settingsRes.json().catch(() => null)
 
     if (!licenseRes.ok || !licenseJson?.ok) {
-      setError(licenseJson?.error ?? "購入状態を取得できませんでした。")
+      setError(licenseJson?.error ?? "購入状態の確認に失敗しました。")
       setLoading(false)
       return
     }
     if (!settingsRes.ok || !settingsJson?.ok) {
-      setError(settingsJson?.error ?? "振込先情報を取得できませんでした。")
+      setError(settingsJson?.error ?? "振込先情報の取得に失敗しました。")
       setLoading(false)
       return
     }
@@ -121,6 +124,10 @@ export default function PendingPaymentPage() {
   const isActive = shouldRedirectPendingPaymentToThanks(
     (license?.entitlement?.status as "active" | "pending_payment" | null) ?? null
   )
+  const isManualFlow = shouldUseManualPendingPayment({
+    paymentProvider: payment?.payment_provider ?? null,
+    paymentChannel: payment?.payment_channel ?? null,
+  })
 
   useEffect(() => {
     if (loading || !isActive) return
@@ -128,12 +135,17 @@ export default function PendingPaymentPage() {
   }, [isActive, loading, router])
 
   useEffect(() => {
-    if (loading || isActive) return
+    if (loading || isActive || isManualFlow) return
+    router.replace("/thanks?from=pending-payment")
+  }, [isActive, isManualFlow, loading, router])
+
+  useEffect(() => {
+    if (loading || isActive || !isManualFlow) return
     const intervalId = window.setInterval(() => {
       void load()
     }, 15000)
     return () => window.clearInterval(intervalId)
-  }, [isActive, load, loading])
+  }, [isActive, isManualFlow, load, loading])
 
   const openReceipt = useCallback(async () => {
     if (!payment) return
@@ -152,7 +164,7 @@ export default function PendingPaymentPage() {
       })
       const json = (await res.json().catch(() => null)) as { ok?: boolean; signed_url?: string; error?: string } | null
       if (!res.ok || !json?.ok || !json.signed_url) {
-        setError(json?.error ?? "領収書PDFを開けませんでした。")
+        setError(json?.error ?? "領収書 PDF を開けませんでした。")
         return
       }
 
@@ -167,7 +179,7 @@ export default function PendingPaymentPage() {
 
     const amount = Number(paidAmount)
     if (!paidAt || Number.isNaN(amount) || amount <= 0) {
-      setSubmitError("入金日と入金額を確認してください。")
+      setSubmitError("入金日と入金額を入力してください。")
       return
     }
 
@@ -213,23 +225,27 @@ export default function PendingPaymentPage() {
   if (!payment || !settings) {
     return (
       <div style={{ padding: 32, display: "grid", gap: 12 }}>
-        <p style={{ color: "var(--muted)", margin: 0 }}>進行中の購入申請が見つかりませんでした。</p>
-        <Link href="/purchase-license">ライセンス購入へ進む</Link>
+        <p style={{ color: "var(--muted)", margin: 0 }}>未完了の購入リクエストが見つかりませんでした。</p>
+        <Link href="/purchase-license">ライセンス購入へ戻る</Link>
       </div>
     )
+  }
+
+  if (!isManualFlow) {
+    return <div style={{ padding: 32, color: "var(--muted)" }}>thanks 画面へ移動しています...</div>
   }
 
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg-grad)", padding: "32px 24px 80px" }}>
       <div style={{ maxWidth: 920, margin: "0 auto", display: "grid", gap: 16 }}>
         <header style={{ display: "grid", gap: 8 }}>
-          <div style={{ fontSize: 12, color: "var(--muted)" }}>導入フロー 2 / 3</div>
-          <h1 style={{ margin: 0, fontSize: 30, color: "var(--text)" }}>入金確認</h1>
+          <div style={{ fontSize: 12, color: "var(--muted)" }}>ステップ 2 / 3</div>
+          <h1 style={{ margin: 0, fontSize: 30, color: "var(--text)" }}>銀行振込のご案内</h1>
           <p style={{ margin: 0, color: "var(--muted)", lineHeight: 1.8 }}>
-            振込先の確認と入金連絡をこの画面でまとめて進めます。入金確認が完了すると、自動でサンクスページへ進みます。
+            この画面は manual payment 用です。振込後はこの画面から入金連絡を送ってください。
           </p>
           {searchParams.get("existing") === "1" ? (
-            <p style={{ margin: 0, color: "var(--success-text)" }}>進行中の購入申請に合流しました。</p>
+            <p style={{ margin: 0, color: "var(--success-text)" }}>既存の購入情報を引き継いで表示しています。</p>
           ) : null}
           {error ? <p style={{ margin: 0, color: "var(--error-text)" }}>{error}</p> : null}
         </header>
@@ -243,36 +259,31 @@ export default function PendingPaymentPage() {
               <div style={{ marginTop: 6, fontSize: 24, fontWeight: 700, color: "var(--text)" }}>
                 {formatCurrency(payment.amount_jpy)}
               </div>
-              <div style={{ marginTop: 6, color: "var(--muted)" }}>入金期限: {formatDate(payment.due_date)}</div>
+              <div style={{ marginTop: 6, color: "var(--muted)" }}>支払期限: {formatDate(payment.due_date)}</div>
             </div>
             {payment.status === "paid" ? (
-              <button
-                type="button"
-                onClick={() => void openReceipt()}
-                disabled={busyDoc}
-                style={primaryButtonStyle}
-              >
-                {busyDoc ? "領収書PDFを開いています..." : "領収書PDFを開く"}
+              <button type="button" onClick={() => void openReceipt()} disabled={busyDoc} style={primaryButtonStyle}>
+                {busyDoc ? "領収書 PDF を開いています..." : "領収書 PDF を開く"}
               </button>
             ) : null}
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
-            <InfoCard label="申請番号" value={payment.request_number} />
+            <InfoCard label="購入番号" value={payment.request_number} />
             <InfoCard label="振込識別子" value={payment.transfer_reference} />
-            <InfoCard label="ライセンス状態" value={license?.entitlement?.status ?? "pending_payment"} />
+            <InfoCard label="支払チャネル" value="銀行振込" />
           </div>
         </section>
 
         <section style={sectionStyle}>
           <h2 style={{ margin: 0, fontSize: 18, color: "var(--text)" }}>振込先</h2>
           <div style={{ display: "grid", gap: 6, color: "var(--text)" }}>
-            <div>銀行名: {settings.bank_name}</div>
-            <div>支店名: {settings.bank_branch_name} ({settings.bank_branch_code})</div>
+            <div>金融機関: {settings.bank_name}</div>
+            <div>支店: {settings.bank_branch_name} ({settings.bank_branch_code})</div>
             <div>口座種別: {settings.bank_account_type}</div>
             <div>口座番号: {settings.bank_account_number}</div>
             <div>口座名義: {settings.bank_account_holder}</div>
-            <div>販売者: {settings.seller_name}</div>
+            <div>受取人: {settings.seller_name}</div>
           </div>
           <div style={{ color: "var(--muted)", fontSize: 13 }}>{settings.transfer_fee_note}</div>
         </section>
@@ -281,7 +292,7 @@ export default function PendingPaymentPage() {
           <div>
             <h2 style={{ margin: 0, fontSize: 18, color: "var(--text)" }}>入金連絡</h2>
             <p style={{ margin: "6px 0 0", color: "var(--muted)", lineHeight: 1.8 }}>
-              振込後にこのフォームから連絡してください。確認が完了したら、サンクスページから初回セットアップへ進めます。
+              振込後にこのフォームから送信してください。確認完了後に thanks へ進めます。
             </p>
           </div>
 
@@ -289,7 +300,7 @@ export default function PendingPaymentPage() {
             <div style={{ borderRadius: 14, border: "1px solid #bbf7d0", background: "#f0fdf4", padding: 16, display: "grid", gap: 8 }}>
               <div style={{ fontSize: 15, fontWeight: 700, color: "#166534" }}>入金連絡を受け付けました</div>
               <div style={{ color: "#166534", fontSize: 14 }}>
-                管理側の確認が完了すると、この画面から自動でサンクスページへ進みます。
+                確認が完了すると自動で thanks へ進めます。
               </div>
               <div style={{ display: "grid", gap: 4, color: "#166534", fontSize: 13 }}>
                 <div>入金日: {formatDate(payment.client_paid_at_claimed)}</div>
@@ -328,7 +339,7 @@ export default function PendingPaymentPage() {
                 <label style={{ display: "grid", gap: 6 }}>
                   <span style={labelStyle}>入金額 *</span>
                   <input type="number" value={paidAmount} onChange={(event) => setPaidAmount(event.target.value)} min={1} step={1} style={fieldStyle} />
-                  <span style={{ fontSize: 12, color: "var(--muted)" }}>請求額: {formatCurrency(payment.amount_jpy)}</span>
+                  <span style={{ fontSize: 12, color: "var(--muted)" }}>請求金額: {formatCurrency(payment.amount_jpy)}</span>
                 </label>
                 <label style={{ display: "grid", gap: 6 }}>
                   <span style={labelStyle}>振込名義</span>
@@ -342,7 +353,7 @@ export default function PendingPaymentPage() {
                   />
                 </label>
                 <label style={{ display: "grid", gap: 6 }}>
-                  <span style={labelStyle}>補足</span>
+                  <span style={labelStyle}>備考</span>
                   <textarea
                     value={note}
                     onChange={(event) => setNote(event.target.value)}
@@ -355,12 +366,7 @@ export default function PendingPaymentPage() {
               </div>
 
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <button
-                  type="button"
-                  onClick={() => void submitNotify()}
-                  disabled={submitting}
-                  style={primaryButtonStyle}
-                >
+                <button type="button" onClick={() => void submitNotify()} disabled={submitting} style={primaryButtonStyle}>
                   {submitting ? "送信中..." : "入金連絡を送る"}
                 </button>
                 <Link href="/settings/license" style={secondaryLinkStyle}>

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
 import { requirePlatformUser } from "@/lib/platformAuth"
-import { ensureNonEmpty } from "@/lib/platform"
+import { ensureNonEmpty, isManualPlatformPaymentEnabled } from "@/lib/platform"
 import {
   createPlatformNotification,
   getMyLicenseSnapshot,
@@ -38,6 +38,12 @@ export async function POST(req: NextRequest) {
     const billingEmail = ensureNonEmpty(body?.billing_email, "billing_email")
     const billingAddress = typeof body?.billing_address === "string" ? body.billing_address.trim() : ""
     const note = typeof body?.note === "string" ? body.note.trim() : ""
+    const requestedPaymentMode =
+      body?.payment_mode === "manual_bank_transfer" ? "manual_bank_transfer" : "stripe_checkout"
+    const paymentMode =
+      requestedPaymentMode === "manual_bank_transfer" && isManualPlatformPaymentEnabled()
+        ? "manual_bank_transfer"
+        : "stripe_checkout"
 
     const rpc = await auth.userClient.rpc("create_platform_purchase_request", {
       p_full_name: fullName,
@@ -60,12 +66,16 @@ export async function POST(req: NextRequest) {
     const result = rpc.data[0] as PurchaseRpcResult
     const admin = createSupabaseAdmin()
     const now = new Date().toISOString()
+    const paymentProvider = paymentMode === "manual_bank_transfer" ? "manual" : "stripe"
+    const paymentChannel = paymentMode === "manual_bank_transfer" ? "bank_transfer" : "checkout"
+    const paymentMethod = paymentMode === "manual_bank_transfer" ? "bank_transfer" : "card"
+    const purchaseStatus = paymentMode === "manual_bank_transfer" ? "invoice_issued" : "pending_invoice"
 
     const [purchaseUpdate, paymentUpdate] = await Promise.all([
       admin
         .from("entitlement_purchase_requests")
         .update({
-          status: "invoice_issued",
+          status: purchaseStatus,
           issued_at: result.issued_at,
           due_date: result.due_date,
           updated_at: now,
@@ -74,6 +84,9 @@ export async function POST(req: NextRequest) {
       admin
         .from("platform_payment_requests")
         .update({
+          payment_provider: paymentProvider,
+          payment_channel: paymentChannel,
+          payment_method: paymentMethod,
           updated_at: now,
         })
         .eq("id", result.payment_request_id),
@@ -86,7 +99,7 @@ export async function POST(req: NextRequest) {
       throw new Error(`Failed to persist payment request: ${paymentUpdate.error.message}`)
     }
 
-    if (!result.reused_existing) {
+    if (!result.reused_existing && paymentMode === "manual_bank_transfer") {
       await Promise.allSettled([
         createPlatformNotification({
           recipientUserId: auth.user.id,
@@ -99,23 +112,28 @@ export async function POST(req: NextRequest) {
             action_href: "/pending-payment",
           },
         }),
-        writePlatformAudit({
-          userId: auth.user.id,
-          action: "platform.purchase.request",
-          resourceType: "platform_purchase_request",
-          resourceId: result.purchase_request_id,
-          meta: {
-            request_number: result.request_number,
-            invoice_number: result.invoice_number,
-            reused_existing: result.reused_existing,
-          },
-        }),
       ])
     }
+
+    await writePlatformAudit({
+      userId: auth.user.id,
+      action: "platform.purchase.request",
+      resourceType: "platform_purchase_request",
+      resourceId: result.purchase_request_id,
+      meta: {
+        request_number: result.request_number,
+        invoice_number: result.invoice_number,
+        reused_existing: result.reused_existing,
+        payment_provider: paymentProvider,
+        payment_channel: paymentChannel,
+      },
+    })
 
     const snapshot = await getMyLicenseSnapshot(auth.user.id)
     return NextResponse.json({
       ok: true,
+      payment_mode: paymentMode,
+      payment_request_id: result.payment_request_id,
       reused_existing: result.reused_existing,
       request_number: result.request_number,
       invoice_number: result.invoice_number,

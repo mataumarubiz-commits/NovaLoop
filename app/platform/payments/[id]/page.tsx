@@ -1,8 +1,7 @@
 "use client"
 
-import { useCallback, useEffect, useState, use } from "react"
+import { use, useCallback, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
-import Link from "next/link"
 import { supabase } from "@/lib/supabase"
 import PlatformAdminNav from "@/components/platform/PlatformAdminNav"
 
@@ -14,6 +13,10 @@ type PaymentDetail = {
   status: string
   amount_jpy: number
   transfer_reference: string
+  payment_provider?: string | null
+  payment_channel?: string | null
+  external_payment_id?: string | null
+  latest_checkout_status?: string | null
   receipt_document_status?: string | null
   client_notified_at?: string | null
   client_paid_at_claimed?: string | null
@@ -29,6 +32,9 @@ type PaymentDetail = {
     address: string | null
     phone: string | null
     note: string | null
+    receipt_name?: string | null
+    billing_email?: string | null
+    billing_address?: string | null
   } | null
   entitlement?: {
     status: string
@@ -53,14 +59,16 @@ export default function PlatformPaymentDetailPage({ params }: { params: Promise<
       setLoading(false)
       return
     }
+
     const res = await fetch(`/api/platform/payments/${id}`, { headers: { Authorization: `Bearer ${token}` } })
     const json = await res.json().catch(() => null)
     if (!res.ok || !json?.ok) {
-      setError(json?.error ?? "支払詳細を取得できませんでした。")
+      setError(json?.error ?? "決済詳細の取得に失敗しました。")
       setDetail(null)
       setLoading(false)
       return
     }
+
     setDetail(json.payment)
     setLoading(false)
   }, [id])
@@ -93,7 +101,7 @@ export default function PlatformPaymentDetailPage({ params }: { params: Promise<
       <div style={{ maxWidth: 1080, margin: "0 auto", display: "grid", gap: 16 }}>
         <header style={{ display: "grid", gap: 8 }}>
           <div style={{ fontSize: 12, color: "var(--muted)" }}>Platform admin only</div>
-          <h1 style={{ margin: 0, color: "var(--text)" }}>支払詳細</h1>
+          <h1 style={{ margin: 0, color: "var(--text)" }}>決済詳細</h1>
           {error ? <p style={{ margin: 0, color: "var(--error-text)" }}>{error}</p> : null}
         </header>
 
@@ -123,12 +131,16 @@ export default function PlatformPaymentDetailPage({ params }: { params: Promise<
         ) : (
           <div style={{ display: "grid", gap: 16 }}>
             <section style={sectionStyle}>
-              <h2 style={sectionTitleStyle}>支払情報</h2>
+              <h2 style={sectionTitleStyle}>決済情報</h2>
               <div style={infoGridStyle}>
-                <InfoRow label="申請番号" value={detail.request_number} />
+                <InfoRow label="購入番号" value={detail.request_number} />
                 <InfoRow label="請求書番号" value={detail.invoice_number} />
                 <InfoRow label="振込識別子" value={detail.transfer_reference} />
-                <InfoRow label="支払状態" value={detail.status === "paid" ? "入金確認済み" : detail.status} />
+                <InfoRow label="支払い状態" value={detail.status === "paid" ? "入金確認済み" : detail.status} />
+                <InfoRow label="payment provider" value={detail.payment_provider ?? "-"} />
+                <InfoRow label="payment channel" value={detail.payment_channel ?? "-"} />
+                <InfoRow label="checkout status" value={detail.latest_checkout_status ?? "-"} />
+                <InfoRow label="external payment id" value={detail.external_payment_id ?? "-"} />
                 <InfoRow label="ライセンス状態" value={detail.entitlement?.status ?? "-"} />
                 <InfoRow label="金額" value={`${detail.amount_jpy.toLocaleString("ja-JP")}円`} />
               </div>
@@ -140,10 +152,13 @@ export default function PlatformPaymentDetailPage({ params }: { params: Promise<
                 <div style={infoGridStyle}>
                   <InfoRow label="会社名" value={detail.purchase.company_name || "-"} />
                   <InfoRow label="氏名" value={detail.purchase.full_name || "-"} />
+                  <InfoRow label="領収書名義" value={detail.purchase.receipt_name || "-"} />
                   <InfoRow label="連絡先メール" value={detail.purchase.contact_email || "-"} />
+                  <InfoRow label="請求先メール" value={detail.purchase.billing_email || "-"} />
                   <InfoRow label="Google アカウント" value={detail.purchase.google_email || "-"} />
                   <InfoRow label="電話番号" value={detail.purchase.phone || "-"} />
                   <InfoRow label="住所" value={detail.purchase.address || "-"} />
+                  <InfoRow label="請求先住所" value={detail.purchase.billing_address || "-"} />
                   <InfoRow label="備考" value={detail.purchase.note || "-"} />
                 </div>
               ) : (
@@ -152,7 +167,7 @@ export default function PlatformPaymentDetailPage({ params }: { params: Promise<
             </section>
 
             <section style={sectionStyle}>
-              <h2 style={sectionTitleStyle}>購入者からの振込完了連絡</h2>
+              <h2 style={sectionTitleStyle}>購入者からの入金連絡</h2>
               {detail.client_notified_at ? (
                 <div style={infoGridStyle}>
                   <InfoRow label="受信時刻" value={detail.client_notified_at} />
@@ -165,18 +180,22 @@ export default function PlatformPaymentDetailPage({ params }: { params: Promise<
                   <InfoRow label="備考" value={detail.client_notify_note || "-"} />
                 </div>
               ) : (
-                <div style={{ color: "var(--muted)" }}>まだ購入者からの振込完了連絡はありません。</div>
+                <div style={{ color: "var(--muted)" }}>購入者からの入金連絡はまだありません。</div>
               )}
             </section>
 
             <section style={sectionStyle}>
-              <h2 style={sectionTitleStyle}>ドキュメントと処理</h2>
+              <h2 style={sectionTitleStyle}>ドキュメントと反映</h2>
               <div style={infoGridStyle}>
                 <InfoRow label="領収書番号" value={detail.receipt_number ?? "-"} />
                 <InfoRow label="領収書PDF" value={detail.receipt_document_status ?? "-"} />
               </div>
               <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                {detail.receipt_signed_url ? <a href={detail.receipt_signed_url} target="_blank" rel="noreferrer" style={linkStyle}>領収書PDFを表示</a> : null}
+                {detail.receipt_signed_url ? (
+                  <a href={detail.receipt_signed_url} target="_blank" rel="noreferrer" style={linkStyle}>
+                    領収書PDFを表示
+                  </a>
+                ) : null}
                 <button
                   type="button"
                   disabled={busy}
@@ -191,12 +210,12 @@ export default function PlatformPaymentDetailPage({ params }: { params: Promise<
                     cursor: busy ? "not-allowed" : "pointer",
                   }}
                 >
-                  {busy ? "処理中..." : detail.status === "paid" ? "mark-paid を再実行" : "mark-paid を実行"}
+                  {busy ? "処理中..." : detail.status === "paid" ? "mark-paid 再実行" : "mark-paid 実行"}
                 </button>
               </div>
               {detail.status !== "paid" ? (
                 <div style={{ fontSize: 13, color: "var(--muted)" }}>
-                  実行すると支払状態を paid に更新し、領収書PDFを生成します。
+                  手動確定すると status を paid に更新し、領収書 PDF を生成します。
                 </div>
               ) : null}
             </section>
@@ -229,7 +248,7 @@ const sectionTitleStyle = { fontSize: 18, margin: 0 } as const
 
 const infoGridStyle = {
   display: "grid",
-  gridTemplateColumns: "140px 1fr",
+  gridTemplateColumns: "160px 1fr",
   gap: "8px 16px",
 } as const
 

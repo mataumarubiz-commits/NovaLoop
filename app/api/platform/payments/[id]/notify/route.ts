@@ -44,13 +44,20 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const admin = createSupabaseAdmin()
   const { data: payment, error } = await admin
     .from("platform_payment_requests")
-    .select("id, user_id, request_number, status, client_notified_at")
+    .select("id, user_id, request_number, status, client_notified_at, payment_provider, payment_channel")
     .eq("id", id)
     .eq("user_id", auth.user.id)
     .maybeSingle()
 
   if (error || !payment) {
     return NextResponse.json({ ok: false, error: "payment request not found" }, { status: 404 })
+  }
+
+  if (payment.payment_provider === "stripe" && payment.payment_channel === "checkout") {
+    return NextResponse.json(
+      { ok: false, error: "Stripe Checkout payment requests do not use manual payment notification" },
+      { status: 409 }
+    )
   }
 
   const { error: updateError } = await admin

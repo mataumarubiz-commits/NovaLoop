@@ -14,8 +14,10 @@ const {
 const {
   PLATFORM_PURCHASE_ENTRY_PATH,
   POST_PURCHASE_ONBOARDING_PATH,
+  resolvePendingPurchasePath,
   resolvePlatformEntryPath,
   resolvePostPurchaseNextAction,
+  shouldUseManualPendingPayment,
   shouldRedirectPendingPaymentToThanks,
 } = await import(platformFlowModuleUrl)
 
@@ -70,4 +72,44 @@ test("pending payment only redirects to thanks after activation", () => {
   assert.equal(shouldRedirectPendingPaymentToThanks("active"), true)
   assert.equal(shouldRedirectPendingPaymentToThanks("pending_payment"), false)
   assert.equal(shouldRedirectPendingPaymentToThanks(null), false)
+})
+
+test("pending purchase routing distinguishes stripe checkout from manual payment", () => {
+  assert.equal(
+    resolvePendingPurchasePath({
+      entitlementStatus: "pending_payment",
+      paymentProvider: "stripe",
+      paymentChannel: "checkout",
+      checkoutStatus: "open",
+    }),
+    "/purchase-license?resume=1"
+  )
+  assert.equal(
+    resolvePendingPurchasePath({
+      entitlementStatus: "pending_payment",
+      paymentProvider: "stripe",
+      paymentChannel: "checkout",
+      checkoutStatus: "completed",
+    }),
+    "/thanks?from=stripe-checkout"
+  )
+  assert.equal(
+    resolvePendingPurchasePath({
+      entitlementStatus: "pending_payment",
+      paymentProvider: "manual",
+      paymentChannel: "bank_transfer",
+    }),
+    "/pending-payment"
+  )
+})
+
+test("manual pending payment screen is only used for bank transfer flows", () => {
+  assert.equal(
+    shouldUseManualPendingPayment({ paymentProvider: "manual", paymentChannel: "bank_transfer" }),
+    true
+  )
+  assert.equal(
+    shouldUseManualPendingPayment({ paymentProvider: "stripe", paymentChannel: "checkout" }),
+    false
+  )
 })

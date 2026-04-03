@@ -14,6 +14,10 @@ type PaymentRow = {
   status: string
   amount_jpy: number
   transfer_reference: string
+  payment_provider?: string | null
+  payment_channel?: string | null
+  external_payment_id?: string | null
+  latest_checkout_status?: string | null
   receipt_document_status?: string | null
   client_notified_at?: string | null
   client_paid_at_claimed?: string | null
@@ -163,6 +167,9 @@ export default function PlatformPaymentsPage() {
             </div>
             <div>振込識別子: {row.transfer_reference}</div>
             <div>状態: {row.status}</div>
+            <div>provider / channel: {row.payment_provider ?? "-"} / {row.payment_channel ?? "-"}</div>
+            <div>checkout status: {row.latest_checkout_status ?? "-"}</div>
+            <div>external payment id: {row.external_payment_id ?? "-"}</div>
             <div>金額: {row.amount_jpy.toLocaleString("ja-JP")}円</div>
             {row.client_notified_at ? <div style={{ color: "var(--success-text)", fontWeight: 600 }}>購入者から振込完了連絡あり</div> : null}
             <div>領収書番号: {row.receipt_number ?? "-"}</div>

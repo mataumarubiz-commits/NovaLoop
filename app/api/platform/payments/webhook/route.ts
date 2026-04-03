@@ -45,6 +45,15 @@ function resolvePaymentRequestId(body: WebhookBody, existingPaymentRequestId?: s
   )
 }
 
+function resolveExternalPaymentId(body: WebhookBody) {
+  return (
+    stringOrNull(body.data?.payment_intent) ||
+    stringOrNull(body.data?.["paymentIntentId"]) ||
+    stringOrNull(body.data?.external_payment_id) ||
+    null
+  )
+}
+
 export async function POST(req: NextRequest) {
   if (!isAuthorized(req)) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 })
@@ -128,6 +137,11 @@ export async function POST(req: NextRequest) {
       paidNote: stringOrNull(body.paid_note),
       providerPayload: body,
       notifyUser: true,
+      paymentProvider: provider === "stripe" ? "stripe" : undefined,
+      paymentChannel: provider === "stripe" ? "checkout" : undefined,
+      paymentMethod: provider === "stripe" ? "stripe_checkout" : undefined,
+      externalPaymentId: resolveExternalPaymentId(body),
+      checkoutCompletedAtIso: stringOrNull(body.paid_at) ?? undefined,
     })
 
     await admin

@@ -1,6 +1,7 @@
 export const PLATFORM_PRICE_JPY = 300_000
 export const PLATFORM_DOCUMENT_BUCKET = "platform-documents"
 export const PLATFORM_DOCUMENT_URL_EXPIRES_SECONDS = 60 * 10
+export const PLATFORM_STRIPE_PRODUCT_NAME = "NovaLoop Platform License"
 
 export const PLATFORM_NOTIFICATION_TYPES = [
   "platform.payment_pending",
@@ -15,6 +16,9 @@ export type CreatorEntitlementGrantType = "paid" | "manual_test" | "manual_grant
 export type PurchaseRequestStatus = "pending_invoice" | "invoice_issued" | "paid" | "canceled"
 export type PaymentRequestStatus = "issued" | "paid"
 export type TransferRequestStatus = "pending" | "rejected" | "completed"
+export type PlatformPaymentProvider = "manual" | "stripe"
+export type PlatformPaymentChannel = "bank_transfer" | "checkout"
+export type PlatformCheckoutSessionStatus = "open" | "completed" | "expired" | "canceled"
 
 export type PlatformBillingSettings = {
   seller_name: string
@@ -118,6 +122,22 @@ export function licenseAccessState(status: CreatorEntitlementStatus | null | und
   if (status === "active") return "can_create_org"
   if (status === "pending_payment") return "pending_payment"
   return "purchase_required"
+}
+
+export function isManualPlatformPaymentEnabled() {
+  return process.env.NEXT_PUBLIC_PLATFORM_MANUAL_PAYMENT_ENABLED === "1"
+}
+
+export function normalizePlatformCheckoutStatus(value: unknown): PlatformCheckoutSessionStatus | null {
+  if (value === "open" || value === "expired" || value === "canceled") return value
+  if (value === "complete" || value === "completed") return "completed"
+  return null
+}
+
+export function getPlatformPaymentMethodLabel(value: unknown) {
+  if (value === "card") return "クレジットカード"
+  if (value === "stripe_checkout") return "Stripe Checkout"
+  return "銀行振込"
 }
 
 export function ensureNonEmpty(value: unknown, fieldName: string) {
@@ -536,6 +556,7 @@ export function renderPlatformReceiptHtml(params: {
     taxable_amount?: number | null
     tax_amount?: number | null
   }>
+  paymentMethod?: string | null
   payerNote?: string | null
   paymentReference?: string | null
   serviceTitle?: string | null
@@ -549,6 +570,7 @@ export function renderPlatformReceiptHtml(params: {
   const subtotalAmount = Number(params.subtotalAmount ?? params.amountJpy)
   const taxAmount = Number(params.taxAmount ?? 0)
   const taxMode = params.taxMode ?? params.settings.default_tax_mode
+  const paymentMethodLabel = getPlatformPaymentMethodLabel(params.paymentMethod)
   const serviceTitle = params.serviceTitle?.trim() || "NovaLoop 利用ライセンス"
   const serviceDescription = params.serviceDescription?.trim() || "新規組織作成ライセンス購入"
   const qualifiedRegistrationNumber =
@@ -647,7 +669,7 @@ export function renderPlatformReceiptHtml(params: {
           <div class="kv"><div class="kv-label">小計</div><div class="kv-value">${escapeHtml(formatJpy(subtotalAmount))}</div></div>
           <div class="kv"><div class="kv-label">消費税</div><div class="kv-value">${taxMode === "registered_taxable" ? escapeHtml(formatJpy(taxAmount)) : "免税"}</div></div>
           <div class="kv"><div class="kv-label">受領日</div><div class="kv-value">${escapeHtml(formatJapaneseDate(params.paidAt))}</div></div>
-          <div class="kv"><div class="kv-label">決済方法</div><div class="kv-value">銀行振込</div></div>
+          <div class="kv"><div class="kv-label">決済方法</div><div class="kv-value">${escapeHtml(paymentMethodLabel)}</div></div>
           ${
             params.billingEmail?.trim()
               ? `<div class="kv"><div class="kv-label">請求先メール</div><div class="kv-value">${escapeHtml(params.billingEmail.trim())}</div></div>`

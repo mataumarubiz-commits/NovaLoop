@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server"
 import { requirePlatformAdmin } from "@/lib/platformAuth"
 import { createPlatformDocumentSignedUrl } from "@/lib/platformDocuments"
+import {
+  getLatestPlatformCheckoutSessionsByPaymentId,
+  mergeLatestCheckoutSessionFields,
+} from "@/lib/platformServer"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -46,11 +50,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const receipt_signed_url = await createPlatformDocumentSignedUrl(
     typeof payment.receipt_pdf_path === "string" ? payment.receipt_pdf_path : null
   )
+  const checkoutSessionsByPaymentId = await getLatestPlatformCheckoutSessionsByPaymentId(auth.admin, [id])
 
   return NextResponse.json({
     ok: true,
     payment: {
-      ...payment,
+      ...mergeLatestCheckoutSessionFields(payment as Record<string, unknown>, checkoutSessionsByPaymentId.get(id) ?? null),
       receipt_signed_url,
     },
   })

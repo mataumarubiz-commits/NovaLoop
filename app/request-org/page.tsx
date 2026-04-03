@@ -8,6 +8,7 @@ import { licenseAccessState } from "@/lib/platform"
 import {
   PLATFORM_THANKS_PATH,
   POST_PURCHASE_ONBOARDING_PATH,
+  resolvePendingPurchasePath,
   resolvePlatformEntryPath,
 } from "@/lib/platformFlow"
 import { supabase } from "@/lib/supabase"
@@ -18,6 +19,9 @@ type LicensePayload = {
     request_number: string
     invoice_number?: string | null
     due_date: string | null
+    payment_provider?: string | null
+    payment_channel?: string | null
+    latest_checkout_status?: string | null
   }>
 }
 
@@ -63,7 +67,7 @@ export default function RequestOrgPage() {
 
     const licenseJson = await licenseRes.json().catch(() => null)
     if (!licenseRes.ok || !licenseJson?.ok) {
-      setError(licenseJson?.error ?? "ライセンス状態を確認できませんでした。")
+      setError(licenseJson?.error ?? "ライセンス状態の確認に失敗しました。")
       setLoading(false)
       return
     }
@@ -123,7 +127,7 @@ export default function RequestOrgPage() {
     setSubmitting(false)
 
     if (!res.ok || !json?.ok) {
-      setError(json?.error ?? "組織を作成できませんでした。")
+      setError(json?.error ?? "組織作成に失敗しました。")
       return
     }
 
@@ -139,25 +143,25 @@ export default function RequestOrgPage() {
       <OnboardingShell
         stepCurrent={1}
         stepTotal={3}
-        title="導入フローをここから始めます"
+        title="まずはライセンスを購入してください"
         description={
           <>
-            まずはライセンス購入を完了させます。
+            Google ログインは完了しています。
             <br />
-            購入申請のあと、入金確認が完了すると初回セットアップへそのまま進めます。
+            先にライセンス購入を完了すると、そのままセットアップへ進めます。
           </>
         }
         onBack={() => router.push(backHref)}
         onClose={() => router.replace("/?showLp=1")}
         ctaLabel="ライセンス購入へ進む"
         onCtaClick={() => router.push(`/purchase-license?from=${encodeURIComponent(flowSource ?? "request-org")}`)}
-        footerText="このあと 購入申請 -> 入金確認 -> 初回セットアップ の順で進みます。"
+        footerText="LP → Google ログイン → 購入 → thanks → onboarding / home の順で進みます。"
       >
         <div className="onboarding-confirm-card">
-          <div className="onboarding-confirm-label">購入内容</div>
+          <div className="onboarding-confirm-label">購入対象</div>
           <div className="onboarding-confirm-value">NovaLoop Platform License</div>
           <p className="onboarding-confirm-note">
-            購入後は振込先と確認状況を 1 画面で確認できます。入金確認が完了したら、初回セットアップへ進みます。
+            購入は Google ログイン済みの状態で開始し、Stripe Checkout 完了後も同じアカウントのまま戻ります。
           </p>
         </div>
       </OnboardingShell>
@@ -166,29 +170,40 @@ export default function RequestOrgPage() {
 
   if (accessState === "pending_payment") {
     const pending = license?.paymentRequests[0]
+    const isStripePending = pending?.payment_provider === "stripe" && pending?.payment_channel === "checkout"
+    const pendingHref = resolvePendingPurchasePath({
+      entitlementStatus: (license?.entitlement?.status as "active" | "pending_payment" | null) ?? null,
+      paymentProvider: pending?.payment_provider ?? null,
+      paymentChannel: pending?.payment_channel ?? null,
+      checkoutStatus: pending?.latest_checkout_status ?? null,
+    })
 
     return (
       <OnboardingShell
         stepCurrent={2}
         stepTotal={3}
-        title="入金確認をお待ちください"
+        title={isStripePending ? "購入を再開してください" : "入金確認をお待ちください"}
         description={
           <>
-            購入申請は完了しています。
+            {isStripePending
+              ? "購入情報は保存されています。Stripe Checkout を再開するか、戻り先の thanks 画面で処理状態を確認してください。"
+              : "銀行振込の案内と入金連絡は pending-payment 画面で行います。"}
             <br />
-            振込情報の確認と入金連絡は次の画面でまとめて行えます。確認が完了するとサンクスページへ進みます。
+            正式確定は webhook 完了後に行われ、完了後は thanks からセットアップへ進めます。
           </>
         }
         onBack={() => router.push(backHref)}
         onClose={() => router.replace("/?showLp=1")}
-        ctaLabel="支払い状況を確認する"
-        onCtaClick={() => router.push("/pending-payment")}
+        ctaLabel={isStripePending ? "購入を再開する" : "入金案内を確認する"}
+        onCtaClick={() => router.push(pendingHref)}
       >
         <div className="onboarding-confirm-card">
-          <div className="onboarding-confirm-label">現在の購入申請</div>
+          <div className="onboarding-confirm-label">現在の購入リクエスト</div>
           <div className="onboarding-confirm-value">{pending?.request_number ?? "pending"}</div>
           <p className="onboarding-confirm-note">
-            振込先、振込識別子、入金連絡、確認状況は pending-payment 画面でまとめて確認できます。
+            {isStripePending
+              ? `決済チャネル: Stripe Checkout / 状態: ${pending?.latest_checkout_status ?? "open"}`
+              : "銀行振込フローの pending-payment 画面から入金連絡を送れます。"}
           </p>
         </div>
       </OnboardingShell>
@@ -201,15 +216,15 @@ export default function RequestOrgPage() {
     <OnboardingShell
       stepCurrent={1}
       stepTotal={1}
-      title={isPostPurchaseFlow ? "初回セットアップを始めましょう" : "新しい組織を作成"}
+      title={isPostPurchaseFlow ? "セットアップを始めましょう" : "新しい組織を作成"}
       description={
         isPostPurchaseFlow
-          ? "購入は完了しています。最初に組織を作成すると、そのままホームから利用を始められます。"
-          : "利用を始める組織名を決めてください。作成後はそのままホームへ進みます。"
+          ? "購入は完了しています。最初に組織を作成すると、そのままホームから運用を始められます。"
+          : "利用する組織名を決めてください。作成後はそのままホームへ移動します。"
       }
       onBack={() => router.push(backHref)}
       onClose={() => router.replace(isPostPurchaseFlow ? PLATFORM_THANKS_PATH : "/?showLp=1")}
-      ctaLabel="組織を作成して利用を開始"
+      ctaLabel="組織を作成して利用開始"
       ctaDisabled={submitting || !orgName.trim()}
       ctaLoading={submitting}
       onCtaClick={() => void handleCreate()}

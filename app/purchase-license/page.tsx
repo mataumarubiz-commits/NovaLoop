@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import OnboardingShell from "@/components/OnboardingShell"
+import { isManualPlatformPaymentEnabled } from "@/lib/platform"
 import { supabase } from "@/lib/supabase"
 
 type FormState = {
@@ -17,10 +18,14 @@ type FormState = {
   note: string
 }
 
+const MANUAL_PAYMENT_ENABLED = isManualPlatformPaymentEnabled()
+
 export default function PurchaseLicensePage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const flowSource = searchParams.get("from") ?? "request-org"
+  const isResume = searchParams.get("resume") === "1"
+  const isCanceled = searchParams.get("canceled") === "1"
   const [form, setForm] = useState<FormState>({
     full_name: "",
     company_name: "",
@@ -33,6 +38,7 @@ export default function PurchaseLicensePage() {
     note: "",
   })
   const [loading, setLoading] = useState(false)
+  const [manualLoading, setManualLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [info, setInfo] = useState<string | null>(null)
 
@@ -57,6 +63,14 @@ export default function PurchaseLicensePage() {
     }
   }, [router])
 
+  useEffect(() => {
+    if (isCanceled) {
+      setInfo("Stripe Checkout を中断しました。内容は保持されているため、この画面から再開できます。")
+    } else if (isResume) {
+      setInfo("未完了の購入があります。内容を確認して Stripe Checkout を再開してください。")
+    }
+  }, [isCanceled, isResume])
+
   const updateField = useCallback(
     <K extends keyof FormState,>(key: K, value: FormState[K]) => {
       setForm((current) => ({ ...current, [key]: value }))
@@ -64,67 +78,99 @@ export default function PurchaseLicensePage() {
     []
   )
 
-  const handleSubmit = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    setInfo(null)
+  const submitPurchase = useCallback(
+    async (paymentMode: "stripe_checkout" | "manual_bank_transfer") => {
+      setError(null)
+      setInfo(null)
+      paymentMode === "manual_bank_transfer" ? setManualLoading(true) : setLoading(true)
 
-    const token = (await supabase.auth.getSession()).data.session?.access_token
-    if (!token) {
-      router.replace("/")
-      return
-    }
+      try {
+        const token = (await supabase.auth.getSession()).data.session?.access_token
+        if (!token) {
+          router.replace("/")
+          return
+        }
 
-    const res = await fetch("/api/platform/purchase-license", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(form),
-    })
-    const json = await res.json().catch(() => null)
-    setLoading(false)
+        const purchaseRes = await fetch("/api/platform/purchase-license", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            ...form,
+            payment_mode: paymentMode,
+          }),
+        })
+        const purchaseJson = await purchaseRes.json().catch(() => null)
 
-    if (!res.ok || !json?.ok) {
-      setError(json?.error ?? "購入申請に失敗しました。")
-      return
-    }
+        if (!purchaseRes.ok || !purchaseJson?.ok) {
+          setError(purchaseJson?.error ?? "購入準備に失敗しました。")
+          return
+        }
 
-    if (json?.reused_existing) {
-      setInfo("進行中の購入申請があるため、その申請に合流します。")
-    }
+        if (purchaseJson?.reused_existing) {
+          setInfo("未完了の購入情報を引き継いで再開します。")
+        }
 
-    router.push(json?.reused_existing ? "/pending-payment?existing=1" : "/pending-payment")
-  }, [form, router])
+        if (paymentMode === "manual_bank_transfer") {
+          router.push(purchaseJson?.reused_existing ? "/pending-payment?existing=1" : "/pending-payment")
+          return
+        }
+
+        const sessionRes = await fetch("/api/platform/checkout/session", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            payment_request_id: purchaseJson.payment_request_id,
+          }),
+        })
+        const sessionJson = await sessionRes.json().catch(() => null)
+
+        if (!sessionRes.ok || !sessionJson?.ok || !sessionJson?.checkout_url) {
+          setError(sessionJson?.error ?? "Stripe Checkout の作成に失敗しました。")
+          return
+        }
+
+        window.location.assign(String(sessionJson.checkout_url))
+      } finally {
+        setLoading(false)
+        setManualLoading(false)
+      }
+    },
+    [form, router]
+  )
+
+  const isInvalid =
+    !form.full_name.trim() ||
+    !form.receipt_name.trim() ||
+    !form.address.trim() ||
+    !form.phone.trim() ||
+    !form.contact_email.trim() ||
+    !form.billing_email.trim()
 
   return (
     <OnboardingShell
       stepCurrent={2}
       stepTotal={3}
-      title="購入申請を完了する"
+      title="ライセンス購入情報を確認"
       description={
         <>
-          購入申請に必要な情報を入力します。
+          決済前に、領収書と連絡先に使う情報を確認します。
           <br />
-          申請後は振込先の確認、入金連絡、確認状況の追跡を 1 画面で進められます。
+          送信後は Stripe Checkout に移動し、決済完了後はこのアプリの `/thanks` へ戻ります。
         </>
       }
       onBack={() => router.push(`/request-org?from=${encodeURIComponent(flowSource)}`)}
       onClose={() => router.replace("/?showLp=1")}
-      ctaLabel="購入申請を送信"
-      ctaDisabled={
-        loading ||
-        !form.full_name.trim() ||
-        !form.receipt_name.trim() ||
-        !form.address.trim() ||
-        !form.phone.trim() ||
-        !form.contact_email.trim() ||
-        !form.billing_email.trim()
-      }
+      ctaLabel="Stripe Checkout へ進む"
+      ctaDisabled={loading || manualLoading || isInvalid}
       ctaLoading={loading}
-      onCtaClick={() => void handleSubmit()}
-      footerText="価格は 300,000円です。申請後は pending-payment 画面から入金確認まで迷わず進めます。"
+      onCtaClick={() => void submitPurchase("stripe_checkout")}
+      footerText="価格は 300,000 円です。正式確定は success page ではなく Stripe webhook 経由で行われます。"
     >
       {error ? <div role="alert" className="onboarding-alert">{error}</div> : null}
       {info ? <div className="onboarding-confirm-card onboarding-confirm-card--success">{info}</div> : null}
@@ -133,7 +179,8 @@ export default function PurchaseLicensePage() {
         <div className="onboarding-confirm-label">購入対象</div>
         <div className="onboarding-confirm-value">NovaLoop Platform License</div>
         <p className="onboarding-confirm-note">
-          申請後は振込先情報を確認できます。入金確認が完了すると、領収書と初回セットアップ導線が利用可能になります。
+          領収書名義、会社名、住所、電話番号、メールアドレスはこの画面で管理します。
+          決済の正式確定と領収書 PDF 発行は webhook 側で処理されます。
         </p>
       </div>
 
@@ -142,13 +189,13 @@ export default function PurchaseLicensePage() {
           className="onboarding-input"
           value={form.full_name}
           onChange={(event) => updateField("full_name", event.target.value)}
-          placeholder="申請者名 *"
+          placeholder="購入者名 *"
         />
         <input
           className="onboarding-input"
           value={form.receipt_name}
           onChange={(event) => updateField("receipt_name", event.target.value)}
-          placeholder="領収書の宛名 *"
+          placeholder="領収書名義 *"
         />
         <input
           className="onboarding-input"
@@ -187,17 +234,42 @@ export default function PurchaseLicensePage() {
           className="onboarding-input"
           value={form.billing_address}
           onChange={(event) => updateField("billing_address", event.target.value)}
-          placeholder="領収書の送付先住所"
+          placeholder="請求先住所"
           rows={3}
         />
         <textarea
           className="onboarding-input"
           value={form.note}
           onChange={(event) => updateField("note", event.target.value)}
-          placeholder="補足事項"
+          placeholder="備考"
           rows={3}
         />
       </div>
+
+      {MANUAL_PAYMENT_ENABLED ? (
+        <div className="onboarding-detail-card">
+          <div className="onboarding-detail-label">手動決済 fallback</div>
+          <div className="onboarding-detail-value">必要な場合のみ銀行振込フローへ切り替えます。</div>
+          <div style={{ marginTop: 12 }}>
+            <button
+              type="button"
+              onClick={() => void submitPurchase("manual_bank_transfer")}
+              disabled={loading || manualLoading || isInvalid}
+              style={{
+                padding: "12px 16px",
+                borderRadius: 10,
+                border: "1px solid var(--border)",
+                background: "transparent",
+                color: "var(--text)",
+                fontWeight: 700,
+                cursor: loading || manualLoading || isInvalid ? "not-allowed" : "pointer",
+              }}
+            >
+              {manualLoading ? "銀行振込フローへ切替中..." : "銀行振込で進める"}
+            </button>
+          </div>
+        </div>
+      ) : null}
     </OnboardingShell>
   )
 }

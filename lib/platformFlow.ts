@@ -37,3 +37,35 @@ export function resolvePostPurchaseNextAction(membershipCount: number) {
 export function shouldRedirectPendingPaymentToThanks(status: CreatorEntitlementStatus | null | undefined) {
   return status === "active"
 }
+
+export function resolvePendingPurchasePath(params: {
+  entitlementStatus?: CreatorEntitlementStatus | null
+  paymentProvider?: string | null
+  paymentChannel?: string | null
+  checkoutStatus?: string | null
+}) {
+  if (params.entitlementStatus === "active") {
+    return PLATFORM_THANKS_PATH
+  }
+
+  if (params.paymentProvider === "stripe" && params.paymentChannel === "checkout") {
+    return normalizeCheckoutStatus(params.checkoutStatus) === "completed"
+      ? `${PLATFORM_THANKS_PATH}?from=stripe-checkout`
+      : "/purchase-license?resume=1"
+  }
+
+  return "/pending-payment"
+}
+
+export function shouldUseManualPendingPayment(params: {
+  paymentProvider?: string | null
+  paymentChannel?: string | null
+}) {
+  return !(params.paymentProvider === "stripe" && params.paymentChannel === "checkout")
+}
+
+function normalizeCheckoutStatus(value: unknown) {
+  if (value === "completed" || value === "complete") return "completed"
+  if (value === "open" || value === "expired" || value === "canceled") return value
+  return null
+}

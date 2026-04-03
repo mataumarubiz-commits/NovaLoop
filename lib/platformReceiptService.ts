@@ -33,6 +33,11 @@ type ProcessSuccessParams = {
   paidNote?: string | null
   providerPayload?: Record<string, unknown> | null
   notifyUser?: boolean
+  paymentProvider?: string | null
+  paymentChannel?: string | null
+  paymentMethod?: string | null
+  externalPaymentId?: string | null
+  checkoutCompletedAtIso?: string | null
 }
 
 export async function fetchPlatformPaymentContext(
@@ -94,6 +99,14 @@ export async function processPlatformPaymentSuccess(params: ProcessSuccessParams
         .from("platform_payment_requests")
         .update({
           status: "paid",
+          payment_provider: stringOrNull(params.paymentProvider) ?? stringOrNull(payment.payment_provider) ?? "manual",
+          payment_channel:
+            stringOrNull(params.paymentChannel) ?? stringOrNull(payment.payment_channel) ?? "bank_transfer",
+          payment_method: stringOrNull(params.paymentMethod) ?? stringOrNull(payment.payment_method) ?? "bank_transfer",
+          external_payment_id:
+            stringOrNull(params.externalPaymentId) ?? stringOrNull(payment.external_payment_id),
+          checkout_completed_at:
+            stringOrNull(params.checkoutCompletedAtIso) ?? stringOrNull(payment.checkout_completed_at),
           paid_at: paidAtIso,
           paid_note:
             stringOrNull(params.paidNote) ??
@@ -132,6 +145,12 @@ export async function processPlatformPaymentSuccess(params: ProcessSuccessParams
     payment.status = "paid"
     payment.paid_at = paidAtIso
     payment.receipt_number = receiptNumber
+    payment.payment_provider = stringOrNull(params.paymentProvider) ?? stringOrNull(payment.payment_provider) ?? "manual"
+    payment.payment_channel = stringOrNull(params.paymentChannel) ?? stringOrNull(payment.payment_channel) ?? "bank_transfer"
+    payment.payment_method = stringOrNull(params.paymentMethod) ?? stringOrNull(payment.payment_method) ?? "bank_transfer"
+    payment.external_payment_id = stringOrNull(params.externalPaymentId) ?? stringOrNull(payment.external_payment_id)
+    payment.checkout_completed_at =
+      stringOrNull(params.checkoutCompletedAtIso) ?? stringOrNull(payment.checkout_completed_at)
     entitlement.status = "active"
   }
 
