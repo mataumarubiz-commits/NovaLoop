@@ -40,8 +40,10 @@ export async function POST(req: NextRequest) {
         typeof body?.bank_account_holder === "string" ? body.bank_account_holder.trim() : DEFAULT_PLATFORM_BILLING_SETTINGS.bank_account_holder,
       transfer_fee_note:
         typeof body?.transfer_fee_note === "string" ? body.transfer_fee_note.trim() : DEFAULT_PLATFORM_BILLING_SETTINGS.transfer_fee_note,
+      qualified_invoice_enabled: body?.qualified_invoice_enabled === true,
       invoice_registration_number:
         typeof body?.invoice_registration_number === "string" ? body.invoice_registration_number.trim() || null : null,
+      default_tax_mode: DEFAULT_PLATFORM_BILLING_SETTINGS.default_tax_mode,
       license_price_jpy: PLATFORM_PRICE_JPY,
       updated_at: new Date().toISOString(),
     }

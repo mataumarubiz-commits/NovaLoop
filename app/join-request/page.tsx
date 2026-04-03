@@ -1,8 +1,9 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import OnboardingShell from "@/components/OnboardingShell"
+import { POST_PURCHASE_ONBOARDING_PATH } from "@/lib/platformFlow"
 import { supabase } from "@/lib/supabase"
 
 type OwnerOrgOption = {
@@ -16,6 +17,7 @@ function isValidEmail(value: string) {
 
 export default function JoinRequestPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [displayName, setDisplayName] = useState("")
   const [ownerEmail, setOwnerEmail] = useState("")
   const [ownerOrgs, setOwnerOrgs] = useState<OwnerOrgOption | null>(null)
@@ -24,6 +26,7 @@ export default function JoinRequestPage() {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  const backHref = searchParams.get("from") === "post-purchase" ? POST_PURCHASE_ONBOARDING_PATH : "/onboarding"
 
   useEffect(() => {
     let active = true
@@ -153,7 +156,7 @@ export default function JoinRequestPage() {
           setSelectedOrgId(null)
           return
         }
-        router.push("/onboarding")
+        router.push(backHref)
       }}
       onClose={() => router.replace("/")}
       ctaLabel={selectionMode ? "この組織に申請する" : "参加申請を送る"}

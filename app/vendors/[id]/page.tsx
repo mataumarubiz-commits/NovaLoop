@@ -312,6 +312,9 @@ export default function VendorDetailPage() {
             <Link href="/payouts" style={{ ...buttonStyle, textDecoration: "none" }}>
               Payouts
             </Link>
+            <Link href={`/documents?tab=vendor${currentInvoice?.billing_month ? `&month=${encodeURIComponent(currentInvoice.billing_month)}` : ""}`} style={{ ...buttonStyle, textDecoration: "none" }}>
+              証憑アーカイブ
+            </Link>
             <Link href="/help/vendors-payouts" style={{ ...buttonStyle, textDecoration: "none" }}>
               使い方
             </Link>
@@ -385,9 +388,14 @@ export default function VendorDetailPage() {
             <InfoRow label="差し戻し理由" value={currentInvoice?.rejected_reason || "-"} />
           </dl>
           {currentInvoice ? (
-            <Link href={`/vendors/${vendor.id}/invoices/${currentInvoice.id}`} style={{ display: "inline-block", marginTop: 14, color: "var(--primary)", fontWeight: 700, textDecoration: "none" }}>
-              詳細を見る
-            </Link>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 14 }}>
+              <Link href={`/vendors/${vendor.id}/invoices/${currentInvoice.id}`} style={{ color: "var(--primary)", fontWeight: 700, textDecoration: "none" }}>
+                詳細を見る
+              </Link>
+              <Link href={`/documents?tab=vendor&month=${encodeURIComponent(currentInvoice.billing_month)}`} style={{ color: "var(--primary)", fontWeight: 700, textDecoration: "none" }}>
+                証憑アーカイブで見る
+              </Link>
+            </div>
           ) : null}
         </section>
 

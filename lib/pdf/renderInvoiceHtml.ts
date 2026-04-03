@@ -534,10 +534,10 @@ export function renderInvoiceHtml(params: {
   <div class="page">
     <section class="header">
       <div>
-        <p class="eyebrow">Invoice</p>
+        <p class="eyebrow">ご請求案内</p>
         <h1 class="doc-title">請求書</h1>
         <div class="recipient">
-          <p class="recipient-label">Bill To</p>
+          <p class="recipient-label">御請求先</p>
           <p class="recipient-name">${esc(recipientBlock)}</p>
           <p class="recipient-contact">平素よりお世話になっております。下記の通りご請求申し上げます。</p>
         </div>
@@ -545,23 +545,23 @@ export function renderInvoiceHtml(params: {
       <div class="meta-card">
         <div class="meta-grid">
           <div>
-            <p class="meta-label">Invoice No.</p>
+            <p class="meta-label">請求書番号</p>
             <p class="meta-value">${esc(invoice.invoice_no ?? "-")}</p>
           </div>
           <div>
-            <p class="meta-label">Issue Date</p>
+            <p class="meta-label">発行日</p>
             <p class="meta-value">${esc(fmtDate(invoice.issue_date))}</p>
           </div>
           <div>
-            <p class="meta-label">Due Date</p>
+            <p class="meta-label">支払期日</p>
             <p class="meta-value">${esc(fmtDate(invoice.due_date))}</p>
           </div>
           <div>
-            <p class="meta-label">Billing Month</p>
+            <p class="meta-label">対象月</p>
             <p class="meta-value">${esc(invoice.invoice_month)}</p>
           </div>
           <div style="grid-column: 1 / -1;">
-            <p class="meta-label">Title</p>
+            <p class="meta-label">件名</p>
             <p class="meta-value">${esc(invoice.invoice_title ?? invoice.invoice_name ?? "請求")}</p>
           </div>
         </div>
@@ -570,7 +570,7 @@ export function renderInvoiceHtml(params: {
 
     <section class="hero">
       <div>
-        <p class="hero-label">Amount Due</p>
+        <p class="hero-label">ご請求金額</p>
         <p class="hero-title">${esc(invoice.invoice_title ?? "ご請求内容")}</p>
         <p class="hero-subtitle">お支払期日: ${esc(fmtDate(invoice.due_date))}</p>
       </div>
@@ -581,7 +581,7 @@ export function renderInvoiceHtml(params: {
     </section>
 
     <section class="section">
-      <h2 class="section-title">Details</h2>
+      <h2 class="section-title">ご請求明細</h2>
       <table class="detail-table">
         <thead>
           <tr>
@@ -713,7 +713,7 @@ export function renderInvoiceHtml(params: {
         <div class="panel soft">
           <h3 class="panel-title">発行元</h3>
           <div class="issuer-grid">
-            <div class="status-chip">Invoice Issuer</div>
+            <div class="status-chip">発行元情報</div>
             <div class="kv">
               <div class="kv-label">会社名</div>
               <div class="kv-value">${esc(issuerName || "-")}</div>

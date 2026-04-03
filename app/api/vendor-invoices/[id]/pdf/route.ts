@@ -32,7 +32,13 @@ async function ensureInvoiceAccess(req: NextRequest, invoiceId: string) {
         .eq("id", invoiceId)
         .eq("org_id", activeOrgId)
         .maybeSingle()
-      if (invoice) return { admin, invoice: invoice as { id: string; org_id: string; vendor_id: string; pdf_path?: string | null } }
+      if (invoice) {
+        return {
+          admin,
+          userId,
+          invoice: invoice as { id: string; org_id: string; vendor_id: string; pdf_path?: string | null },
+        }
+      }
     }
   }
 
@@ -51,7 +57,11 @@ async function ensureInvoiceAccess(req: NextRequest, invoiceId: string) {
     .maybeSingle()
 
   if (!invoice) return { error: NextResponse.json({ error: "Not found" }, { status: 404 }) }
-  return { admin, invoice: invoice as { id: string; org_id: string; vendor_id: string; pdf_path?: string | null } }
+  return {
+    admin,
+    userId,
+    invoice: invoice as { id: string; org_id: string; vendor_id: string; pdf_path?: string | null },
+  }
 }
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -78,7 +88,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if ("error" in access) return access.error
 
   try {
-    const result = await generateVendorInvoicePdf({ orgId: access.invoice.org_id, invoiceId: id })
+    const result = await generateVendorInvoicePdf({
+      orgId: access.invoice.org_id,
+      invoiceId: id,
+      actorUserId: access.userId,
+    })
     return NextResponse.json({ pdf_path: result.pdfPath, signed_url: result.signedUrl })
   } catch (error) {
     return NextResponse.json(

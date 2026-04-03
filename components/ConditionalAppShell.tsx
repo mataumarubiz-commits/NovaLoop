@@ -14,6 +14,7 @@ export default function ConditionalAppShell({ children }: { children: React.Reac
     pathname === "/request-org" ||
     pathname === "/purchase-license" ||
     pathname === "/pending-payment" ||
+    pathname === "/thanks" ||
     pathname === "/recover-license" ||
     pathname === "/settings/license" ||
     (pathname?.startsWith("/platform/") ?? false)

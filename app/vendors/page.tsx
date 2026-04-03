@@ -467,6 +467,9 @@ export default function VendorsPage() {
             <Link href="/payouts" data-active="false">
               振込
             </Link>
+            <Link href={`/documents?tab=vendor${month ? `&month=${encodeURIComponent(month)}` : ""}`} data-active="false">
+              証憑
+            </Link>
           </nav>
         </div>
         <header style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "end" }}>
@@ -483,6 +486,9 @@ export default function VendorsPage() {
             </Link>
             <Link href="/payouts" style={{ ...secondaryButtonStyle, textDecoration: "none" }}>
               Payouts を開く
+            </Link>
+            <Link href={`/documents?tab=vendor${month ? `&month=${encodeURIComponent(month)}` : ""}`} style={{ ...secondaryButtonStyle, textDecoration: "none" }}>
+              証憑アーカイブで見る
             </Link>
             <Link href="/help/vendors-payouts" style={{ ...secondaryButtonStyle, textDecoration: "none" }}>
               使い方を見る

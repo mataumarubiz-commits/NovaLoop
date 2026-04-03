@@ -12,9 +12,7 @@ type PurchaseRow = {
   company_name?: string | null
   status: string
   license_price_jpy: number
-  invoice_document_status?: string | null
   receipt_document_status?: string | null
-  invoice_signed_url?: string | null
   receipt_signed_url?: string | null
 }
 
@@ -79,10 +77,8 @@ export default function PlatformPurchasesPage() {
             <div>宛名: {row.company_name || row.full_name}</div>
             <div>状態: {row.status}</div>
             <div>金額: {row.license_price_jpy.toLocaleString("ja-JP")}円</div>
-            <div>請求書PDF: {row.invoice_document_status ?? "-"}</div>
             <div>領収書PDF: {row.receipt_document_status ?? "-"}</div>
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-              {row.invoice_signed_url ? <a href={row.invoice_signed_url} target="_blank" rel="noreferrer">請求書PDF</a> : null}
               {row.receipt_signed_url ? <a href={row.receipt_signed_url} target="_blank" rel="noreferrer">領収書PDF</a> : null}
             </div>
           </section>

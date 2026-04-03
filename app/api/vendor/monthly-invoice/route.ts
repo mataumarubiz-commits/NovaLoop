@@ -223,7 +223,7 @@ export async function POST(req: NextRequest) {
     const { error: lineError } = await admin.from("vendor_invoice_lines").insert(lineRows)
     if (lineError) return NextResponse.json({ ok: false, error: lineError.message }, { status: 500 })
 
-    const pdf = await generateVendorInvoicePdf({ orgId: actor.orgId, invoiceId })
+    const pdf = await generateVendorInvoicePdf({ orgId: actor.orgId, invoiceId, actorUserId: actor.userId })
 
     await notifyAdminRoles({
       orgId: actor.orgId,

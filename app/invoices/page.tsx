@@ -450,6 +450,7 @@ export default function InvoicesPage() {
         <nav className="page-tab-bar">
           <Link href="/billing" data-active="false">請求作成</Link>
           <Link href="/invoices" data-active="true">請求書</Link>
+          <Link href={`/documents?tab=sales${month ? `&month=${encodeURIComponent(month)}` : ""}`} data-active="false">証憑</Link>
         </nav>
         <header style={{ display: "grid", gap: 8 }}>
           <p style={{ margin: 0, fontSize: 12, letterSpacing: "0.08em", color: "var(--muted)" }}>INVOICES</p>
@@ -487,6 +488,20 @@ export default function InvoicesPage() {
                 }}
               >
                 Billing を開く
+              </Link>
+              <Link
+                href={`/documents?tab=sales${month ? `&month=${encodeURIComponent(month)}` : ""}`}
+                style={{
+                  padding: "10px 14px",
+                  borderRadius: 12,
+                  border: "1px solid var(--border)",
+                  background: "var(--surface)",
+                  color: "var(--text)",
+                  textDecoration: "none",
+                  fontWeight: 700,
+                }}
+              >
+                証憑アーカイブで見る
               </Link>
             </div>
           </div>

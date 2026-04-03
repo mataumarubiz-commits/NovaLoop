@@ -3,6 +3,7 @@
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useEffect, useMemo, useState } from "react"
+import { PLATFORM_PURCHASE_ENTRY_PATH } from "@/lib/platformFlow"
 import { supabase } from "@/lib/supabase"
 
 type AuthState = "checking" | "ready" | "signing_in"
@@ -16,7 +17,6 @@ function normalizeRedirectTarget(value: string | null) {
   return value
 }
 
-const NON_HOME_LOGIN_TARGET = "/onboarding"
 const AUTH_FINISH_PATH = "/auth/finish"
 const SHOW_LP_QUERY_VALUE = "1"
 const INITIAL_AUTH_CHECK_TIMEOUT_MS = 1500
@@ -405,7 +405,7 @@ export default function GoogleLoginLanding() {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: `${origin}/auth/finish`,
+        redirectTo: `${origin}${AUTH_FINISH_PATH}?next=${encodeURIComponent(target)}`,
       },
     })
 
@@ -512,17 +512,18 @@ export default function GoogleLoginLanding() {
               <a href="#contact-entry">Contact</a>
             </nav>
             <div className="nav-cta-shell">
-              <button
-                type="button"
-                className="nav-cta-note"
-                onClick={() => void login(NON_HOME_LOGIN_TARGET)}
-              >
-                無料登録30秒
+                <button
+                  type="button"
+                  className="nav-cta-note"
+                  onClick={() => void login(PLATFORM_PURCHASE_ENTRY_PATH)}
+                >
+                導入開始
               </button>
               <LoginButton
                 authState={authState}
-                onClick={() => void login(NON_HOME_LOGIN_TARGET)}
+                onClick={() => void login(PLATFORM_PURCHASE_ENTRY_PATH)}
                 variant="nav"
+                readyLabel="Googleで導入開始"
               />
             </div>
           </div>
@@ -565,14 +566,14 @@ export default function GoogleLoginLanding() {
 
                   <div className="hero-cta-panel">
                     <div className="hero-cta-copy">
-                      <strong>Googleで無料登録</strong>
-                      <span>30秒でワークスペースを作成</span>
+                      <strong>Googleで導入を始める</strong>
+                      <span>購入から初回セットアップまで、そのまま進める</span>
                     </div>
                     <LoginButton
                       authState={authState}
-                      onClick={() => void login()}
+                      onClick={() => void login(PLATFORM_PURCHASE_ENTRY_PATH)}
                       variant="hero"
-                      readyLabel="無料で始める（30秒）"
+                      readyLabel="Googleで導入を始める"
                     />
                   </div>
                 </div>
@@ -633,19 +634,19 @@ export default function GoogleLoginLanding() {
               </div>
               <LoginButton
                 authState={authState}
-                onClick={() => void login()}
+                onClick={() => void login(PLATFORM_PURCHASE_ENTRY_PATH)}
                 variant="cta"
-                readyLabel="無料で始める（30秒）"
+                readyLabel="Googleで導入を始める"
               />
               <div className="cta-secondary-grid">
                 <button
                   type="button"
                   className="cta-secondary-card cta-secondary-card-contact"
-                  onClick={() => void login(NON_HOME_LOGIN_TARGET)}
+                  onClick={() => void login(PLATFORM_PURCHASE_ENTRY_PATH)}
                 >
                   <span className="cta-secondary-label">Contact</span>
                   <strong>導入相談をはじめる</strong>
-                  <span>まずはログインして、課題整理から進める。</span>
+                  <span>まずはログインして、購入と初回セットアップへ進める。</span>
                 </button>
                 <Link className="cta-secondary-card" href="/help/setup">
                   <span className="cta-secondary-label">Setup</span>

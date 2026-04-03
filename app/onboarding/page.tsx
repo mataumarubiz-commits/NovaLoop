@@ -1,9 +1,10 @@
 "use client"
 
 import { useEffect } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import ChoiceCard from "@/components/ChoiceCard"
 import OnboardingShell from "@/components/OnboardingShell"
+import { PLATFORM_THANKS_PATH } from "@/lib/platformFlow"
 import { useAuthOrg } from "@/hooks/useAuthOrg"
 
 function JoinIcon() {
@@ -34,7 +35,11 @@ function CreateIcon() {
 
 export default function OnboardingPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { user, memberships, loading } = useAuthOrg()
+  const isPostPurchaseFlow = searchParams.get("flow") === "post-purchase"
+  const requestOrgHref = `/request-org?from=${isPostPurchaseFlow ? "post-purchase" : "onboarding"}`
+  const joinRequestHref = `/join-request?from=${isPostPurchaseFlow ? "post-purchase" : "onboarding"}`
 
   useEffect(() => {
     if (loading) return
@@ -55,28 +60,71 @@ export default function OnboardingPage() {
     return <div style={{ padding: 32, color: "var(--muted)" }}>読み込み中...</div>
   }
 
+  const choices = isPostPurchaseFlow
+    ? [
+        {
+          key: "create",
+          icon: <CreateIcon />,
+          title: "新しい組織を作成する",
+          description: "最初に組織を作成して、そのまま利用開始まで進めます。",
+          onClick: () => router.push(requestOrgHref),
+        },
+        {
+          key: "join",
+          icon: <JoinIcon />,
+          title: "既存組織に参加する",
+          description: "購入済みアカウントで既存組織に参加申請を送ります。",
+          onClick: () => router.push(joinRequestHref),
+        },
+      ]
+    : [
+        {
+          key: "join",
+          icon: <JoinIcon />,
+          title: "既存組織に参加する",
+          description: "招待や owner の案内がある場合はこちらから参加申請を送ります。",
+          onClick: () => router.push(joinRequestHref),
+        },
+        {
+          key: "create",
+          icon: <CreateIcon />,
+          title: "新しい組織を作成する",
+          description: "オーナーとして新しい組織を立ち上げる場合はこちらから進みます。",
+          onClick: () => router.push(requestOrgHref),
+        },
+      ]
+
   return (
     <OnboardingShell
       stepCurrent={1}
       stepTotal={1}
-      title="利用方法を選択してください"
-      description="既存組織への参加は無料です。新しい組織を作るには、Googleアカウント単位の作成ライセンスが必要です。"
-      onClose={() => router.replace("/")}
+      title={isPostPurchaseFlow ? "初回セットアップの進め方を選んでください" : "利用方法を選択してください"}
+      description={
+        isPostPurchaseFlow
+          ? "購入は完了しています。まずは新しい組織を作成するか、既存組織に参加して利用を始めます。"
+          : "既存組織への参加か、新しい組織の作成かを選んでください。Google アカウントのログイン後に続けて進められます。"
+      }
+      onClose={() => router.replace(isPostPurchaseFlow ? PLATFORM_THANKS_PATH : "/")}
     >
+      {isPostPurchaseFlow ? (
+        <div className="onboarding-confirm-card onboarding-confirm-card--success">
+          <div className="onboarding-confirm-label">購入完了</div>
+          <div className="onboarding-confirm-value">ライセンスの利用準備ができました</div>
+          <p className="onboarding-confirm-note">次は利用する組織を決めるだけです。ここからセットアップを完了できます。</p>
+        </div>
+      ) : null}
+
       <div className="onboarding-choice-section">
         <div className="onboarding-choice-grid">
-          <ChoiceCard
-            icon={<JoinIcon />}
-            title="既存組織に参加する"
-            description="招待または承認済みの既存組織に参加します。メンバー・エグゼクティブアシスタントは無料です。"
-            onClick={() => router.push("/join-request")}
-          />
-          <ChoiceCard
-            icon={<CreateIcon />}
-            title="新しい組織を作る"
-            description="支払済みのご本人だけが新しい組織を作成し、初回オーナーになります。"
-            onClick={() => router.push("/request-org")}
-          />
+          {choices.map((choice) => (
+            <ChoiceCard
+              key={choice.key}
+              icon={choice.icon}
+              title={choice.title}
+              description={choice.description}
+              onClick={choice.onClick}
+            />
+          ))}
         </div>
       </div>
     </OnboardingShell>

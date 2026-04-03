@@ -798,27 +798,32 @@ export default function ContentsPage() {
   }, [user?.id, orgId, role, needsOnboarding])
 
   useEffect(() => {
-    if (projectIdQuery) {
-      setFilterProjectId(projectIdQuery)
-    }
+    setFilterProjectId(projectIdQuery ?? "")
   }, [projectIdQuery])
-
-  useEffect(() => {
-    if (dueQuery === "today") setFilterDue("today")
-    else if (dueQuery === "tomorrow") setFilterDue("tomorrow")
-  }, [dueQuery])
 
   useEffect(() => {
     if (filterQuery === "client_overdue" || filterQuery === "editor_overdue") {
       setFilterDue("late")
+      return
     }
-  }, [filterQuery])
+    if (dueQuery === "today") {
+      setFilterDue("today")
+      return
+    }
+    if (dueQuery === "tomorrow") {
+      setFilterDue("tomorrow")
+      return
+    }
+    setFilterDue("")
+  }, [dueQuery, filterQuery])
 
   useEffect(() => {
     if (projectIdQuery || highlightId || dueQuery || filterQuery) {
       setFocusMonth("")
       setShowFilters(true)
+      return
     }
+    setFocusMonth((current) => current || createCurrentMonth())
   }, [projectIdQuery, highlightId, dueQuery, filterQuery])
 
   useEffect(() => {

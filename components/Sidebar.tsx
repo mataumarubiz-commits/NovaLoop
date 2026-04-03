@@ -28,7 +28,7 @@ import { notificationActionHref, notificationPriority, notificationTitle } from 
 const SIDEBAR_NAV_ORDER_KEY = "sidebar_nav_order"
 
 const SIDEBAR_WIDTH = 260
-const PRIMARY_NAV_HREFS = ["/home", "/contents", "/projects", "/billing", "/vendors"] as const
+const PRIMARY_NAV_HREFS = ["/home", "/contents", "/projects", "/billing", "/vendors", "/documents"] as const
 const NAV_ITEMS: { href: string; label: string; locked?: boolean; childPaths?: string[] }[] = [
   { href: "/home", label: "ホーム" },
   { href: "/members", label: "メンバー" },
@@ -37,6 +37,7 @@ const NAV_ITEMS: { href: string; label: string; locked?: boolean; childPaths?: s
   { href: "/projects", label: "案件" },
   { href: "/billing", label: "請求", locked: true, childPaths: ["/invoices"] },
   { href: "/vendors", label: "外注", locked: true, childPaths: ["/payouts"] },
+  { href: "/documents", label: "証憑", locked: true },
   { href: "/settings", label: "設定" },
   { href: "/notifications", label: "通知" },
 ]

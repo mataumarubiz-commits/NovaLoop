@@ -11,6 +11,7 @@ const PATH_LABELS: Record<string, string> = {
   "/contents": "タスク",
   "/billing": "請求",
   "/invoices": "請求書",
+  "/documents": "証憑",
   "/notifications": "通知",
   "/onboarding": "オンボーディング",
   "/join-request": "組織参加申請",

@@ -5,10 +5,11 @@ import { usePathname } from "next/navigation"
 
 const ITEMS = [
   { href: "/platform/purchases", label: "購入申請" },
-  { href: "/platform/payments", label: "入金確認" },
-  { href: "/platform/transfers", label: "ライセンス再付与" },
-  { href: "/platform/entitlements", label: "手動付与" },
-  { href: "/platform/billing-settings", label: "請求設定" },
+  { href: "/platform/payments", label: "入金管理" },
+  { href: "/platform/receipts", label: "領収書一覧" },
+  { href: "/platform/transfers", label: "ライセンス移管" },
+  { href: "/platform/entitlements", label: "権利一覧" },
+  { href: "/platform/billing-settings", label: "請求元設定" },
 ]
 
 export default function PlatformAdminNav() {

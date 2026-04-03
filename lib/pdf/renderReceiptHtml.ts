@@ -75,6 +75,16 @@ function fmtCur(n: number): string {
   }).format(n)
 }
 
+function fmtDate(value: string): string {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!match) return value
+  return `${match[1]}年${Number(match[2])}月${Number(match[3])}日`
+}
+
+function compactLine(parts: Array<string | null | undefined>): string {
+  return parts.filter(Boolean).join(" ")
+}
+
 function paymentMethodLabel(method: string): string {
   const map: Record<string, string> = {
     bank_transfer: "銀行振込",
@@ -104,87 +114,79 @@ export function renderReceiptHtml(receipt: ReceiptForPdf): string {
   )
 
   const description = buildDescription(receipt.title, sortedLines)
+  const issuerAddressLine = compactLine([
+    issuer.issuer_zip?.trim() ? `〒${issuer.issuer_zip.trim()}` : null,
+    issuer.issuer_address?.trim() ?? null,
+  ])
 
-  // ─── Reissue banner ─────────────────────────────────────────────
   const reissueBanner = receipt.is_reissue
-    ? `<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:4px;padding:6px 12px;margin-bottom:16px;font-size:12px;color:#92400e;font-weight:600;">
-        再発行書類 ― この領収書は再発行されたものです。旧領収書は無効となります。
+    ? `<div class="reissue-banner">
+        再発行書類: この領収書は再発行分です。旧領収書は無効としてお取り扱いください。
       </div>`
     : ""
 
-  // ─── Line rows ───────────────────────────────────────────────────
   const lineRows = sortedLines
     .map(
       (l) => `<tr>
-        <td style="padding:9px 12px;border-bottom:1px solid #eee;color:#1a1a1a;vertical-align:top">${esc(l.description)}</td>
-        <td style="padding:9px 12px;border-bottom:1px solid #eee;color:#1a1a1a;text-align:right;white-space:nowrap">${fmtNum(l.quantity)}</td>
-        <td style="padding:9px 12px;border-bottom:1px solid #eee;color:#1a1a1a;text-align:right;white-space:nowrap">${fmtNum(l.unit_price)}</td>
-        <td style="padding:9px 12px;border-bottom:1px solid #eee;color:#1a1a1a;text-align:right;white-space:nowrap;font-weight:500">${fmtNum(l.amount)}</td>
+        <td class="cell item">${esc(l.description)}</td>
+        <td class="cell num">${fmtNum(l.quantity)}</td>
+        <td class="cell num">${fmtCur(l.unit_price)}</td>
+        <td class="cell num amount">${fmtCur(l.amount)}</td>
         ${isRegistered && l.tax_rate != null
-          ? `<td style="padding:9px 12px;border-bottom:1px solid #eee;color:#666;text-align:center;white-space:nowrap">${Math.round(l.tax_rate * 100)}%</td>`
+          ? `<td class="cell tax">${Math.round(l.tax_rate * 100)}%</td>`
           : isRegistered
-          ? `<td style="padding:9px 12px;border-bottom:1px solid #eee;color:#999;text-align:center">—</td>`
+          ? `<td class="cell tax">—</td>`
           : ""}
       </tr>`
     )
     .join("")
 
-  // ─── Tax header cell ─────────────────────────────────────────────
   const taxHeaderCell = isRegistered
-    ? `<th style="padding:9px 12px;background:#f5f5f5;border-bottom:2px solid #ddd;color:#555;font-size:12px;font-weight:600;text-align:center">税率</th>`
+    ? `<th class="num tax">税率</th>`
     : ""
 
-  // ─── Tax breakdown section ────────────────────────────────────────
   const taxBreakdownSection =
     isRegistered && receipt.tax_breakdown_json.length > 0
-      ? `<div style="margin-top:10px;padding:10px 12px;background:#f9f9f9;border:1px solid #e5e5e5;border-radius:4px;font-size:12px;color:#555">
-          <div style="font-weight:600;margin-bottom:6px;color:#333">消費税内訳</div>
+      ? `<div class="panel soft">
+          <h3 class="panel-title">消費税内訳</h3>
+          <div class="tax-breakdown">
           ${receipt.tax_breakdown_json
             .map(
               (t) =>
-                `<div style="display:flex;justify-content:space-between;padding:2px 0">
+                `<div class="tax-row">
                   <span>${Math.round(t.tax_rate * 100)}% 対象（小計 ${fmtCur(t.subtotal)}）</span>
                   <span>消費税 ${fmtCur(t.tax_amount)}</span>
                 </div>`
             )
             .join("")}
-          <div style="display:flex;justify-content:space-between;border-top:1px solid #ddd;margin-top:6px;padding-top:6px;font-weight:600;color:#333">
+          <div class="tax-row total">
             <span>消費税合計</span>
             <span>${fmtCur(receipt.tax_amount)}</span>
           </div>
+          </div>
         </div>`
       : receipt.tax_mode === "exempt"
-      ? `<div style="margin-top:8px;font-size:11px;color:#888;text-align:right">消費税：免税のため表示していません</div>`
+      ? `<div class="tax-note">消費税: 免税のため表示していません</div>`
       : ""
 
-  // ─── Registration number row ─────────────────────────────────────
   const registrationRow = isRegistered
-    ? `<div style="font-size:11px;color:#555;margin-top:4px">登録番号: ${esc(issuer.issuer_registration_number)}</div>`
+    ? `<div class="issuer-note">登録番号: ${esc(issuer.issuer_registration_number)}</div>`
     : receipt.tax_mode === "exempt"
-    ? `<div style="font-size:11px;color:#888;margin-top:4px">※ 適格請求書発行事業者ではありません</div>`
+    ? `<div class="issuer-note muted">※ 適格請求書発行事業者ではありません</div>`
     : ""
 
-  // ─── Payer note row ───────────────────────────────────────────────
   const payerNoteRow = receipt.payer_note?.trim()
-    ? `<tr>
-        <td style="padding:4px 0;color:#666;white-space:nowrap;font-size:12px;vertical-align:top">振込名義</td>
-        <td style="padding:4px 0;font-size:12px">${esc(receipt.payer_note)}</td>
-      </tr>`
+    ? `<div class="kv"><div class="kv-label">振込名義</div><div class="kv-value">${esc(receipt.payer_note)}</div></div>`
     : ""
 
-  // ─── Invoice reference row ────────────────────────────────────────
   const invoiceRefRow = receipt.invoice_no?.trim()
-    ? `<tr>
-        <td style="padding:4px 0;color:#666;white-space:nowrap;font-size:12px;vertical-align:top">対象請求書</td>
-        <td style="padding:4px 0;font-size:12px">${esc(receipt.invoice_no)}</td>
-      </tr>`
+    ? `<div class="kv"><div class="kv-label">対象請求書</div><div class="kv-value">${esc(receipt.invoice_no)}</div></div>`
     : ""
 
-  // ─── Note section ─────────────────────────────────────────────────
   const noteSection = receipt.note?.trim()
-    ? `<div style="margin-top:16px;padding:10px 14px;background:#f9f9f9;border-left:3px solid #d1d5db;border-radius:0 4px 4px 0;font-size:12px;color:#555;line-height:1.7">
-        <div style="font-weight:600;color:#333;margin-bottom:4px">備考</div>
-        ${esc(receipt.note)}
+    ? `<div class="panel soft">
+        <h3 class="panel-title">備考</h3>
+        <div class="notes">${esc(receipt.note)}</div>
       </div>`
     : ""
 
@@ -194,171 +196,402 @@ export function renderReceiptHtml(receipt: ReceiptForPdf): string {
   <meta charset="UTF-8" />
   <title>領収書 ${esc(receipt.receipt_number)}</title>
   <style>
+    @page {
+      size: A4;
+      margin: 0;
+    }
     @media print {
       body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: #ffffff; color: #1a1a1a; }
     body {
-      font-family: "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Yu Gothic Medium",
-                   "Yu Gothic", "Meiryo", "MS PGothic", sans-serif;
-      font-size: 13px;
-      color: #1a1a1a;
-      background: #ffffff;
-      padding: 28px 36px 32px;
+      font-family: "SF Pro Display", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+      font-size: 12px;
+      padding: 22mm 18mm 18mm;
       line-height: 1.6;
+    }
+    .page { display: grid; gap: 18px; }
+    .reissue-banner {
+      border: 1px solid #f59e0b;
+      border-radius: 14px;
+      padding: 10px 14px;
+      background: #fffbeb;
+      color: #9a3412;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .header {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 28px;
+      align-items: start;
+    }
+    .eyebrow {
+      margin: 0 0 8px;
+      font-size: 10px;
+      letter-spacing: 0.2em;
+      color: #64748b;
+      font-weight: 700;
+    }
+    .doc-title {
+      margin: 0;
+      font-size: 34px;
+      line-height: 1.1;
+      letter-spacing: -0.04em;
+      font-weight: 700;
+      color: #0f172a;
+    }
+    .recipient {
+      margin-top: 22px;
+      padding-top: 16px;
+      border-top: 1px solid #d1d5db;
+    }
+    .recipient-label {
+      margin: 0 0 6px;
+      font-size: 10px;
+      letter-spacing: 0.16em;
+      color: #9ca3af;
+      font-weight: 700;
+    }
+    .recipient-name {
+      margin: 0;
+      font-size: 21px;
+      line-height: 1.35;
+      font-weight: 600;
+      color: #111827;
+    }
+    .recipient-copy {
+      margin: 8px 0 0;
+      color: #4b5563;
+      font-size: 12px;
+    }
+    .meta-card {
+      border: 1px solid #dbe2ea;
+      border-radius: 18px;
+      padding: 18px 18px 16px;
+      background: linear-gradient(180deg, #fbfdff 0%, #f5f7fa 100%);
+    }
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px 18px;
+    }
+    .meta-label {
+      margin: 0 0 4px;
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      color: #94a3b8;
+      font-weight: 700;
+    }
+    .meta-value {
+      margin: 0;
+      font-size: 13px;
+      color: #0f172a;
+      font-weight: 600;
+    }
+    .hero {
+      border: 1px solid #dbe2ea;
+      border-radius: 22px;
+      padding: 18px 22px;
+      background: linear-gradient(135deg, #ffffff 0%, #f7f9fc 55%, #eef3f8 100%);
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 16px;
+      align-items: end;
+    }
+    .hero-label {
+      margin: 0 0 6px;
+      font-size: 10px;
+      letter-spacing: 0.18em;
+      color: #64748b;
+      font-weight: 700;
+    }
+    .hero-title {
+      margin: 0;
+      font-size: 15px;
+      color: #0f172a;
+      font-weight: 600;
+    }
+    .hero-subtitle {
+      margin: 6px 0 0;
+      color: #475569;
+      font-size: 12px;
+    }
+    .hero-amount { text-align: right; }
+    .hero-amount-value {
+      margin: 0;
+      font-size: 34px;
+      line-height: 1;
+      letter-spacing: -0.04em;
+      font-weight: 700;
+      color: #0f172a;
+      white-space: nowrap;
+    }
+    .hero-amount-note {
+      margin: 8px 0 0;
+      color: #64748b;
+      font-size: 11px;
+    }
+    .section { display: grid; gap: 10px; }
+    .section-title {
+      margin: 0;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #dbe2ea;
+      font-size: 11px;
+      letter-spacing: 0.18em;
+      color: #64748b;
+      font-weight: 700;
+    }
+    .detail-table {
+      width: 100%;
+      border-collapse: collapse;
+      border-spacing: 0;
+      overflow: hidden;
+      border-radius: 16px;
+      border: 1px solid #e5e7eb;
+    }
+    .detail-table thead th {
+      background: #f8fafc;
+      color: #475569;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 12px 14px;
+      text-align: left;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    .detail-table thead th.num { text-align: right; }
+    .cell {
+      padding: 13px 14px;
+      border-bottom: 1px solid #edf2f7;
+      vertical-align: top;
+      color: #111827;
+      background: #ffffff;
+    }
+    .detail-table tbody tr:last-child .cell { border-bottom: none; }
+    .cell.item { width: 44%; font-weight: 600; }
+    .cell.num { text-align: right; white-space: nowrap; }
+    .cell.amount { font-weight: 700; }
+    .cell.tax { text-align: center; color: #475569; }
+    .bottom-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+      gap: 18px;
+      align-items: start;
+    }
+    .panel {
+      border: 1px solid #e5e7eb;
+      border-radius: 18px;
+      padding: 16px 18px;
+      background: #ffffff;
+    }
+    .panel.soft { background: #f8fafc; }
+    .panel-title {
+      margin: 0 0 10px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #0f172a;
+    }
+    .panel-copy {
+      margin: 0;
+      color: #475569;
+      font-size: 12px;
+    }
+    .kv {
+      display: grid;
+      grid-template-columns: 108px 1fr;
+      gap: 8px;
+      align-items: start;
+      margin-top: 8px;
+    }
+    .kv:first-child { margin-top: 0; }
+    .kv-label { color: #64748b; font-size: 11px; }
+    .kv-value { color: #0f172a; font-weight: 600; word-break: break-word; }
+    .totals {
+      display: grid;
+      gap: 10px;
+    }
+    .total-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: center;
+      font-size: 12px;
+      color: #334155;
+    }
+    .total-row strong {
+      color: #0f172a;
+      font-size: 13px;
+    }
+    .total-row.final {
+      margin-top: 2px;
+      padding-top: 12px;
+      border-top: 1px solid #dbe2ea;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .total-row.final strong {
+      font-size: 24px;
+      letter-spacing: -0.03em;
+    }
+    .issuer-note {
+      margin-top: 8px;
+      color: #475569;
+      font-size: 11px;
+    }
+    .issuer-note.muted { color: #64748b; }
+    .tax-breakdown { display: grid; gap: 6px; }
+    .tax-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      color: #475569;
+      font-size: 12px;
+    }
+    .tax-row.total {
+      margin-top: 4px;
+      padding-top: 8px;
+      border-top: 1px solid #d1d5db;
+      color: #0f172a;
+      font-weight: 700;
+    }
+    .tax-note {
+      text-align: right;
+      color: #64748b;
+      font-size: 11px;
+    }
+    .notes {
+      color: #334155;
+      white-space: pre-wrap;
+      font-size: 12px;
+    }
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      padding-top: 10px;
+      border-top: 1px solid #e5e7eb;
+      font-size: 10.5px;
+      color: #94a3b8;
     }
   </style>
 </head>
 <body>
+  <div class="page">
+    ${reissueBanner}
 
-  ${reissueBanner}
-
-  <!-- ============================================================
-       HEADER: タイトルと発行メタ情報
-  ============================================================ -->
-  <div style="display:flex;justify-content:space-between;align-items:flex-end;
-              padding-bottom:12px;border-bottom:3px solid #1a1a1a;margin-bottom:24px">
-    <div>
-      <div style="font-size:34px;font-weight:700;letter-spacing:0.12em;color:#1a1a1a;line-height:1">
-        領収書
+    <section class="header">
+      <div>
+        <p class="eyebrow">入金受領証</p>
+        <h1 class="doc-title">領収書</h1>
+        <div class="recipient">
+          <p class="recipient-label">宛先</p>
+          <p class="recipient-name">${esc(receipt.recipient_name)} 御中</p>
+          <p class="recipient-copy">下記の金額を、${esc(description)}として正に領収いたしました。</p>
+        </div>
       </div>
-      ${receipt.is_reissue
-        ? `<div style="font-size:12px;color:#b45309;font-weight:600;margin-top:4px;letter-spacing:0.04em">再発行</div>`
-        : ""}
-    </div>
-    <div style="text-align:right;font-size:12px;color:#444;line-height:1.9">
-      <div><span style="color:#888">No. </span><strong>${esc(receipt.receipt_number)}</strong></div>
-      <div><span style="color:#888">発行日: </span>${esc(receipt.issue_date)}</div>
-      <div><span style="color:#888">入金日: </span>${esc(receipt.paid_at)}</div>
-    </div>
-  </div>
+      <div class="meta-card">
+        <div class="meta-grid">
+          <div>
+            <p class="meta-label">領収書番号</p>
+            <p class="meta-value">${esc(receipt.receipt_number)}</p>
+          </div>
+          <div>
+            <p class="meta-label">発行日</p>
+            <p class="meta-value">${esc(fmtDate(receipt.issue_date))}</p>
+          </div>
+          <div>
+            <p class="meta-label">入金日</p>
+            <p class="meta-value">${esc(fmtDate(receipt.paid_at))}</p>
+          </div>
+          <div>
+            <p class="meta-label">支払方法</p>
+            <p class="meta-value">${esc(paymentMethodLabel(receipt.payment_method))}</p>
+          </div>
+        </div>
+      </div>
+    </section>
 
-  <!-- ============================================================
-       AMOUNT BOX: 受領金額・宛名・但し書き
-  ============================================================ -->
-  <div style="border:2px solid #1a1a1a;border-radius:6px;padding:20px 24px;margin-bottom:24px">
-    <!-- 宛名 -->
-    <div style="font-size:20px;font-weight:700;padding-bottom:12px;
-                border-bottom:1px solid #d1d5db;margin-bottom:16px;letter-spacing:0.02em">
-      ${esc(receipt.recipient_name)}&ensp;御中
-    </div>
+    <section class="hero">
+      <div>
+        <p class="hero-label">受領金額</p>
+        <p class="hero-title">${esc(description)}</p>
+        <p class="hero-subtitle">消費税: ${isRegistered ? "内訳を明記" : "免税"}</p>
+      </div>
+      <div class="hero-amount">
+        <p class="hero-amount-value">${fmtCur(receipt.total_amount)}</p>
+        <p class="hero-amount-note">領収対象日: ${esc(fmtDate(receipt.paid_at))}</p>
+      </div>
+    </section>
 
-    <!-- 金額 -->
-    <div style="display:flex;align-items:baseline;gap:6px;margin-bottom:14px">
-      <span style="font-size:15px;font-weight:700;color:#1a1a1a">金額</span>
-      <span style="font-size:36px;font-weight:700;letter-spacing:-0.01em;color:#1a1a1a;line-height:1">
-        ${fmtCur(receipt.total_amount)}
-      </span>
-      <span style="font-size:15px;color:#555;font-weight:600">（税込）</span>
-    </div>
-
-    <!-- 但し書き -->
-    <div style="font-size:13px;color:#333;padding-top:12px;border-top:1px solid #e5e5e5;margin-bottom:10px">
-      但し、<strong>${esc(description)}</strong>として
-    </div>
-
-    <!-- 確認文 -->
-    <div style="font-size:13px;color:#555">上記の金額を正に領収いたしました。</div>
-  </div>
-
-  <!-- ============================================================
-       INFO GRID: 支払情報 + 発行者情報
-  ============================================================ -->
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px">
-
-    <!-- 支払情報 -->
-    <div style="padding:16px;border:1px solid #e5e7eb;border-radius:6px">
-      <div style="font-size:11px;font-weight:700;color:#888;letter-spacing:0.06em;
-                  text-transform:uppercase;margin-bottom:10px">支払情報</div>
-      <table style="width:100%;border-collapse:collapse">
-        <tbody>
+    <section class="section">
+      <h2 class="section-title">受領明細</h2>
+      <table class="detail-table">
+        <thead>
           <tr>
-            <td style="padding:4px 0;color:#666;white-space:nowrap;font-size:12px;vertical-align:top;padding-right:14px">支払方法</td>
-            <td style="padding:4px 0;font-size:12px">${esc(paymentMethodLabel(receipt.payment_method))}</td>
+            <th>品目</th>
+            <th class="num">数量</th>
+            <th class="num">単価</th>
+            <th class="num">金額</th>
+            ${taxHeaderCell}
           </tr>
-          ${payerNoteRow}
-          ${invoiceRefRow}
+        </thead>
+        <tbody>
+          ${lineRows}
         </tbody>
       </table>
-    </div>
+    </section>
 
-    <!-- 発行者情報 -->
-    <div style="padding:16px;border:1px solid #e5e7eb;border-radius:6px;position:relative">
-      <div style="font-size:11px;font-weight:700;color:#888;letter-spacing:0.06em;
-                  text-transform:uppercase;margin-bottom:10px">発行者</div>
-      <div style="display:flex;justify-content:space-between;align-items:flex-start">
-        <div>
-          <div style="font-size:16px;font-weight:700;margin-bottom:4px">${esc(issuer.issuer_name)}</div>
-          <div style="font-size:12px;color:#555;line-height:1.8">
-            ${issuer.issuer_zip ? `〒${esc(issuer.issuer_zip)}<br/>` : ""}
-            ${esc(issuer.issuer_address)}<br/>
-            ${issuer.issuer_phone ? `TEL: ${esc(issuer.issuer_phone)}<br/>` : ""}
-            ${issuer.issuer_email ? esc(issuer.issuer_email) : ""}
+    <section class="bottom-grid">
+      <div class="section">
+        <div class="panel">
+          <h3 class="panel-title">受領情報</h3>
+          <div class="kv"><div class="kv-label">但し書き</div><div class="kv-value">${esc(description)}</div></div>
+          <div class="kv"><div class="kv-label">受領日</div><div class="kv-value">${esc(fmtDate(receipt.paid_at))}</div></div>
+          <div class="kv"><div class="kv-label">支払方法</div><div class="kv-value">${esc(paymentMethodLabel(receipt.payment_method))}</div></div>
+          ${payerNoteRow}
+          ${invoiceRefRow}
+        </div>
+
+        ${taxBreakdownSection}
+        ${noteSection}
+      </div>
+
+      <div class="section">
+        <div class="panel">
+          <h3 class="panel-title">受領金額</h3>
+          <div class="totals">
+            <div class="total-row">
+              <span>小計</span>
+              <strong>${fmtCur(receipt.subtotal_amount)}</strong>
+            </div>
+            <div class="total-row">
+              <span>消費税</span>
+              <strong>${receipt.tax_amount > 0 ? fmtCur(receipt.tax_amount) : "免税"}</strong>
+            </div>
+            <div class="total-row final">
+              <span>合計受領額</span>
+              <strong>${fmtCur(receipt.total_amount)}</strong>
+            </div>
           </div>
+        </div>
+
+        <div class="panel soft">
+          <h3 class="panel-title">発行元</h3>
+          <div class="kv"><div class="kv-label">会社名</div><div class="kv-value">${esc(issuer.issuer_name || "-")}</div></div>
+          <div class="kv"><div class="kv-label">所在地</div><div class="kv-value">${esc(issuerAddressLine || "-")}</div></div>
+          <div class="kv"><div class="kv-label">連絡先</div><div class="kv-value">${esc(compactLine([issuer.issuer_phone ? `TEL: ${issuer.issuer_phone}` : null, issuer.issuer_email ?? null]) || "-")}</div></div>
           ${registrationRow}
         </div>
-        <!-- 印鑑スペース -->
-        <div style="width:60px;height:60px;border:1px dashed #ccc;border-radius:50%;
-                    display:flex;align-items:center;justify-content:center;
-                    color:#ccc;font-size:11px;flex-shrink:0;margin-left:10px">印</div>
       </div>
-    </div>
+    </section>
+
+    <footer class="footer">
+      <span>${esc(receipt.receipt_number)}</span>
+      <span>${esc(fmtDate(receipt.issue_date))} 発行</span>
+    </footer>
   </div>
-
-  <!-- ============================================================
-       DETAIL TABLE: 明細
-  ============================================================ -->
-  <div style="margin-bottom:4px;font-size:11px;font-weight:700;color:#888;
-              letter-spacing:0.06em;text-transform:uppercase;
-              border-bottom:2px solid #e5e5e5;padding-bottom:6px">明細</div>
-
-  <table style="width:100%;border-collapse:collapse;font-size:13px">
-    <thead>
-      <tr style="background:#f5f5f5">
-        <th style="padding:9px 12px;background:#f5f5f5;border-bottom:2px solid #ddd;
-                   color:#555;font-size:12px;font-weight:600;text-align:left">品目</th>
-        <th style="padding:9px 12px;background:#f5f5f5;border-bottom:2px solid #ddd;
-                   color:#555;font-size:12px;font-weight:600;text-align:right">数量</th>
-        <th style="padding:9px 12px;background:#f5f5f5;border-bottom:2px solid #ddd;
-                   color:#555;font-size:12px;font-weight:600;text-align:right">単価</th>
-        <th style="padding:9px 12px;background:#f5f5f5;border-bottom:2px solid #ddd;
-                   color:#555;font-size:12px;font-weight:600;text-align:right">金額</th>
-        ${taxHeaderCell}
-      </tr>
-    </thead>
-    <tbody>
-      ${lineRows}
-    </tbody>
-  </table>
-
-  <!-- 合計 -->
-  <div style="border-top:2px solid #1a1a1a;padding:10px 12px 0;margin-bottom:4px">
-    ${receipt.tax_amount > 0
-      ? `<div style="display:flex;justify-content:flex-end;gap:24px;font-size:13px;color:#555;margin-bottom:4px">
-          <span>小計</span><span>${fmtCur(receipt.subtotal_amount)}</span>
-        </div>
-        <div style="display:flex;justify-content:flex-end;gap:24px;font-size:13px;color:#555;margin-bottom:6px">
-          <span>消費税</span><span>${fmtCur(receipt.tax_amount)}</span>
-        </div>`
-      : ""}
-    <div style="display:flex;justify-content:flex-end;gap:24px;font-size:16px;font-weight:700;color:#1a1a1a">
-      <span>合計（税込）</span><span>${fmtCur(receipt.total_amount)}</span>
-    </div>
-  </div>
-
-  ${taxBreakdownSection}
-  ${noteSection}
-
-  <!-- ============================================================
-       FOOTER
-  ============================================================ -->
-  <div style="margin-top:24px;padding-top:10px;border-top:1px solid #e5e5e5;
-              display:flex;justify-content:space-between;
-              font-size:11px;color:#aaa">
-    <span>${esc(receipt.receipt_number)} | ${esc(receipt.issue_date)} 発行</span>
-    <span>このPDFは受領証憑として有効です。</span>
-  </div>
-
 </body>
 </html>`
 }

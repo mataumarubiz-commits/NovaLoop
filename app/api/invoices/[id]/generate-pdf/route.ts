@@ -185,7 +185,7 @@ export async function POST(
     await writeAuditLog(admin, {
       org_id: orgId,
       user_id: userId,
-      action: "invoice.pdf_generate",
+      action: typeof inv.pdf_path === "string" && inv.pdf_path ? "invoice.pdf_regenerate" : "invoice.pdf_generate",
       resource_type: "invoice",
       resource_id: invoiceId,
       meta: {

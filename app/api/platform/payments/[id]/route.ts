@@ -17,10 +17,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       *,
       purchase:entitlement_purchase_requests(
         full_name,
+        receipt_name,
         company_name,
         contact_email,
+        billing_email,
         google_email,
         address,
+        billing_address,
         phone,
         note
       ),
@@ -40,9 +43,6 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     return NextResponse.json({ ok: false, error: "Payment request not found" }, { status: 404 })
   }
 
-  const invoice_signed_url = await createPlatformDocumentSignedUrl(
-    typeof payment.invoice_pdf_path === "string" ? payment.invoice_pdf_path : null
-  )
   const receipt_signed_url = await createPlatformDocumentSignedUrl(
     typeof payment.receipt_pdf_path === "string" ? payment.receipt_pdf_path : null
   )
@@ -51,7 +51,6 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     ok: true,
     payment: {
       ...payment,
-      invoice_signed_url,
       receipt_signed_url,
     },
   })

@@ -443,6 +443,7 @@ export default function PayoutsPage() {
         <nav className="page-tab-bar">
           <Link href="/vendors" data-active="false">外注管理</Link>
           <Link href="/payouts" data-active="true">支払</Link>
+          <Link href={`/documents?tab=vendor${month ? `&month=${encodeURIComponent(month)}` : ""}`} data-active="false">証憑</Link>
         </nav>
 
         <header style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "end" }}>
@@ -461,6 +462,12 @@ export default function PayoutsPage() {
             ))}
           </select>
         </header>
+
+        <section style={{ display: "flex", justifyContent: "flex-end" }}>
+          <Link href={`/documents?tab=vendor${month ? `&month=${encodeURIComponent(month)}` : ""}`} style={{ ...linkButtonStyle, textDecoration: "none" }}>
+            証憑アーカイブで見る
+          </Link>
+        </section>
 
         <section style={{ ...cardStyle, display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 10 }}>
           <SummaryCard label="対象件数" value={String(filteredRows.length)} />

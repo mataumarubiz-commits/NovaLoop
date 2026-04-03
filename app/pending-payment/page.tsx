@@ -1,8 +1,9 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
+import { shouldRedirectPendingPaymentToThanks } from "@/lib/platformFlow"
 import { supabase } from "@/lib/supabase"
 
 type BillingSettings = {
@@ -31,8 +32,6 @@ type LicenseResponse = {
     due_date: string | null
     transfer_reference: string
     status: string
-    invoice_signed_url?: string | null
-    receipt_signed_url?: string | null
     client_notified_at?: string | null
     client_paid_at_claimed?: string | null
     client_paid_amount_claimed?: number | null
@@ -41,7 +40,7 @@ type LicenseResponse = {
   }>
 }
 
-function fmtCur(value: number) {
+function formatCurrency(value: number) {
   return new Intl.NumberFormat("ja-JP", {
     style: "currency",
     currency: "JPY",
@@ -49,11 +48,10 @@ function fmtCur(value: number) {
   }).format(value)
 }
 
-function fmtDate(value: string | null | undefined) {
+function formatDate(value: string | null | undefined) {
   if (!value) return "-"
-  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/)
-  if (!match) return value
-  return `${match[1]}年${Number(match[2])}月${Number(match[3])}日`
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("ja-JP")
 }
 
 export default function PendingPaymentPage() {
@@ -63,7 +61,7 @@ export default function PendingPaymentPage() {
   const [settings, setSettings] = useState<BillingSettings | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [busyDoc, setBusyDoc] = useState<"invoice" | "receipt" | null>(null)
+  const [busyDoc, setBusyDoc] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [localNotified, setLocalNotified] = useState(false)
@@ -90,7 +88,7 @@ export default function PendingPaymentPage() {
     const settingsJson = await settingsRes.json().catch(() => null)
 
     if (!licenseRes.ok || !licenseJson?.ok) {
-      setError(licenseJson?.error ?? "購入情報を取得できませんでした。")
+      setError(licenseJson?.error ?? "購入状態を取得できませんでした。")
       setLoading(false)
       return
     }
@@ -120,49 +118,64 @@ export default function PendingPaymentPage() {
 
   const payment = license?.paymentRequests?.[0]
   const alreadyNotified = localNotified || Boolean(payment?.client_notified_at)
-  const isActive = license?.entitlement?.status === "active"
-
-  const openDocument = useCallback(
-    async (kind: "invoice" | "receipt") => {
-      if (!payment) return
-      const token = (await supabase.auth.getSession()).data.session?.access_token
-      if (!token) {
-        router.replace("/")
-        return
-      }
-      setBusyDoc(kind)
-      setError(null)
-      try {
-        const res = await fetch(`/api/platform/payments/${payment.id}/${kind}-pdf`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}` },
-        })
-        const json = await res.json().catch(() => null) as { ok?: boolean; signed_url?: string; error?: string } | null
-        if (!res.ok || !json?.ok || !json.signed_url) {
-          setError(json?.error ?? `${kind} pdf を開けませんでした。`)
-          return
-        }
-        window.open(json.signed_url, "_blank", "noopener,noreferrer")
-      } finally {
-        setBusyDoc(null)
-      }
-    },
-    [payment, router]
+  const isActive = shouldRedirectPendingPaymentToThanks(
+    (license?.entitlement?.status as "active" | "pending_payment" | null) ?? null
   )
 
-  const submitNotify = useCallback(async () => {
+  useEffect(() => {
+    if (loading || !isActive) return
+    router.replace("/thanks?from=pending-payment")
+  }, [isActive, loading, router])
+
+  useEffect(() => {
+    if (loading || isActive) return
+    const intervalId = window.setInterval(() => {
+      void load()
+    }, 15000)
+    return () => window.clearInterval(intervalId)
+  }, [isActive, load, loading])
+
+  const openReceipt = useCallback(async () => {
     if (!payment) return
-    setSubmitting(true)
-    setSubmitError(null)
     const token = (await supabase.auth.getSession()).data.session?.access_token
     if (!token) {
       router.replace("/")
       return
     }
+
+    setBusyDoc(true)
+    setError(null)
+    try {
+      const res = await fetch(`/api/platform/payments/${payment.id}/receipt-pdf`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const json = (await res.json().catch(() => null)) as { ok?: boolean; signed_url?: string; error?: string } | null
+      if (!res.ok || !json?.ok || !json.signed_url) {
+        setError(json?.error ?? "領収書PDFを開けませんでした。")
+        return
+      }
+
+      window.open(json.signed_url, "_blank", "noopener,noreferrer")
+    } finally {
+      setBusyDoc(false)
+    }
+  }, [payment, router])
+
+  const submitNotify = useCallback(async () => {
+    if (!payment) return
+
     const amount = Number(paidAmount)
     if (!paidAt || Number.isNaN(amount) || amount <= 0) {
-      setSubmitError("振込日と振込金額を正しく入力してください。")
-      setSubmitting(false)
+      setSubmitError("入金日と入金額を確認してください。")
+      return
+    }
+
+    setSubmitting(true)
+    setSubmitError(null)
+    const token = (await supabase.auth.getSession()).data.session?.access_token
+    if (!token) {
+      router.replace("/")
       return
     }
 
@@ -180,32 +193,18 @@ export default function PendingPaymentPage() {
           note: note.trim() || null,
         }),
       })
-      const json = await res.json().catch(() => null) as { ok?: boolean; error?: string } | null
+      const json = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null
       if (!res.ok || !json?.ok) {
-        setSubmitError(json?.error ?? "振込完了連絡に失敗しました。")
+        setSubmitError(json?.error ?? "入金連絡の送信に失敗しました。")
         return
       }
+
       setLocalNotified(true)
       await load()
     } finally {
       setSubmitting(false)
     }
   }, [load, note, paidAmount, paidAt, payment, router, transferName])
-
-  const nextAction = useMemo(() => {
-    if (isActive) {
-      return {
-        href: "/request-org",
-        label: "組織作成へ進む",
-        description: "ライセンスは有効です。新しい組織を作成できます。",
-      }
-    }
-    return {
-      href: "/settings/license",
-      label: "ライセンス状態を確認する",
-      description: "入金確認後、この画面またはライセンス設定で状態を確認してください。",
-    }
-  }, [isActive])
 
   if (loading) {
     return <div style={{ padding: 32, color: "var(--muted)" }}>読み込み中...</div>
@@ -214,7 +213,7 @@ export default function PendingPaymentPage() {
   if (!payment || !settings) {
     return (
       <div style={{ padding: 32, display: "grid", gap: 12 }}>
-        <p style={{ color: "var(--muted)", margin: 0 }}>有効な購入申請が見つかりませんでした。</p>
+        <p style={{ color: "var(--muted)", margin: 0 }}>進行中の購入申請が見つかりませんでした。</p>
         <Link href="/purchase-license">ライセンス購入へ進む</Link>
       </div>
     )
@@ -224,92 +223,98 @@ export default function PendingPaymentPage() {
     <div style={{ minHeight: "100vh", background: "var(--bg-grad)", padding: "32px 24px 80px" }}>
       <div style={{ maxWidth: 920, margin: "0 auto", display: "grid", gap: 16 }}>
         <header style={{ display: "grid", gap: 8 }}>
-          <div style={{ fontSize: 12, color: "var(--muted)" }}>銀行振込での購入手続き</div>
-          <h1 style={{ margin: 0, fontSize: 30, color: "var(--text)" }}>振込案内</h1>
+          <div style={{ fontSize: 12, color: "var(--muted)" }}>導入フロー 2 / 3</div>
+          <h1 style={{ margin: 0, fontSize: 30, color: "var(--text)" }}>入金確認</h1>
+          <p style={{ margin: 0, color: "var(--muted)", lineHeight: 1.8 }}>
+            振込先の確認と入金連絡をこの画面でまとめて進めます。入金確認が完了すると、自動でサンクスページへ進みます。
+          </p>
           {searchParams.get("existing") === "1" ? (
-            <p style={{ margin: 0, color: "var(--success-text)" }}>既存の購入申請を再利用しています。</p>
+            <p style={{ margin: 0, color: "var(--success-text)" }}>進行中の購入申請に合流しました。</p>
           ) : null}
           {error ? <p style={{ margin: 0, color: "var(--error-text)" }}>{error}</p> : null}
         </header>
 
-        <section style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 18, padding: 22, display: "grid", gap: 14 }}>
+        <section style={sectionStyle}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
             <div>
-              <div style={{ fontSize: 12, color: "var(--muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>License Purchase</div>
-              <div style={{ marginTop: 6, fontSize: 24, fontWeight: 700, color: "var(--text)" }}>{fmtCur(payment.amount_jpy)}</div>
-              <div style={{ marginTop: 6, color: "var(--muted)" }}>支払期日: {fmtDate(payment.due_date)}</div>
+              <div style={{ fontSize: 12, color: "var(--muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                License Purchase
+              </div>
+              <div style={{ marginTop: 6, fontSize: 24, fontWeight: 700, color: "var(--text)" }}>
+                {formatCurrency(payment.amount_jpy)}
+              </div>
+              <div style={{ marginTop: 6, color: "var(--muted)" }}>入金期限: {formatDate(payment.due_date)}</div>
             </div>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            {payment.status === "paid" ? (
               <button
                 type="button"
-                onClick={() => void openDocument("invoice")}
-                disabled={busyDoc === "invoice"}
-                style={{ padding: "10px 14px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", cursor: "pointer", fontWeight: 700 }}
+                onClick={() => void openReceipt()}
+                disabled={busyDoc}
+                style={primaryButtonStyle}
               >
-                {busyDoc === "invoice" ? "請求書PDF準備中..." : "請求書PDFを開く"}
+                {busyDoc ? "領収書PDFを開いています..." : "領収書PDFを開く"}
               </button>
-              {payment.status === "paid" && (
-                <button
-                  type="button"
-                  onClick={() => void openDocument("receipt")}
-                  disabled={busyDoc === "receipt"}
-                  style={{ padding: "10px 14px", borderRadius: 10, border: "1px solid var(--primary)", background: "var(--primary)", color: "#fff", cursor: "pointer", fontWeight: 700 }}
-                >
-                  {busyDoc === "receipt" ? "領収書PDF準備中..." : "領収書PDFを開く"}
-                </button>
-              )}
-            </div>
+            ) : null}
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
-            <InfoCard label="請求書番号" value={payment.invoice_number} />
             <InfoCard label="申請番号" value={payment.request_number} />
             <InfoCard label="振込識別子" value={payment.transfer_reference} />
             <InfoCard label="ライセンス状態" value={license?.entitlement?.status ?? "pending_payment"} />
           </div>
         </section>
 
-        <section style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 18, padding: 22, display: "grid", gap: 10 }}>
+        <section style={sectionStyle}>
           <h2 style={{ margin: 0, fontSize: 18, color: "var(--text)" }}>振込先</h2>
           <div style={{ display: "grid", gap: 6, color: "var(--text)" }}>
-            <div>金融機関: {settings.bank_name}</div>
-            <div>支店: {settings.bank_branch_name} ({settings.bank_branch_code})</div>
+            <div>銀行名: {settings.bank_name}</div>
+            <div>支店名: {settings.bank_branch_name} ({settings.bank_branch_code})</div>
             <div>口座種別: {settings.bank_account_type}</div>
             <div>口座番号: {settings.bank_account_number}</div>
             <div>口座名義: {settings.bank_account_holder}</div>
-            <div>振込識別子: <strong>{payment.transfer_reference}</strong></div>
+            <div>販売者: {settings.seller_name}</div>
           </div>
           <div style={{ color: "var(--muted)", fontSize: 13 }}>{settings.transfer_fee_note}</div>
         </section>
 
-        <section style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 18, padding: 22, display: "grid", gap: 14 }}>
+        <section style={sectionStyle}>
           <div>
-            <h2 style={{ margin: 0, fontSize: 18, color: "var(--text)" }}>振込後の流れ</h2>
+            <h2 style={{ margin: 0, fontSize: 18, color: "var(--text)" }}>入金連絡</h2>
             <p style={{ margin: "6px 0 0", color: "var(--muted)", lineHeight: 1.8 }}>
-              請求書PDFを保存し、銀行振込を行ったら、このページから振込完了をご連絡ください。
+              振込後にこのフォームから連絡してください。確認が完了したら、サンクスページから初回セットアップへ進めます。
             </p>
           </div>
 
           {alreadyNotified ? (
             <div style={{ borderRadius: 14, border: "1px solid #bbf7d0", background: "#f0fdf4", padding: 16, display: "grid", gap: 8 }}>
-              <div style={{ fontSize: 15, fontWeight: 700, color: "#166534" }}>振込完了連絡を受け付けました</div>
-              <div style={{ color: "#166534", fontSize: 14 }}>次の確認先: {nextAction.description}</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: "#166534" }}>入金連絡を受け付けました</div>
+              <div style={{ color: "#166534", fontSize: 14 }}>
+                管理側の確認が完了すると、この画面から自動でサンクスページへ進みます。
+              </div>
               <div style={{ display: "grid", gap: 4, color: "#166534", fontSize: 13 }}>
-                <div>振込日: {fmtDate(payment.client_paid_at_claimed)}</div>
-                <div>振込金額: {fmtCur(payment.client_paid_amount_claimed ?? payment.amount_jpy)}</div>
+                <div>入金日: {formatDate(payment.client_paid_at_claimed)}</div>
+                <div>入金額: {formatCurrency(payment.client_paid_amount_claimed ?? payment.amount_jpy)}</div>
                 {payment.client_transfer_name ? <div>振込名義: {payment.client_transfer_name}</div> : null}
               </div>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 4 }}>
-                <Link href={nextAction.href} style={{ padding: "10px 14px", borderRadius: 10, background: "#166534", color: "#fff", textDecoration: "none", fontWeight: 700 }}>
-                  {nextAction.label}
-                </Link>
                 <button
                   type="button"
                   onClick={() => void load()}
-                  style={{ padding: "10px 14px", borderRadius: 10, border: "1px solid #86efac", background: "#fff", color: "#166534", cursor: "pointer", fontWeight: 700 }}
+                  style={{
+                    padding: "10px 14px",
+                    borderRadius: 10,
+                    border: "1px solid #86efac",
+                    background: "#fff",
+                    color: "#166534",
+                    cursor: "pointer",
+                    fontWeight: 700,
+                  }}
                 >
-                  状態を再読み込み
+                  状態を更新する
                 </button>
+                <Link href="/settings/license" style={successLinkStyle}>
+                  ライセンス情報を見る
+                </Link>
               </div>
             </div>
           ) : (
@@ -317,21 +322,35 @@ export default function PendingPaymentPage() {
               {submitError ? <div style={{ color: "var(--error-text)", fontWeight: 600 }}>{submitError}</div> : null}
               <div style={{ display: "grid", gap: 14 }}>
                 <label style={{ display: "grid", gap: 6 }}>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>振込日 *</span>
-                  <input type="date" value={paidAt} onChange={(e) => setPaidAt(e.target.value)} style={fieldStyle} />
+                  <span style={labelStyle}>入金日 *</span>
+                  <input type="date" value={paidAt} onChange={(event) => setPaidAt(event.target.value)} style={fieldStyle} />
                 </label>
                 <label style={{ display: "grid", gap: 6 }}>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>振込金額 *</span>
-                  <input type="number" value={paidAmount} onChange={(e) => setPaidAmount(e.target.value)} min={1} step={1} style={fieldStyle} />
-                  <span style={{ fontSize: 12, color: "var(--muted)" }}>請求金額: {fmtCur(payment.amount_jpy)}</span>
+                  <span style={labelStyle}>入金額 *</span>
+                  <input type="number" value={paidAmount} onChange={(event) => setPaidAmount(event.target.value)} min={1} step={1} style={fieldStyle} />
+                  <span style={{ fontSize: 12, color: "var(--muted)" }}>請求額: {formatCurrency(payment.amount_jpy)}</span>
                 </label>
                 <label style={{ display: "grid", gap: 6 }}>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>振込名義</span>
-                  <input type="text" value={transferName} onChange={(e) => setTransferName(e.target.value)} maxLength={100} placeholder="通帳に表示される名義" style={fieldStyle} />
+                  <span style={labelStyle}>振込名義</span>
+                  <input
+                    type="text"
+                    value={transferName}
+                    onChange={(event) => setTransferName(event.target.value)}
+                    maxLength={100}
+                    placeholder="通帳に表示される名義"
+                    style={fieldStyle}
+                  />
                 </label>
                 <label style={{ display: "grid", gap: 6 }}>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>備考</span>
-                  <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={4} maxLength={500} placeholder="差額振込や補足事項があれば記入してください。" style={{ ...fieldStyle, resize: "vertical" }} />
+                  <span style={labelStyle}>補足</span>
+                  <textarea
+                    value={note}
+                    onChange={(event) => setNote(event.target.value)}
+                    rows={4}
+                    maxLength={500}
+                    placeholder="確認してほしいことがあれば入力してください。"
+                    style={{ ...fieldStyle, resize: "vertical" }}
+                  />
                 </label>
               </div>
 
@@ -340,12 +359,12 @@ export default function PendingPaymentPage() {
                   type="button"
                   onClick={() => void submitNotify()}
                   disabled={submitting}
-                  style={{ padding: "12px 16px", borderRadius: 10, border: "none", background: "var(--primary)", color: "#fff", cursor: submitting ? "not-allowed" : "pointer", fontWeight: 700 }}
+                  style={primaryButtonStyle}
                 >
-                  {submitting ? "送信中..." : "振込完了を連絡する"}
+                  {submitting ? "送信中..." : "入金連絡を送る"}
                 </button>
-                <Link href="/settings/license" style={{ padding: "12px 16px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", textDecoration: "none", fontWeight: 700 }}>
-                  ライセンス状態を見る
+                <Link href="/settings/license" style={secondaryLinkStyle}>
+                  ライセンス情報を見る
                 </Link>
               </div>
             </>
@@ -365,6 +384,15 @@ function InfoCard({ label, value }: { label: string; value: string }) {
   )
 }
 
+const sectionStyle = {
+  background: "var(--surface)",
+  border: "1px solid var(--border)",
+  borderRadius: 18,
+  padding: 22,
+  display: "grid",
+  gap: 14,
+} as const
+
 const fieldStyle = {
   width: "100%",
   borderRadius: 10,
@@ -374,4 +402,39 @@ const fieldStyle = {
   padding: "11px 12px",
   fontSize: 14,
   boxSizing: "border-box" as const,
-}
+} as const
+
+const labelStyle = {
+  fontSize: 13,
+  fontWeight: 700,
+  color: "var(--text)",
+} as const
+
+const primaryButtonStyle = {
+  padding: "12px 16px",
+  borderRadius: 10,
+  border: "none",
+  background: "var(--primary)",
+  color: "#fff",
+  cursor: "pointer",
+  fontWeight: 700,
+} as const
+
+const secondaryLinkStyle = {
+  padding: "12px 16px",
+  borderRadius: 10,
+  border: "1px solid var(--border)",
+  background: "var(--surface-2)",
+  color: "var(--text)",
+  textDecoration: "none",
+  fontWeight: 700,
+} as const
+
+const successLinkStyle = {
+  padding: "10px 14px",
+  borderRadius: 10,
+  background: "#166534",
+  color: "#fff",
+  textDecoration: "none",
+  fontWeight: 700,
+} as const

@@ -323,9 +323,14 @@ export default function VendorInvoiceDetailPage() {
               状態: {STATUS_LABELS[invoice.status] ?? invoice.status} / 初回提出: {fmt(invoice.first_submitted_at || invoice.submitted_at)} / 最終再提出: {fmt(invoice.resubmitted_at)}
             </p>
           </div>
-          <button type="button" onClick={() => void openPdf()} style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface-2)" }}>
-            PDFを開く
-          </button>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button type="button" onClick={() => void openPdf()} style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface-2)" }}>
+              PDFを開く
+            </button>
+            <Link href={`/documents?tab=vendor&month=${encodeURIComponent(invoice.billing_month)}`} style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", textDecoration: "none" }}>
+              証憑アーカイブ
+            </Link>
+          </div>
         </header>
 
         {error ? <section style={{ ...cardStyle, borderColor: "var(--error-border)", background: "var(--error-bg)", color: "var(--error-text)" }}>{error}</section> : null}

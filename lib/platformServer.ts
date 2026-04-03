@@ -25,8 +25,12 @@ export async function getPlatformBillingSettings(): Promise<PlatformBillingSetti
     bank_account_number: String(data.bank_account_number ?? DEFAULT_PLATFORM_BILLING_SETTINGS.bank_account_number),
     bank_account_holder: String(data.bank_account_holder ?? DEFAULT_PLATFORM_BILLING_SETTINGS.bank_account_holder),
     transfer_fee_note: String(data.transfer_fee_note ?? DEFAULT_PLATFORM_BILLING_SETTINGS.transfer_fee_note),
+    qualified_invoice_enabled: Boolean(
+      data.qualified_invoice_enabled ?? DEFAULT_PLATFORM_BILLING_SETTINGS.qualified_invoice_enabled
+    ),
     invoice_registration_number:
       typeof data.invoice_registration_number === "string" ? data.invoice_registration_number : null,
+    default_tax_mode: DEFAULT_PLATFORM_BILLING_SETTINGS.default_tax_mode,
     license_price_jpy: Number(data.license_price_jpy ?? DEFAULT_PLATFORM_BILLING_SETTINGS.license_price_jpy),
   }
 }
@@ -95,15 +99,26 @@ export async function getMyLicenseSnapshot(userId: string) {
   const paymentRequests = await Promise.all(
     (paymentsRes.data ?? []).map(async (row) => ({
       ...row,
-      invoice_signed_url: await createPlatformDocumentSignedUrl(row.invoice_pdf_path),
       receipt_signed_url: await createPlatformDocumentSignedUrl(row.receipt_pdf_path),
+    }))
+  )
+
+  const receiptsRes = entitlement
+    ? await admin.from("purchase_receipts").select("*").eq("user_id", userId).order("created_at", { ascending: false })
+    : { data: [], error: null }
+
+  const receipts = await Promise.all(
+    ((receiptsRes.data ?? []) as Array<Record<string, unknown>>).map(async (row) => ({
+      ...row,
+      receipt_signed_url: await createPlatformDocumentSignedUrl(
+        typeof row.pdf_path === "string" ? row.pdf_path : null
+      ),
     }))
   )
 
   const purchaseRequests = await Promise.all(
     (purchasesRes.data ?? []).map(async (row) => ({
       ...row,
-      invoice_signed_url: await createPlatformDocumentSignedUrl(row.invoice_pdf_path),
       receipt_signed_url: await createPlatformDocumentSignedUrl(row.receipt_pdf_path),
     }))
   )
@@ -113,6 +128,7 @@ export async function getMyLicenseSnapshot(userId: string) {
     creatorProfile: profileRes.data ?? null,
     purchaseRequests,
     paymentRequests,
+    receipts,
     latestTransferRequest: transferRes.data ?? null,
   }
 }

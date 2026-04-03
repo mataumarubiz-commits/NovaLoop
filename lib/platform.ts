@@ -28,7 +28,9 @@ export type PlatformBillingSettings = {
   bank_account_number: string
   bank_account_holder: string
   transfer_fee_note: string
+  qualified_invoice_enabled: boolean
   invoice_registration_number: string | null
+  default_tax_mode: "exempt" | "registered_taxable"
   license_price_jpy: number
 }
 
@@ -44,7 +46,9 @@ export const DEFAULT_PLATFORM_BILLING_SETTINGS: PlatformBillingSettings = {
   bank_account_number: "1103468",
   bank_account_holder: "マタウマル コウメイ",
   transfer_fee_note: "振込手数料はご負担ください。",
+  qualified_invoice_enabled: false,
   invoice_registration_number: null,
+  default_tax_mode: "exempt",
   license_price_jpy: PLATFORM_PRICE_JPY,
 }
 
@@ -100,8 +104,14 @@ export function buildPlatformInvoicePath(requestNumber: string) {
   return `invoices/${requestNumber}.pdf`
 }
 
-export function buildPlatformReceiptPath(requestNumber: string) {
-  return `receipts/${requestNumber}.pdf`
+export function buildPlatformReceiptPath(receiptNumber: string, issueMonth?: string) {
+  const month = issueMonth && /^\d{4}-\d{2}$/.test(issueMonth)
+    ? issueMonth
+    : (() => {
+        const match = receiptNumber.match(/(\d{4})(\d{2})/)
+        return match ? `${match[1]}-${match[2]}` : "unknown-month"
+      })()
+  return `receipts/${month}/${receiptNumber}.pdf`
 }
 
 export function licenseAccessState(status: CreatorEntitlementStatus | null | undefined) {
@@ -378,10 +388,10 @@ export function renderPlatformInvoiceHtml(params: {
   const body = `
     <section style="display:grid;grid-template-columns:1.1fr 0.9fr;gap:28px;align-items:start">
       <div>
-        <p class="eyebrow">Platform Invoice</p>
+        <p class="eyebrow">ライセンス請求書</p>
         <h1 class="doc-title">請求書</h1>
         <div style="margin-top:22px;padding-top:16px;border-top:1px solid #d1d5db">
-          <p style="margin:0 0 6px;font-size:10px;letter-spacing:0.16em;color:#9ca3af;text-transform:uppercase;font-weight:700">Bill To</p>
+          <p style="margin:0 0 6px;font-size:10px;letter-spacing:0.16em;color:#9ca3af;font-weight:700">御請求先</p>
           <p style="margin:0;font-size:21px;line-height:1.35;font-weight:600;color:#111827">${escapeHtml(recipientLine)} 御中</p>
           <p style="margin:8px 0 0;color:#4b5563">NovaLoop 利用ライセンス購入のご請求です。下記の通りお支払いをお願いいたします。</p>
         </div>
@@ -389,23 +399,23 @@ export function renderPlatformInvoiceHtml(params: {
       <div class="meta-card">
         <div class="meta-grid">
           <div>
-            <p class="meta-label">Invoice No.</p>
+            <p class="meta-label">請求書番号</p>
             <p class="meta-value">${escapeHtml(params.invoiceNumber)}</p>
           </div>
           <div>
-            <p class="meta-label">Request No.</p>
+            <p class="meta-label">申請番号</p>
             <p class="meta-value">${escapeHtml(params.requestNumber)}</p>
           </div>
           <div>
-            <p class="meta-label">Issue Date</p>
+            <p class="meta-label">発行日</p>
             <p class="meta-value">${escapeHtml(formatJapaneseDate(params.issueDate))}</p>
           </div>
           <div>
-            <p class="meta-label">Due Date</p>
+            <p class="meta-label">支払期日</p>
             <p class="meta-value">${escapeHtml(formatJapaneseDate(params.dueDate))}</p>
           </div>
           <div style="grid-column:1 / -1">
-            <p class="meta-label">Title</p>
+            <p class="meta-label">件名</p>
             <p class="meta-value">新規組織作成ライセンス購入</p>
           </div>
         </div>
@@ -414,7 +424,7 @@ export function renderPlatformInvoiceHtml(params: {
 
     <section class="hero">
       <div>
-        <p class="hero-label">Amount Due</p>
+        <p class="hero-label">ご請求金額</p>
         <p class="hero-title">NovaLoop 利用ライセンス</p>
         <p class="hero-subtitle">お支払期日: ${escapeHtml(formatJapaneseDate(params.dueDate))}</p>
       </div>
@@ -425,7 +435,7 @@ export function renderPlatformInvoiceHtml(params: {
     </section>
 
     <section>
-      <h2 class="section-title">Details</h2>
+      <h2 class="section-title">請求内容</h2>
       <table class="table">
         <thead>
           <tr>
@@ -513,36 +523,71 @@ export function renderPlatformReceiptHtml(params: {
   issueDate: string
   paidAt: string
   recipientName: string
+  companyName?: string | null
+  billingEmail?: string | null
+  billingAddress?: string | null
   amountJpy: number
+  subtotalAmount?: number
+  taxAmount?: number
+  taxMode?: "exempt" | "registered_taxable"
+  taxRateBreakdown?: Array<{
+    label?: string | null
+    tax_rate?: number | null
+    taxable_amount?: number | null
+    tax_amount?: number | null
+  }>
   payerNote?: string | null
+  paymentReference?: string | null
+  serviceTitle?: string | null
+  serviceDescription?: string | null
+  qualifiedInvoiceEnabled?: boolean
+  qualifiedInvoiceRegistrationNumber?: string | null
 }) {
+  const recipientLine = params.companyName?.trim()
+    ? `${params.companyName.trim()} / ${params.recipientName}`
+    : params.recipientName
+  const subtotalAmount = Number(params.subtotalAmount ?? params.amountJpy)
+  const taxAmount = Number(params.taxAmount ?? 0)
+  const taxMode = params.taxMode ?? params.settings.default_tax_mode
+  const serviceTitle = params.serviceTitle?.trim() || "NovaLoop 利用ライセンス"
+  const serviceDescription = params.serviceDescription?.trim() || "新規組織作成ライセンス購入"
+  const qualifiedRegistrationNumber =
+    params.qualifiedInvoiceRegistrationNumber?.trim() ||
+    params.settings.invoice_registration_number ||
+    null
+  const qualifiedEnabled =
+    params.qualifiedInvoiceEnabled === true &&
+    Boolean(qualifiedRegistrationNumber?.trim()) &&
+    params.settings.qualified_invoice_enabled === true
+  const taxBreakdown = Array.isArray(params.taxRateBreakdown) ? params.taxRateBreakdown : []
+
   const body = `
     <section style="display:grid;grid-template-columns:1.1fr 0.9fr;gap:28px;align-items:start">
       <div>
-        <p class="eyebrow">Platform Receipt</p>
+        <p class="eyebrow">ライセンス領収書</p>
         <h1 class="doc-title">領収書</h1>
         <div style="margin-top:22px;padding-top:16px;border-top:1px solid #d1d5db">
-          <p style="margin:0 0 6px;font-size:10px;letter-spacing:0.16em;color:#9ca3af;text-transform:uppercase;font-weight:700">Received From</p>
-          <p style="margin:0;font-size:21px;line-height:1.35;font-weight:600;color:#111827">${escapeHtml(params.recipientName)} 御中</p>
-          <p style="margin:8px 0 0;color:#4b5563">下記金額を NovaLoop 利用ライセンス代として正に領収いたしました。</p>
+          <p style="margin:0 0 6px;font-size:10px;letter-spacing:0.16em;color:#9ca3af;font-weight:700">宛先</p>
+          <p style="margin:0;font-size:21px;line-height:1.35;font-weight:600;color:#111827">${escapeHtml(recipientLine)} 御中</p>
+          <p style="margin:8px 0 0;color:#4b5563">下記金額を ${escapeHtml(serviceTitle)}代として正に領収いたしました。</p>
         </div>
       </div>
       <div class="meta-card">
         <div class="meta-grid">
           <div>
-            <p class="meta-label">Receipt No.</p>
+            <p class="meta-label">領収書番号</p>
             <p class="meta-value">${escapeHtml(params.receiptNumber)}</p>
           </div>
           <div>
-            <p class="meta-label">Invoice No.</p>
+            <p class="meta-label">請求書番号</p>
             <p class="meta-value">${escapeHtml(params.invoiceNumber)}</p>
           </div>
           <div>
-            <p class="meta-label">Issue Date</p>
+            <p class="meta-label">発行日</p>
             <p class="meta-value">${escapeHtml(formatJapaneseDate(params.issueDate))}</p>
           </div>
           <div>
-            <p class="meta-label">Paid At</p>
+            <p class="meta-label">入金日</p>
             <p class="meta-value">${escapeHtml(formatJapaneseDate(params.paidAt))}</p>
           </div>
         </div>
@@ -551,18 +596,18 @@ export function renderPlatformReceiptHtml(params: {
 
     <section class="hero">
       <div>
-        <p class="hero-label">Amount Received</p>
-        <p class="hero-title">NovaLoop 利用ライセンス代</p>
+        <p class="hero-label">受領金額</p>
+        <p class="hero-title">${escapeHtml(serviceTitle)}代</p>
         <p class="hero-subtitle">銀行振込にて受領</p>
       </div>
       <div class="hero-amount">
         <p class="hero-amount-value">${escapeHtml(formatJpy(params.amountJpy))}</p>
-        <p class="hero-amount-note">消費税: 免税</p>
+        <p class="hero-amount-note">${taxMode === "registered_taxable" ? "税区分: 適格請求書対応" : "税区分: 免税"}</p>
       </div>
     </section>
 
     <section>
-      <h2 class="section-title">Details</h2>
+      <h2 class="section-title">受領内容</h2>
       <table class="table">
         <thead>
           <tr>
@@ -573,10 +618,15 @@ export function renderPlatformReceiptHtml(params: {
         </thead>
         <tbody>
           <tr>
-            <td style="font-weight:700">NovaLoop 利用ライセンス</td>
+            <td style="font-weight:700">${escapeHtml(serviceTitle)}</td>
             <td>
-              新規組織作成ライセンス購入
+              ${escapeHtml(serviceDescription)}
               <div style="margin-top:3px;color:#64748b;font-size:12px">請求書番号: ${escapeHtml(params.invoiceNumber)}</div>
+              ${
+                params.paymentReference?.trim()
+                  ? `<div style="margin-top:3px;color:#64748b;font-size:12px">決済ID: ${escapeHtml(params.paymentReference.trim())}</div>`
+                  : ""
+              }
               ${
                 params.payerNote?.trim()
                   ? `<div style="margin-top:3px;color:#64748b;font-size:12px">振込名義: ${escapeHtml(params.payerNote.trim())}</div>`
@@ -594,8 +644,20 @@ export function renderPlatformReceiptHtml(params: {
         <div class="panel">
           <h3 class="panel-title">受領内容</h3>
           <div class="kv"><div class="kv-label">受領金額</div><div class="kv-value">${escapeHtml(formatJpy(params.amountJpy))}</div></div>
+          <div class="kv"><div class="kv-label">小計</div><div class="kv-value">${escapeHtml(formatJpy(subtotalAmount))}</div></div>
+          <div class="kv"><div class="kv-label">消費税</div><div class="kv-value">${taxMode === "registered_taxable" ? escapeHtml(formatJpy(taxAmount)) : "免税"}</div></div>
           <div class="kv"><div class="kv-label">受領日</div><div class="kv-value">${escapeHtml(formatJapaneseDate(params.paidAt))}</div></div>
           <div class="kv"><div class="kv-label">決済方法</div><div class="kv-value">銀行振込</div></div>
+          ${
+            params.billingEmail?.trim()
+              ? `<div class="kv"><div class="kv-label">請求先メール</div><div class="kv-value">${escapeHtml(params.billingEmail.trim())}</div></div>`
+              : ""
+          }
+          ${
+            params.billingAddress?.trim()
+              ? `<div class="kv"><div class="kv-label">請求先住所</div><div class="kv-value">${escapeHtml(params.billingAddress.trim())}</div></div>`
+              : ""
+          }
           ${
             params.payerNote?.trim()
               ? `<div class="kv"><div class="kv-label">振込名義</div><div class="kv-value">${escapeHtml(params.payerNote.trim())}</div></div>`
@@ -610,12 +672,44 @@ export function renderPlatformReceiptHtml(params: {
           <div class="kv"><div class="kv-label">会社名</div><div class="kv-value">${escapeHtml(params.settings.seller_name)}</div></div>
           <div class="kv"><div class="kv-label">所在地</div><div class="kv-value">${escapeHtml(params.settings.seller_address)}</div></div>
           <div class="kv"><div class="kv-label">連絡先</div><div class="kv-value">${escapeHtml(params.settings.seller_phone)} / ${escapeHtml(params.settings.seller_email)}</div></div>
-          <div class="kv"><div class="kv-label">登録番号</div><div class="kv-value">${escapeHtml(params.settings.invoice_registration_number ?? "なし")}</div></div>
+          <div class="kv"><div class="kv-label">登録番号</div><div class="kv-value">${escapeHtml(qualifiedRegistrationNumber ?? "なし")}</div></div>
+          ${
+            qualifiedEnabled
+              ? `<div style="margin-top:10px;padding:10px 12px;border-radius:12px;background:#f8fafc;border:1px solid #dbe2ea;color:#334155;font-size:12px">
+                  適格請求書発行事業者設定が有効です。登録番号を記載しています。
+                </div>`
+              : `<div style="margin-top:10px;padding:10px 12px;border-radius:12px;background:#f8fafc;border:1px solid #dbe2ea;color:#475569;font-size:12px">
+                  適格請求書発行事業者ではありません。
+                </div>`
+          }
         </div>
 
         <div class="panel soft">
           <h3 class="panel-title">摘要</h3>
-          <p class="panel-copy">NovaLoop 利用ライセンス代として領収しました。本書は経費証憑としてご利用ください。</p>
+          <p class="panel-copy">${escapeHtml(serviceTitle)}代として領収しました。本書は経費証憑としてご利用ください。</p>
+          ${
+            taxMode === "registered_taxable" && taxBreakdown.length > 0
+              ? `<div style="margin-top:10px;display:grid;gap:6px">
+                  ${taxBreakdown
+                    .map((row) => {
+                      const label = typeof row.label === "string" && row.label.trim()
+                        ? row.label.trim()
+                        : typeof row.tax_rate === "number"
+                          ? `${Math.round(row.tax_rate * 100)}%`
+                          : "-"
+                      return `<div style="display:flex;justify-content:space-between;gap:12px;color:#475569;font-size:12px">
+                        <span>${escapeHtml(label)} 対象額</span>
+                        <span>${escapeHtml(formatJpy(Number(row.taxable_amount ?? 0)))}</span>
+                      </div>
+                      <div style="display:flex;justify-content:space-between;gap:12px;color:#475569;font-size:12px">
+                        <span>${escapeHtml(label)} 消費税</span>
+                        <span>${escapeHtml(formatJpy(Number(row.tax_amount ?? 0)))}</span>
+                      </div>`
+                    })
+                    .join("")}
+                </div>`
+              : ""
+          }
         </div>
       </div>
     </section>

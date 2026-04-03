@@ -21,7 +21,6 @@ export async function GET(req: NextRequest) {
   const rows = await Promise.all(
     (data ?? []).map(async (row: Record<string, unknown>) => ({
       ...row,
-      invoice_signed_url: await createPlatformDocumentSignedUrl(typeof row.invoice_pdf_path === "string" ? row.invoice_pdf_path : null),
       receipt_signed_url: await createPlatformDocumentSignedUrl(typeof row.receipt_pdf_path === "string" ? row.receipt_pdf_path : null),
     }))
   )

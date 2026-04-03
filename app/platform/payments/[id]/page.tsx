@@ -14,14 +14,12 @@ type PaymentDetail = {
   status: string
   amount_jpy: number
   transfer_reference: string
-  invoice_document_status?: string | null
   receipt_document_status?: string | null
   client_notified_at?: string | null
   client_paid_at_claimed?: string | null
   client_paid_amount_claimed?: number | null
   client_transfer_name?: string | null
   client_notify_note?: string | null
-  invoice_signed_url?: string | null
   receipt_signed_url?: string | null
   purchase?: {
     full_name: string | null
@@ -174,12 +172,10 @@ export default function PlatformPaymentDetailPage({ params }: { params: Promise<
             <section style={sectionStyle}>
               <h2 style={sectionTitleStyle}>ドキュメントと処理</h2>
               <div style={infoGridStyle}>
-                <InfoRow label="請求書PDF" value={detail.invoice_document_status ?? "-"} />
                 <InfoRow label="領収書番号" value={detail.receipt_number ?? "-"} />
                 <InfoRow label="領収書PDF" value={detail.receipt_document_status ?? "-"} />
               </div>
               <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                {detail.invoice_signed_url ? <a href={detail.invoice_signed_url} target="_blank" rel="noreferrer" style={linkStyle}>請求書PDFを表示</a> : null}
                 {detail.receipt_signed_url ? <a href={detail.receipt_signed_url} target="_blank" rel="noreferrer" style={linkStyle}>領収書PDFを表示</a> : null}
                 <button
                   type="button"

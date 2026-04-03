@@ -72,9 +72,9 @@ export async function uploadPlatformInvoicePdf(requestNumber: string, html: stri
   return storagePath
 }
 
-export async function uploadPlatformReceiptPdf(requestNumber: string, html: string) {
+export async function uploadPlatformReceiptPdf(receiptNumber: string, issuedAt: string, html: string) {
   const admin = createSupabaseAdmin()
-  const storagePath = buildPlatformReceiptPath(requestNumber)
+  const storagePath = buildPlatformReceiptPath(receiptNumber, issuedAt.slice(0, 7))
   const pdf = await renderPdfBuffer(html)
   const { error } = await admin.storage
     .from(PLATFORM_DOCUMENT_BUCKET)

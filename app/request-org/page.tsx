@@ -1,10 +1,16 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import OnboardingShell from "@/components/OnboardingShell"
-import { supabase } from "@/lib/supabase"
+import { useAuthOrg } from "@/hooks/useAuthOrg"
 import { licenseAccessState } from "@/lib/platform"
+import {
+  PLATFORM_THANKS_PATH,
+  POST_PURCHASE_ONBOARDING_PATH,
+  resolvePlatformEntryPath,
+} from "@/lib/platformFlow"
+import { supabase } from "@/lib/supabase"
 
 type LicensePayload = {
   entitlement: { status: string; grant_type?: string | null; activated_at?: string | null } | null
@@ -15,8 +21,18 @@ type LicensePayload = {
   }>
 }
 
+function resolveBackHref(source: string | null) {
+  if (source === "post-purchase") return POST_PURCHASE_ONBOARDING_PATH
+  if (source === "thanks") return PLATFORM_THANKS_PATH
+  if (source === "onboarding") return "/onboarding"
+  return "/?showLp=1"
+}
+
 export default function RequestOrgPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const flowSource = searchParams.get("from")
+  const { user, memberships, loading: authLoading } = useAuthOrg()
   const [orgName, setOrgName] = useState("")
   const [displayName, setDisplayName] = useState("")
   const [license, setLicense] = useState<LicensePayload | null>(null)
@@ -24,23 +40,30 @@ export default function RequestOrgPage() {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const backHref = useMemo(() => resolveBackHref(flowSource), [flowSource])
+
   const load = useCallback(async () => {
     setLoading(true)
-    const [{ data }, { data: authUser }] = await Promise.all([supabase.auth.getSession(), supabase.auth.getUser()])
-    const token = data.session?.access_token
-    if (!token) {
+
+    const [{ data: sessionData }, { data: authUser }] = await Promise.all([
+      supabase.auth.getSession(),
+      supabase.auth.getUser(),
+    ])
+    const token = sessionData.session?.access_token
+
+    if (!token || !authUser.user) {
       router.replace("/")
       return
     }
 
     const [licenseRes, profileRes] = await Promise.all([
       fetch("/api/platform/my-license", { headers: { Authorization: `Bearer ${token}` } }),
-      supabase.from("user_profiles").select("display_name").eq("user_id", authUser.user?.id ?? "").maybeSingle(),
+      supabase.from("user_profiles").select("display_name").eq("user_id", authUser.user.id).maybeSingle(),
     ])
 
     const licenseJson = await licenseRes.json().catch(() => null)
     if (!licenseRes.ok || !licenseJson?.ok) {
-      setError(licenseJson?.error ?? "ライセンス状態を取得できませんでした。")
+      setError(licenseJson?.error ?? "ライセンス状態を確認できませんでした。")
       setLoading(false)
       return
     }
@@ -53,11 +76,23 @@ export default function RequestOrgPage() {
     setLoading(false)
   }, [router])
 
-  /* eslint-disable */
   useEffect(() => {
+    if (authLoading) return
+
+    if (!user) {
+      router.replace("/")
+      return
+    }
+
+    if (flowSource && memberships.length > 0) {
+      router.replace(resolvePlatformEntryPath(memberships.length))
+    }
+  }, [authLoading, flowSource, memberships.length, router, user])
+
+  useEffect(() => {
+    if (authLoading) return
     void load()
-  }, [load])
-  /* eslint-enable */
+  }, [authLoading, load])
 
   const accessState = useMemo(
     () => licenseAccessState((license?.entitlement?.status as "active" | "pending_payment" | null) ?? null),
@@ -95,7 +130,7 @@ export default function RequestOrgPage() {
     window.location.assign("/home")
   }, [displayName, orgName, router])
 
-  if (loading) {
+  if (authLoading || loading) {
     return <div style={{ padding: 32, color: "var(--muted)" }}>読み込み中...</div>
   }
 
@@ -103,20 +138,26 @@ export default function RequestOrgPage() {
     return (
       <OnboardingShell
         stepCurrent={1}
-        stepTotal={1}
-        title="非効率を、ここで終わらせる"
-        description={<>一度のご購入で、組織をいくつでも・いつでも<br />作成できるようになります。月額費用はかかりません。</>}
-        onBack={() => router.push("/onboarding")}
-        onClose={() => router.replace("/")}
+        stepTotal={3}
+        title="導入フローをここから始めます"
+        description={
+          <>
+            まずはライセンス購入を完了させます。
+            <br />
+            購入申請のあと、入金確認が完了すると初回セットアップへそのまま進めます。
+          </>
+        }
+        onBack={() => router.push(backHref)}
+        onClose={() => router.replace("/?showLp=1")}
         ctaLabel="ライセンス購入へ進む"
-        onCtaClick={() => router.push("/purchase-license")}
-        footerText="価格は 300,000円（税込）です。入金確認後に組織作成権が有効化されます。"
+        onCtaClick={() => router.push(`/purchase-license?from=${encodeURIComponent(flowSource ?? "request-org")}`)}
+        footerText="このあと 購入申請 -> 入金確認 -> 初回セットアップ の順で進みます。"
       >
         <div className="onboarding-confirm-card">
-          <div className="onboarding-confirm-label">料金</div>
-          <div className="onboarding-confirm-value">300,000円（税込）</div>
+          <div className="onboarding-confirm-label">購入内容</div>
+          <div className="onboarding-confirm-value">NovaLoop Platform License</div>
           <p className="onboarding-confirm-note">
-            一度購入すると、そのGoogleアカウントで無期限・無制限に新しい組織を作成できます。
+            購入後は振込先と確認状況を 1 画面で確認できます。入金確認が完了したら、初回セットアップへ進みます。
           </p>
         </div>
       </OnboardingShell>
@@ -125,41 +166,54 @@ export default function RequestOrgPage() {
 
   if (accessState === "pending_payment") {
     const pending = license?.paymentRequests[0]
+
     return (
       <OnboardingShell
-        stepCurrent={1}
-        stepTotal={1}
-        title="入金確認待ちです"
-        description="請求書を発行済みです。入金確認後に組織作成権が有効化されます。"
-        onBack={() => router.push("/onboarding")}
-        onClose={() => router.replace("/")}
-        ctaLabel="振込案内を確認する"
+        stepCurrent={2}
+        stepTotal={3}
+        title="入金確認をお待ちください"
+        description={
+          <>
+            購入申請は完了しています。
+            <br />
+            振込情報の確認と入金連絡は次の画面でまとめて行えます。確認が完了するとサンクスページへ進みます。
+          </>
+        }
+        onBack={() => router.push(backHref)}
+        onClose={() => router.replace("/?showLp=1")}
+        ctaLabel="支払い状況を確認する"
         onCtaClick={() => router.push("/pending-payment")}
       >
         <div className="onboarding-confirm-card">
-          <div className="onboarding-confirm-label">現在の申請</div>
+          <div className="onboarding-confirm-label">現在の購入申請</div>
           <div className="onboarding-confirm-value">{pending?.request_number ?? "pending"}</div>
           <p className="onboarding-confirm-note">
-            請求書PDF、振込先、振込識別子は pending-payment 画面で確認できます。
+            振込先、振込識別子、入金連絡、確認状況は pending-payment 画面でまとめて確認できます。
           </p>
         </div>
       </OnboardingShell>
     )
   }
 
+  const isPostPurchaseFlow = flowSource === "post-purchase"
+
   return (
     <OnboardingShell
       stepCurrent={1}
       stepTotal={1}
-      title="新しい組織を作成"
-      description="支払済みのご本人だけが、新しい組織の初回オーナーになります。オーナーの追加はできません。"
-      onBack={() => router.push("/onboarding")}
-      onClose={() => router.replace("/")}
-      ctaLabel="組織を作成する"
+      title={isPostPurchaseFlow ? "初回セットアップを始めましょう" : "新しい組織を作成"}
+      description={
+        isPostPurchaseFlow
+          ? "購入は完了しています。最初に組織を作成すると、そのままホームから利用を始められます。"
+          : "利用を始める組織名を決めてください。作成後はそのままホームへ進みます。"
+      }
+      onBack={() => router.push(backHref)}
+      onClose={() => router.replace(isPostPurchaseFlow ? PLATFORM_THANKS_PATH : "/?showLp=1")}
+      ctaLabel="組織を作成して利用を開始"
       ctaDisabled={submitting || !orgName.trim()}
       ctaLoading={submitting}
       onCtaClick={() => void handleCreate()}
-      footerText={`現在のライセンス: ${license?.entitlement?.grant_type ?? "paid"} / ${license?.entitlement?.status ?? "active"}`}
+      footerText={`現在のライセンス状態: ${license?.entitlement?.grant_type ?? "paid"} / ${license?.entitlement?.status ?? "active"}`}
     >
       {error ? <div role="alert" className="onboarding-alert">{error}</div> : null}
       <div className="onboarding-form-stack">
@@ -174,7 +228,7 @@ export default function RequestOrgPage() {
           className="onboarding-input"
           value={displayName}
           onChange={(event) => setDisplayName(event.target.value)}
-          placeholder="オーナー表示名"
+          placeholder="ホームに表示する名前"
           maxLength={40}
         />
       </div>

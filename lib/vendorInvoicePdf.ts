@@ -3,6 +3,7 @@ import chromium from "@sparticuz/chromium"
 import fs from "fs"
 import { createSupabaseAdmin } from "@/lib/supabaseAdmin"
 import { renderVendorInvoiceHtml } from "@/lib/pdf/renderVendorInvoiceHtml"
+import { writeAuditLog } from "@/lib/auditLog"
 
 const BUCKET = "invoices"
 const SIGNED_URL_EXPIRES = 60 * 10
@@ -47,9 +48,9 @@ function safeFileName(s: string): string {
     .slice(0, 100) || "vendor-invoice"
 }
 
-export async function generateVendorInvoicePdf(params: { orgId: string; invoiceId: string }) {
+export async function generateVendorInvoicePdf(params: { orgId: string; invoiceId: string; actorUserId?: string | null }) {
   const admin = createSupabaseAdmin()
-  const { orgId, invoiceId } = params
+  const { orgId, invoiceId, actorUserId } = params
 
   const { data: invoice, error: invoiceError } = await admin
     .from("vendor_invoices")
@@ -117,6 +118,19 @@ export async function generateVendorInvoicePdf(params: { orgId: string; invoiceI
     if (updateError) throw new Error("Failed to save pdf_path")
 
     const { data: signed } = await admin.storage.from(BUCKET).createSignedUrl(storagePath, SIGNED_URL_EXPIRES)
+
+    if (actorUserId) {
+      await writeAuditLog(admin, {
+        org_id: orgId,
+        user_id: actorUserId,
+        action: "vendor_invoice.pdf_generate",
+        resource_type: "vendor_invoice",
+        resource_id: invoiceId,
+        meta: {
+          pdf_path: storagePath,
+        },
+      })
+    }
 
     return {
       pdfPath: storagePath,
