@@ -52,6 +52,7 @@ type Invoice = {
   guest_company_name: string | null
   guest_client_email: string | null
   guest_client_address: string | null
+  pdf_path: string | null
   issuer_snapshot: Record<string, unknown> | null
   bank_snapshot: Record<string, unknown> | null
   // 入金フィールド（068_receipts.sql で追加）
@@ -277,6 +278,12 @@ const PAYMENT_STATUS_LABEL: Record<string, { label: string; color: string; bg: s
   overpaid: { label: "過入金",   color: "#7c3aed", bg: "#ede9fe" },
 }
 
+const INVOICE_STATUS_META: Record<string, { label: string; color: string; bg: string }> = {
+  draft: { label: "下書き", color: "#475569", bg: "#f8fafc" },
+  issued: { label: "発行済み", color: "#166534", bg: "#dcfce7" },
+  void: { label: "無効", color: "#b91c1c", bg: "#fee2e2" },
+}
+
 export default function InvoiceDetailPage() {
   const params = useParams()
   const id = typeof params.id === "string" ? params.id : null
@@ -287,6 +294,7 @@ export default function InvoiceDetailPage() {
   const [error, setError] = useState<string | null>(null)
   const [invoice, setInvoice] = useState<Invoice | null>(null)
   const [pdfLoading, setPdfLoading] = useState(false)
+  const [issuing, setIssuing] = useState(false)
   const [notesDraft, setNotesDraft] = useState("")
   const [sendDraft, setSendDraft] = useState("")
   const [showRecordPayment, setShowRecordPayment] = useState(false)
@@ -304,7 +312,7 @@ export default function InvoiceDetailPage() {
       const { data, error: fetchError } = await supabase
         .from("invoices")
         .select(
-          "id, org_id, client_id, invoice_month, invoice_title, invoice_no, issue_date, due_date, status, subtotal, total, tax_mode, tax_amount, withholding_enabled, withholding_amount, notes, source_type, guest_client_name, guest_company_name, guest_client_email, guest_client_address, issuer_snapshot, bank_snapshot, payment_status, paid_at, paid_amount, payment_method, payment_memo, payment_note, latest_receipt_id, public_token, client_notified_at, client_paid_at_claimed, client_paid_amount_claimed, client_transfer_name, client_notify_note, clients(name), invoice_lines(id, quantity, unit_price, amount, description, content_id, project_name, title)"
+          "id, org_id, client_id, invoice_month, invoice_title, invoice_no, issue_date, due_date, status, subtotal, total, tax_mode, tax_amount, withholding_enabled, withholding_amount, notes, source_type, guest_client_name, guest_company_name, guest_client_email, guest_client_address, pdf_path, issuer_snapshot, bank_snapshot, payment_status, paid_at, paid_amount, payment_method, payment_memo, payment_note, latest_receipt_id, public_token, client_notified_at, client_paid_at_claimed, client_paid_amount_claimed, client_transfer_name, client_notify_note, clients(name), invoice_lines(id, quantity, unit_price, amount, description, content_id, project_name, title)"
         )
         .eq("id", id)
         .eq("org_id", orgId)
@@ -345,6 +353,7 @@ export default function InvoiceDetailPage() {
   }, [])
 
   const fileName = useMemo(() => (invoice ? defaultFileName(invoice) : ""), [invoice])
+  const invoiceStatusMeta = invoice ? INVOICE_STATUS_META[invoice.status] ?? { label: invoice.status, color: "#475569", bg: "#f8fafc" } : null
 
   const openPdf = async () => {
     if (!id) return
@@ -355,6 +364,20 @@ export default function InvoiceDetailPage() {
     }
     setPdfLoading(true)
     try {
+      const existingRes = await fetch(`/api/invoices/${id}/pdf`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const existingJson = (await existingRes.json().catch(() => null)) as { signed_url?: string } | null
+      if (existingRes.ok && existingJson?.signed_url) {
+        window.open(existingJson.signed_url, "_blank", "noopener,noreferrer")
+        return
+      }
+
+      if (invoice?.status !== "issued") {
+        setError(invoice?.status === "draft" ? "PDF は発行確定後に生成できます。" : "この請求書では PDF を生成できません。")
+        return
+      }
+
       const res = await fetch(`/api/invoices/${id}/pdf`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
@@ -367,6 +390,31 @@ export default function InvoiceDetailPage() {
       }
     } finally {
       setPdfLoading(false)
+    }
+  }
+
+  const issueInvoice = async () => {
+    if (!id) return
+    const token = await getAccessToken()
+    if (!token) {
+      setError("ログイン状態を確認してください。")
+      return
+    }
+    setIssuing(true)
+    setError(null)
+    try {
+      const res = await fetch(`/api/invoices/${id}/issue`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const json = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null
+      if (!res.ok || !json?.ok) {
+        setError(json?.error ?? "請求書の発行に失敗しました。")
+        return
+      }
+      await reloadInvoice()
+    } finally {
+      setIssuing(false)
     }
   }
 
@@ -412,7 +460,7 @@ export default function InvoiceDetailPage() {
     if (!id || !orgId) return
     const { data } = await supabase
       .from("invoices")
-      .select("id, org_id, client_id, invoice_month, invoice_title, invoice_no, issue_date, due_date, status, subtotal, total, tax_mode, tax_amount, withholding_enabled, withholding_amount, notes, source_type, guest_client_name, guest_company_name, guest_client_email, guest_client_address, issuer_snapshot, bank_snapshot, payment_status, paid_at, paid_amount, payment_method, payment_memo, payment_note, latest_receipt_id, public_token, client_notified_at, client_paid_at_claimed, client_paid_amount_claimed, client_transfer_name, client_notify_note, clients(name), invoice_lines(id, quantity, unit_price, amount, description, content_id, project_name, title)")
+      .select("id, org_id, client_id, invoice_month, invoice_title, invoice_no, issue_date, due_date, status, subtotal, total, tax_mode, tax_amount, withholding_enabled, withholding_amount, notes, source_type, guest_client_name, guest_company_name, guest_client_email, guest_client_address, pdf_path, issuer_snapshot, bank_snapshot, payment_status, paid_at, paid_amount, payment_method, payment_memo, payment_note, latest_receipt_id, public_token, client_notified_at, client_paid_at_claimed, client_paid_amount_claimed, client_transfer_name, client_notify_note, clients(name), invoice_lines(id, quantity, unit_price, amount, description, content_id, project_name, title)")
       .eq("id", id).eq("org_id", orgId).maybeSingle()
     if (data) setInvoice(data as unknown as Invoice)
   }
@@ -489,9 +537,21 @@ export default function InvoiceDetailPage() {
             <div style={{ marginTop: 6, fontSize: 13, color: "var(--muted)" }}>
               {describeInvoiceSourceType(invoice.source_type)}
             </div>
+            {invoiceStatusMeta ? (
+              <div style={{ marginTop: 8 }}>
+                <span style={{ display: "inline-flex", alignItems: "center", padding: "4px 10px", borderRadius: 999, fontSize: 12, fontWeight: 700, color: invoiceStatusMeta.color, background: invoiceStatusMeta.bg }}>
+                  {invoiceStatusMeta.label}
+                </span>
+              </div>
+            ) : null}
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button type="button" onClick={openPdf} disabled={pdfLoading} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", cursor: "pointer" }}>
+            {invoice.status === "draft" ? (
+              <button type="button" onClick={() => void issueInvoice()} disabled={issuing} style={{ padding: "8px 12px", borderRadius: 8, border: "none", background: "var(--primary)", color: "#fff", cursor: issuing ? "not-allowed" : "pointer", fontWeight: 700 }}>
+                {issuing ? "発行中..." : "発行を確定"}
+              </button>
+            ) : null}
+            <button type="button" onClick={openPdf} disabled={pdfLoading || (!invoice.pdf_path && invoice.status !== "issued")} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", cursor: pdfLoading || (!invoice.pdf_path && invoice.status !== "issued") ? "not-allowed" : "pointer" }}>
               {pdfLoading ? "PDF準備中..." : "PDFを開く"}
             </button>
             <Link href={`/invoices?month=${encodeURIComponent(invoice.invoice_month)}`} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", textDecoration: "none" }}>
@@ -621,6 +681,8 @@ export default function InvoiceDetailPage() {
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10, marginBottom: 16 }}>
+          {!invoice.invoice_no ? <div><strong>採番状態:</strong> 未採番（下書き）</div> : null}
+          <div><strong>表示ステータス:</strong> {invoiceStatusMeta?.label ?? invoice.status}</div>
           <div><strong>請求先:</strong> {counterparty}</div>
           <div><strong>請求番号:</strong> {invoice.invoice_no || "-"}</div>
           <div><strong>対象月:</strong> {invoice.invoice_month}</div>
@@ -690,8 +752,8 @@ export default function InvoiceDetailPage() {
                   <td style={{ padding: 10, fontSize: 13 }}>{formatCurrency(line.amount)}</td>
                   <td style={{ padding: 10, fontSize: 13 }}>
                     {line.content_id ? (
-                      <Link href={`/contents?highlight=${encodeURIComponent(line.content_id)}`} style={{ color: "var(--primary)", fontWeight: 600 }}>
-                        /contents で確認
+                      <Link href={`/projects?highlight=${encodeURIComponent(line.content_id)}`} style={{ color: "var(--primary)", fontWeight: 600 }}>
+                        案件明細で確認
                       </Link>
                     ) : (
                       "-"

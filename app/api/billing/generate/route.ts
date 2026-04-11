@@ -24,10 +24,6 @@ type GenerateBody = {
   due_date?: string
 }
 
-function buildInvoiceNo(issueDate: string, seq: number) {
-  return `INV-${issueDate.slice(0, 4)}-${String(seq).padStart(7, "0")}`
-}
-
 export async function POST(req: NextRequest) {
   try {
     const userId = await getUserIdFromToken(req)
@@ -36,9 +32,10 @@ export async function POST(req: NextRequest) {
     }
 
     const body = (await req.json().catch(() => ({}))) as GenerateBody
+    const requestedMonth = body.billing_month ?? (body as { targetMonth?: string; target_month?: string }).targetMonth ?? (body as { target_month?: string }).target_month
     const billingMonth =
-      typeof body.billing_month === "string" && /^\d{4}-\d{2}$/.test(body.billing_month)
-        ? body.billing_month
+      typeof requestedMonth === "string" && /^\d{4}-\d{2}$/.test(requestedMonth)
+        ? requestedMonth
         : null
     if (!billingMonth) {
       return NextResponse.json({ ok: false, message: "billing_month は YYYY-MM 形式で指定してください。" }, { status: 400 })
@@ -93,7 +90,6 @@ export async function POST(req: NextRequest) {
       .select("*")
       .eq("org_id", orgId)
       .maybeSingle()
-    const initialSeq = Number((settings as { invoice_seq?: number } | null)?.invoice_seq ?? 1)
 
     const { data: defaultBank } = await admin
       .from("org_bank_accounts")
@@ -120,12 +116,12 @@ export async function POST(req: NextRequest) {
       client_id: string
       client_name: string
       invoice_id: string
-      invoice_no: string
+      invoice_no: string | null
+      status: "draft"
       content_count: number
     }> = []
     const skipped: Array<{ client_id: string; client_name: string; reason: string }> = []
     const monthlyInvoiceSourceType = normalizeInvoiceSourceTypeForWrite("billing_monthly")
-    let seq = initialSeq
 
     for (const client of targetClients) {
       if (client.target_count === 0) {
@@ -176,7 +172,6 @@ export async function POST(req: NextRequest) {
       }
 
       const invoiceId = crypto.randomUUID()
-      const invoiceNo = buildInvoiceNo(issueDate, seq)
       const subtotal = rows.reduce((sum, row) => sum + Number(row.amount), 0)
       const now = new Date().toISOString()
 
@@ -185,8 +180,8 @@ export async function POST(req: NextRequest) {
         org_id: orgId,
         client_id: client.client_id,
         invoice_month: billingMonth,
-        status: "issued",
-        invoice_no: invoiceNo,
+        status: "draft",
+        invoice_no: null,
         invoice_title: buildInvoiceTitle(billingMonth),
         issue_date: issueDate,
         due_date: dueDate,
@@ -202,7 +197,6 @@ export async function POST(req: NextRequest) {
         bank_snapshot: defaultBank ?? {},
         created_at: now,
         updated_at: now,
-        issued_at: now,
       })
       if (invoiceError) {
         skipped.push({
@@ -272,17 +266,13 @@ export async function POST(req: NextRequest) {
         client_id: client.client_id,
         client_name: client.client_name,
         invoice_id: invoiceId,
-        invoice_no: invoiceNo,
+        invoice_no: null,
+        status: "draft",
         content_count: rows.length,
       })
-      seq += 1
     }
 
     if (generated.length > 0) {
-      await admin
-        .from("org_settings")
-        .upsert({ org_id: orgId, invoice_seq: seq }, { onConflict: "org_id" })
-
       await writeAuditLog(admin, {
         org_id: orgId,
         user_id: userId,

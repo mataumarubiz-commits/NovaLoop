@@ -87,7 +87,10 @@ export default function ThanksPage() {
 
   useEffect(() => {
     if (authLoading) return
-    void load()
+    const timer = setTimeout(() => {
+      void load()
+    }, 0)
+    return () => clearTimeout(timer)
   }, [authLoading, load])
 
   const latestPayment = license?.paymentRequests?.[0] ?? null

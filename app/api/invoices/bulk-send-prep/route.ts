@@ -8,6 +8,7 @@ export const dynamic = "force-dynamic"
 type InvoiceRow = {
   id: string
   client_id: string | null
+  status: string
   invoice_title: string | null
   guest_client_name: string | null
   guest_company_name: string | null
@@ -41,7 +42,7 @@ export async function POST(req: NextRequest) {
     const { admin, userId } = auth
     const { data: rows, error: fetchError } = await admin
       .from("invoices")
-      .select("id, client_id, invoice_title, guest_client_name, guest_company_name, guest_client_email, guest_client_address")
+      .select("id, status, client_id, invoice_title, guest_client_name, guest_company_name, guest_client_email, guest_client_address")
       .eq("org_id", auth.orgId)
       .in("id", invoiceIds)
 
@@ -50,6 +51,13 @@ export async function POST(req: NextRequest) {
     }
 
     const invoices = (rows ?? []) as InvoiceRow[]
+    const invalidInvoices = invoices.filter((invoice) => invoice.status !== "issued")
+    if (invalidInvoices.length > 0) {
+      return NextResponse.json(
+        { ok: false, error: "送付準備は発行済みの請求書だけに実行できます。" },
+        { status: 422 }
+      )
+    }
     const clientIds = Array.from(new Set(invoices.map((invoice) => invoice.client_id).filter(Boolean))) as string[]
     const { data: clientRows, error: clientError } = clientIds.length
       ? await admin

@@ -249,7 +249,7 @@ export function buildBlankTemplateContent(title: string, pageType: TemplatePageT
     return doc(
       heading(1, title),
       paragraph("空欄版です。関連画面や外部リンクをこのページに集約してください。"),
-      paragraph(linkText("タスク管理へ", "/contents")),
+      paragraph(linkText("案件を開く", "/projects")),
       paragraph("運用に必要な本体画面や資料リンクを追加します。")
     )
   }
@@ -280,7 +280,7 @@ export const OFFICIAL_TEMPLATE_CATALOG: OfficialTemplateCatalogSeed[] = [
     previewImagePath: null,
     version: "2.0.0",
     status: "active",
-    integrationTargets: ["/contents", "/notifications", "/settings/members", "/billing", "/vendors", "/payouts"],
+    integrationTargets: ["/projects", "/notifications", "/settings/members", "/billing", "/vendors", "/payouts"],
     recommendedTemplateKeys: ["team_resource_os", "quality_os", "client_ops_os"],
     pages: [
       {
@@ -293,8 +293,8 @@ export const OFFICIAL_TEMPLATE_CATALOG: OfficialTemplateCatalogSeed[] = [
         pageType: "doc",
         content: doc(
           heading(1, "{{install_name}}"),
-          paragraph("案件の登録から納品・月次定例まで、運用の型をひとつに統合した公式パックです。案件実体は ", linkText("/contents", "/contents"), " に集約し、このパックではルールと判断基準だけを整えます。"),
-          quote("正式な案件データのソースは常に /contents。Pages はルールと判断基準の OS。"),
+          paragraph("案件の登録から納品・月次定例まで、運用の型をひとつに統合した公式パックです。案件実体は ", linkText("案件画面", "/projects"), " に集約し、このパックではルールと判断基準だけを整えます。"),
+          quote("正式な案件データのソースは常に案件画面。Pages はルールと判断基準の OS。"),
           heading(2, "含まれるページ"),
           bullet([
             "01_全体フロー — 依頼から納品までの共通手順",
@@ -307,7 +307,7 @@ export const OFFICIAL_TEMPLATE_CATALOG: OfficialTemplateCatalogSeed[] = [
             "08_緊急対応ルール — 例外時の導線と対応手順",
           ]),
           heading(2, "本体画面との接続"),
-          paragraph(linkText("タスク管理を開く", "/contents")),
+          paragraph(linkText("案件管理を開く", "/projects")),
           paragraph(linkText("通知センターを開く", "/notifications")),
           paragraph(linkText("メンバー権限を確認する", "/settings/members")),
           paragraph(linkText("請求管理を開く", "/billing"))
@@ -323,12 +323,12 @@ export const OFFICIAL_TEMPLATE_CATALOG: OfficialTemplateCatalogSeed[] = [
         pageType: "doc",
         content: doc(
           heading(1, "全体フロー"),
-          paragraph("案件登録は /contents を正式ソースにして進めます。Pages 側ではフロー説明だけを持ちます。"),
-          ordered(["依頼情報を /contents に登録する", "担当編集者と確認者を割り当てる", "素材リンクと期限を確認する", "初稿確認と修正指示を回す", "納品完了後に請求対象へつなぐ"]),
+          paragraph("案件登録は案件画面を正式ソースにして進めます。Pages 側ではフロー説明だけを持ちます。"),
+          ordered(["依頼情報を案件画面に登録する", "担当編集者と確認者を割り当てる", "素材リンクと期限を確認する", "初稿確認と修正指示を回す", "納品完了後に請求対象へつなぐ"]),
           heading(2, "着手前に確認すること"),
           task(["タイトルと命名規則が合っている", "素材リンクが揃っている", "due_client_at と due_editor_at が妥当", "クライアント固有ルールを確認した"]),
           heading(2, "例外時の扱い"),
-          bullet(["納期変更は /contents の日付を先に更新する", "担当変更は /contents の担当列を先に更新する", "Pages には変更理由や運用メモだけを残す"])
+          bullet(["納期変更は案件画面の日付を先に更新する", "担当変更は案件画面の担当列を先に更新する", "Pages には変更理由や運用メモだけを残す"])
         ),
       },
       {
@@ -363,7 +363,7 @@ export const OFFICIAL_TEMPLATE_CATALOG: OfficialTemplateCatalogSeed[] = [
         pageType: "table_like",
         content: doc(
           heading(1, "ステータス運用ガイド"),
-          paragraph("status の実保存は /contents 側で行います。このページは意味づけと完了条件だけを定義します。"),
+          paragraph("status の実保存は案件画面側で行います。このページは意味づけと完了条件だけを定義します。"),
           codeBlock(
             "status | チーム内の意味 | 次に動く人 | 完了条件\n" +
               "draft | 着手前整理中 | ディレクター | 素材と依頼文が揃う\n" +
@@ -404,9 +404,9 @@ export const OFFICIAL_TEMPLATE_CATALOG: OfficialTemplateCatalogSeed[] = [
           bullet([
             "編集者は得意ジャンルと稼働余力で決める",
             "確認者はクライアント相性と返信速度で決める",
-            "割当後は /contents に更新し、このページには判断基準だけを残す",
+            "割当後は案件画面に更新し、このページには判断基準だけを残す",
           ]),
-          paragraph(linkText("タスク管理を開く", "/contents")),
+          paragraph(linkText("案件管理を開く", "/projects")),
           paragraph(linkText("メンバー権限を確認する", "/settings/members"))
         ),
       },
@@ -485,7 +485,7 @@ export const OFFICIAL_TEMPLATE_CATALOG: OfficialTemplateCatalogSeed[] = [
         orderIndex: 80,
         pageType: "link_hub",
         content: routeHub("緊急対応ルール", [
-          { label: "タスク管理へ", href: "/contents", note: "期限超過や担当変更が発生したら、まず /contents の期限と担当を更新します。" },
+          { label: "案件管理へ", href: "/projects", note: "期限超過や担当変更が発生したら、まず案件画面の期限と担当を更新します。" },
           { label: "通知センターへ", href: "/notifications", note: "優先対応の通知をまとめて確認します。" },
           { label: "メンバー設定へ", href: "/settings/members", note: "担当調整や権限確認が必要なときの正式導線です。" },
         ]),
@@ -507,7 +507,7 @@ export const OFFICIAL_TEMPLATE_CATALOG: OfficialTemplateCatalogSeed[] = [
     previewImagePath: null,
     version: "2.0.0",
     status: "active",
-    integrationTargets: ["/settings/members", "/contents", "/vendors", "/payouts", "/notifications"],
+    integrationTargets: ["/settings/members", "/projects", "/vendors", "/payouts", "/notifications"],
     recommendedTemplateKeys: ["project_ops_os", "quality_os", "client_ops_os"],
     pages: [
       {
@@ -568,7 +568,7 @@ export const OFFICIAL_TEMPLATE_CATALOG: OfficialTemplateCatalogSeed[] = [
         pageType: "table_like",
         content: doc(
           heading(1, "稼働条件表"),
-          paragraph("各メンバーの稼働枠と受入可否の一覧です。正式な案件割当は /contents で管理します。"),
+          paragraph("各メンバーの稼働枠と受入可否の一覧です。正式な案件割当は案件画面で管理します。"),
           codeBlock(
             "No | お名前 | 形態 | ステータス | 新規 | 週上限 | 稼働時間帯 | 休止・備考\n" +
               "1 | 元井 亮 | 専業 | 案件対応中 | 可 | 6 本 | 平日 10:00-19:00 | 月末は埋まりやすい\n" +
@@ -614,7 +614,7 @@ export const OFFICIAL_TEMPLATE_CATALOG: OfficialTemplateCatalogSeed[] = [
             "「空き枠」が多い人から優先的にアサインを検討する",
             "「新規: 可」のメンバーだけが新規案件を受けられる",
             "ステータスが「案件対応予定」の人はスケジュール列で開始日を確認する",
-            "正式な担当割当は /contents に反映し、この表では状況の把握だけを行う",
+            "正式な担当割当は案件画面に反映し、この表では状況の把握だけを行う",
           ]),
           heading(2, "2週間カレンダーの見方"),
           paragraph("右側の日付列には、その日にアサインされた案件数や予定を入れます。色分けの目安:"),
@@ -623,7 +623,7 @@ export const OFFICIAL_TEMPLATE_CATALOG: OfficialTemplateCatalogSeed[] = [
             "数字: その日の担当案件数",
             "休: 休暇・稼働不可",
           ]),
-          paragraph(linkText("進行管理を開く", "/contents")),
+          paragraph(linkText("案件管理を開く", "/projects")),
           paragraph(linkText("メンバー設定を開く", "/settings/members"))
         ),
       },
@@ -730,7 +730,7 @@ export const OFFICIAL_TEMPLATE_CATALOG: OfficialTemplateCatalogSeed[] = [
           ),
           heading(2, "優先順位ルール"),
           ordered(["納期遅延リスクが高い案件", "確認待ちで止まっている案件", "クライアント返信が必要な案件", "今月請求に乗る案件"]),
-          paragraph("優先順位を変えたら、理由は Pages に、実際の担当や期限変更は /contents に残します。")
+          paragraph("優先順位を変えたら、理由は Pages に、実際の担当や期限変更は案件画面に残します。")
         ),
       },
       {
@@ -746,7 +746,7 @@ export const OFFICIAL_TEMPLATE_CATALOG: OfficialTemplateCatalogSeed[] = [
           bullet([
             "納期が短い案件は、稼働量よりも修正往復の少なさを優先する",
             "クライアントごとの言葉遣い差分は Pages のクライアント運用OSを先に確認する",
-            "担当を決めたら /contents に反映し、このページには判断理由だけを残す",
+            "担当を決めたら案件画面に反映し、このページには判断理由だけを残す",
           ]),
           heading(2, "編集者ビュー設定"),
           bullet([
@@ -758,10 +758,10 @@ export const OFFICIAL_TEMPLATE_CATALOG: OfficialTemplateCatalogSeed[] = [
           bullet([
             "レビュー待ちと差し戻し対応を同時に見える順で並べる",
             "品質メモとクライアント注意点を1画面で見返せるようにする",
-            "通知確認と /contents の review 行だけを先に開ける導線を置く",
+            "通知確認と案件画面のレビュー対象だけを先に開ける導線を置く",
           ]),
           paragraph(linkText("メンバー設定を開く", "/settings/members")),
-          paragraph(linkText("進行管理を開く", "/contents")),
+          paragraph(linkText("案件管理を開く", "/projects")),
           paragraph(linkText("通知を開く", "/notifications"))
         ),
       },
@@ -782,7 +782,7 @@ export const OFFICIAL_TEMPLATE_CATALOG: OfficialTemplateCatalogSeed[] = [
     previewImagePath: null,
     version: "2.0.0",
     status: "active",
-    integrationTargets: ["/contents", "/notifications"],
+    integrationTargets: ["/projects", "/notifications"],
     recommendedTemplateKeys: ["project_ops_os", "team_resource_os", "client_ops_os"],
     pages: [
       {
@@ -805,7 +805,7 @@ export const OFFICIAL_TEMPLATE_CATALOG: OfficialTemplateCatalogSeed[] = [
             "05_文言テンプレ — よく使う修正表現集",
             "06_NG / 良い例 — 修正指示のアンチパターンと良例",
           ]),
-          paragraph(linkText("進行管理を開く", "/contents")),
+          paragraph(linkText("案件管理を開く", "/projects")),
           paragraph(linkText("通知を開く", "/notifications"))
         ),
       },
@@ -954,7 +954,7 @@ export const OFFICIAL_TEMPLATE_CATALOG: OfficialTemplateCatalogSeed[] = [
     previewImagePath: null,
     version: "2.0.0",
     status: "active",
-    integrationTargets: ["/contents", "/notifications", "/billing", "/vendors", "/payouts"],
+    integrationTargets: ["/projects", "/notifications", "/billing", "/vendors", "/payouts"],
     recommendedTemplateKeys: ["project_ops_os", "team_resource_os", "quality_os"],
     pages: [
       {
@@ -967,7 +967,7 @@ export const OFFICIAL_TEMPLATE_CATALOG: OfficialTemplateCatalogSeed[] = [
         pageType: "doc",
         content: doc(
           heading(1, "{{install_name}}"),
-          paragraph("クライアント固有ルールと通知連携の運用をひとつに統合したパックです。案件実体や納期は /contents に残し、このパックには判断材料と連携ルールを蓄積します。"),
+          paragraph("クライアント固有ルールと通知連携の運用をひとつに統合したパックです。案件実体や納期は案件画面に残し、このパックには判断材料と連携ルールを蓄積します。"),
           heading(2, "含まれるページ"),
           bullet([
             "01_クライアント概要 — 商材・KPI・確認フロー",
@@ -977,7 +977,7 @@ export const OFFICIAL_TEMPLATE_CATALOG: OfficialTemplateCatalogSeed[] = [
             "05_通知連携設計 — ChatWork/Lark のルーム設計と方針",
             "06_通知定型文テンプレ — 毎朝・遅延・提出前の文面",
           ]),
-          paragraph(linkText("進行管理を開く", "/contents")),
+          paragraph(linkText("案件管理を開く", "/projects")),
           paragraph(linkText("通知センターを開く", "/notifications")),
           paragraph(linkText("請求管理を開く", "/billing"))
         ),
@@ -1050,7 +1050,7 @@ export const OFFICIAL_TEMPLATE_CATALOG: OfficialTemplateCatalogSeed[] = [
         content: doc(
           heading(1, "素材・納品ルール"),
           heading(2, "素材置き場ルール"),
-          paragraph("案件登録時に貼る正式リンクは /contents に残します。このページではクライアント固有のフォルダ構成や命名ルールを記録します。"),
+          paragraph("案件登録時に貼る正式リンクは案件画面に残します。このページではクライアント固有のフォルダ構成や命名ルールを記録します。"),
           heading(2, "納品前チェック"),
           task([
             "最終 CTA がクライアントルールに合っている",
@@ -1058,7 +1058,7 @@ export const OFFICIAL_TEMPLATE_CATALOG: OfficialTemplateCatalogSeed[] = [
             "素材権利やクレジット表記が必要なら対応済み",
             "納品先 URL とファイル名が合っている",
           ]),
-          paragraph(linkText("タスク管理へ", "/contents")),
+          paragraph(linkText("案件を開く", "/projects")),
           paragraph(linkText("通知センターへ", "/notifications"))
         ),
       },
@@ -1095,7 +1095,7 @@ export const OFFICIAL_TEMPLATE_CATALOG: OfficialTemplateCatalogSeed[] = [
             "text"
           ),
           paragraph(linkText("通知センターを開く", "/notifications")),
-          paragraph(linkText("進行管理を開く", "/contents"))
+          paragraph(linkText("案件管理を開く", "/projects"))
         ),
       },
       {

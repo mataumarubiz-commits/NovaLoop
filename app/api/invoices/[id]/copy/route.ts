@@ -45,31 +45,45 @@ export async function POST(
     const { id } = await params
     if (!id) return NextResponse.json({ ok: false, message: "id が必要です" }, { status: 400 })
 
-    const [{ data: invoice }, { data: lines }, { data: settings }] = await Promise.all([
+    const [{ data: invoice }, { data: lines }] = await Promise.all([
       supabase.from("invoices").select("*").eq("id", id).eq("org_id", orgId).maybeSingle(),
       supabase.from("invoice_lines").select("*").eq("invoice_id", id).order("sort_order", { ascending: true }),
-      supabase.from("org_settings").select("invoice_seq").eq("org_id", orgId).maybeSingle(),
     ])
     if (!invoice) {
       return NextResponse.json({ ok: false, message: "請求書が見つかりません" }, { status: 404 })
     }
 
-    const seq = Number((settings as { invoice_seq?: number } | null)?.invoice_seq ?? 1)
     const today = new Date().toISOString().slice(0, 10)
     const newId = crypto.randomUUID()
-    const invoiceNo = `INV-${today.slice(0, 4)}-${String(seq).padStart(7, "0")}`
 
     const nextInvoice = {
       ...invoice,
       id: newId,
       status: "draft",
-      invoice_no: invoiceNo,
+      invoice_no: null,
       issue_date: today,
+      issued_at: null,
       pdf_path: null,
+      pdf_generated_at: null,
+      send_prepared_at: null,
+      send_prepared_by: null,
+      payment_status: "unpaid",
+      paid_at: null,
+      paid_amount: null,
+      payment_method: null,
+      payment_memo: null,
+      payment_note: null,
+      latest_receipt_id: null,
+      public_token: null,
+      client_notified_at: null,
+      client_paid_at_claimed: null,
+      client_paid_amount_claimed: null,
+      client_transfer_name: null,
+      client_notify_note: null,
       copied_from_invoice_id: id,
       source_type: "copy",
       created_at: new Date().toISOString(),
-      issued_at: null,
+      updated_at: new Date().toISOString(),
     }
     const { error: invoiceError } = await supabase.from("invoices").insert(nextInvoice)
     if (invoiceError) return NextResponse.json({ ok: false, message: invoiceError.message }, { status: 500 })
@@ -88,8 +102,6 @@ export async function POST(
         return NextResponse.json({ ok: false, message: lineError.message }, { status: 500 })
       }
     }
-
-    await supabase.from("org_settings").upsert({ org_id: orgId, invoice_seq: seq + 1 }, { onConflict: "org_id" })
 
     return NextResponse.json({ ok: true, invoiceId: newId }, { status: 200 })
   } catch (e) {

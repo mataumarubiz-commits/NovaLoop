@@ -286,6 +286,7 @@ async function loadSalesItems(query: DocumentsArchiveQuery) {
         row.guest_client_name?.trim() ??
         "請求先未設定"
       const hasPdf = Boolean(row.pdf_path)
+      const canRegeneratePdf = row.status === "issued" && !hasPdf
       return {
         id: row.id,
         scope: "sales",
@@ -304,7 +305,7 @@ async function loadSalesItems(query: DocumentsArchiveQuery) {
         detailHref: `/invoices/${row.id}`,
         pdfEndpoint: `/api/invoices/${row.id}/pdf`,
         pdfActionLabel: hasPdf ? null : "PDF再生成",
-        pdfActionKind: hasPdf ? null : "regenerate",
+        pdfActionKind: canRegeneratePdf ? "regenerate" : null,
         documentNumber: row.invoice_no?.trim() || null,
         subtitle: row.invoice_no?.trim() || null,
         actionRequired: !hasPdf || row.status !== "issued",

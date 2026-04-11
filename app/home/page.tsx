@@ -109,6 +109,7 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null)
 
   const canAccessBilling = role === "owner" || role === "executive_assistant"
+  const canAccessProjects = role === "owner" || role === "executive_assistant"
   const isOwner = role === "owner"
   const isExecutiveAssistant = role === "executive_assistant"
   const showChecklistPanel = searchParams.get("panel") === "checklist"
@@ -303,13 +304,14 @@ export default function Home() {
   const clientOverdue = incompleteRows.filter((row) => isContentClientOverdue(row.status, row.dueClientAt, todayYmd, row.clientSubmittedAt)).length
 
   const actionTasks = useMemo<ActionTask[]>(() => {
+    if (!canAccessProjects) return []
     const tasks: ActionTask[] = []
     tasks.push({
       id: "client-overdue",
       label: "納期遅れ対応",
       description: "先方提出の遅延案件",
       count: clientOverdue,
-      href: "/contents?filter=client_overdue",
+      href: "/projects?focus=client_overdue",
       tone: "danger",
     })
     tasks.push({
@@ -317,7 +319,7 @@ export default function Home() {
       label: "外注遅延対応",
       description: "編集者提出の遅延案件",
       count: editorOverdue,
-      href: "/contents?filter=editor_overdue",
+      href: "/projects?focus=editor_overdue",
       tone: "danger",
     })
     tasks.push({
@@ -325,7 +327,7 @@ export default function Home() {
       label: "今日提出の確認",
       description: "本日提出予定の案件",
       count: todayTotal,
-      href: "/contents?due=today",
+      href: "/projects?focus=due_today",
       tone: "warn",
     })
     const toneWeight = (tone: ActionTask["tone"]) => (tone === "danger" ? 100 : tone === "warn" ? 60 : 20)
@@ -333,7 +335,7 @@ export default function Home() {
       .filter((t) => t.count > 0)
       .sort((a, b) => b.count + toneWeight(b.tone) - (a.count + toneWeight(a.tone)))
       .slice(0, 4)
-  }, [clientOverdue, editorOverdue, todayTotal])
+  }, [canAccessProjects, clientOverdue, editorOverdue, todayTotal])
 
   const hasHomeBlockingLoad = authLoading || loading || (canAccessBilling && onboardingLoading && onboarding == null)
 
@@ -429,33 +431,33 @@ export default function Home() {
       </section>
 
 
-      <section style={{ marginBottom: 22 }}>
+      {canAccessProjects ? <section style={{ marginBottom: 22 }}>
         <h2 style={{ fontSize: 16, marginBottom: 10, color: "var(--text)" }}>今日の行動</h2>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12 }}>
-          <Link href="/contents?due=today" style={{ ...cardStyle, textDecoration: "none", color: "inherit" }}>
+          <Link href="/projects?focus=due_today" style={{ ...cardStyle, textDecoration: "none", color: "inherit" }}>
             <div style={{ fontSize: 12, color: "var(--muted)" }}>今日の先方提出数</div>
             <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>{todayTotal}</div>
           </Link>
-          <Link href="/contents?due=tomorrow" style={{ ...cardStyle, textDecoration: "none", color: "inherit" }}>
+          <Link href="/projects?focus=due_tomorrow" style={{ ...cardStyle, textDecoration: "none", color: "inherit" }}>
             <div style={{ fontSize: 12, color: "var(--muted)" }}>明日の先方提出数</div>
             <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>{tomorrowTotal}</div>
           </Link>
-          <Link href="/contents?filter=editor_overdue" style={{ ...cardStyle, textDecoration: "none", color: "inherit", borderColor: editorOverdue > 0 ? "#f87171" : "var(--border)", background: editorOverdue > 0 ? "#fff5f5" : "var(--surface)" }}>
+          <Link href="/projects?focus=editor_overdue" style={{ ...cardStyle, textDecoration: "none", color: "inherit", borderColor: editorOverdue > 0 ? "#f87171" : "var(--border)", background: editorOverdue > 0 ? "#fff5f5" : "var(--surface)" }}>
             <div style={{ fontSize: 12, color: "var(--muted)" }}>外注未提出数</div>
             <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6, color: editorOverdue > 0 ? "#b91c1c" : "var(--text)" }}>{editorOverdue}</div>
           </Link>
-          <Link href="/contents?filter=client_overdue" style={{ ...cardStyle, textDecoration: "none", color: "inherit", borderColor: clientOverdue > 0 ? "#f87171" : "var(--border)", background: clientOverdue > 0 ? "#fff5f5" : "var(--surface)" }}>
+          <Link href="/projects?focus=client_overdue" style={{ ...cardStyle, textDecoration: "none", color: "inherit", borderColor: clientOverdue > 0 ? "#f87171" : "var(--border)", background: clientOverdue > 0 ? "#fff5f5" : "var(--surface)" }}>
             <div style={{ fontSize: 12, color: "var(--muted)" }}>納期遅れ</div>
             <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6, color: clientOverdue > 0 ? "#b91c1c" : "var(--text)" }}>{clientOverdue}</div>
           </Link>
-          <Link href="/contents?filter=client_overdue" style={{ ...cardStyle, textDecoration: "none", color: "inherit" }}>
+          <Link href="/projects?focus=client_overdue" style={{ ...cardStyle, textDecoration: "none", color: "inherit" }}>
             <div style={{ fontSize: 12, color: "var(--muted)" }}>優先対応件数</div>
             <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6, color: clientOverdue + editorOverdue > 0 ? "#b91c1c" : "var(--text)" }}>
               {clientOverdue + editorOverdue}
             </div>
           </Link>
         </div>
-      </section>
+      </section> : null}
 
       <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12, marginBottom: 18 }}>
         <div style={cardStyle}>

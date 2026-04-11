@@ -435,8 +435,8 @@ export default function VendorInvoiceDetailPage() {
                       <div>{line.description || line.work_type || "-"}</div>
                       {line.content_id ? (
                         <div style={{ marginTop: 4, fontSize: 12 }}>
-                          <Link href={`/contents?highlight=${line.content_id}`} style={{ color: "var(--primary)", textDecoration: "none" }}>
-                            制作一覧で開く
+                          <Link href={`/projects?highlight=${encodeURIComponent(line.content_id)}`} style={{ color: "var(--primary)", textDecoration: "none" }}>
+                            案件で開く
                           </Link>
                         </div>
                       ) : null}

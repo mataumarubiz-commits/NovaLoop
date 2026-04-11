@@ -8,7 +8,7 @@ const PATH_LABELS: Record<string, string> = {
   "/home": "ホーム",
   "/pages": "ページ",
   "/members": "メンバー",
-  "/contents": "タスク",
+  "/contents": "案件",
   "/billing": "請求",
   "/invoices": "請求書",
   "/documents": "請求書保管",

@@ -1,11 +1,12 @@
 import {
   buildContentHealthScore,
+  getContentBillingMonthYm,
   isBillableDoneStatus,
   isContentClientOverdue,
   isContentClosedStatus,
   normalizeContentLinks,
   type ContentLinks,
-} from "@/lib/contentWorkflow"
+} from "./contentWorkflow.ts"
 
 export type ProjectMember = {
   userId: string
@@ -385,7 +386,9 @@ export function buildProjectSummaries(params: {
 
   return projects.map((project) => {
     const projectContents = contents.filter((content) => content.project_id === project.id)
-    const monthlyContents = projectContents.filter((content) => content.delivery_month === month)
+    const monthlyContents = projectContents.filter(
+      (content) => getContentBillingMonthYm(content.delivery_month, content.due_client_at) === month
+    )
     const projectExpenses = expenses.filter((expense) => expense.project_id === project.id && expense.occurred_on.startsWith(month))
     const openExceptions = storedExceptions.filter((exceptionRow) => exceptionRow.project_id === project.id && exceptionRow.status === "open")
 
@@ -582,7 +585,12 @@ export function buildRuntimeExceptionCandidates(params: {
       })
     }
 
-    if (content.billable_flag && isBillableDoneStatus(content.status) && !content.invoice_id && content.delivery_month <= month) {
+    if (
+      content.billable_flag &&
+      isBillableDoneStatus(content.status) &&
+      !content.invoice_id &&
+      getContentBillingMonthYm(content.delivery_month, content.due_client_at) <= month
+    ) {
       pushCandidate({
         key: `${contentId}:invoice_missing`,
         projectId,

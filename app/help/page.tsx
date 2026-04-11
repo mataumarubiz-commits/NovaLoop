@@ -58,15 +58,15 @@ const starterArticles: StarterArticle[] = [
     meta: "運用を始める前に、請求先と案件の土台を整えます",
   },
   {
-    title: "Contents で進行管理を始める",
+    title: "案件で進行管理を始める",
     meta: "納期・担当・ステータスをひとつの画面で追えるようにします",
   },
 ];
 
 const categoryCards: CategoryCard[] = [
   {
-    title: "Contents / 制作進行",
-    desc: "納期・ステータス・テンプレートなど、進行管理に関する疑問を解決します",
+    title: "Projects / 案件進行",
+    desc: "納期・ステータス・テンプレートなど、案件進行に関する疑問を解決します",
     icon: LayoutGrid,
     accent: "rgba(124, 58, 237, 0.08)",
     iconAccent: "#7c3aed",
@@ -132,7 +132,7 @@ const categoryCards: CategoryCard[] = [
 
 const groupedFaq: FaqGroup[] = [
   {
-    title: "Contents / 制作進行",
+    title: "Projects / 案件進行",
     items: [
       { title: "納期はどこで確認できる？", meta: "先方提出日・編集者提出日の見方" },
       { title: "ステータスの意味が分からない", meta: "未着手・先方修正中・納品完了 など" },
@@ -178,7 +178,7 @@ const roleCards: RoleCard[] = [
   },
   {
     role: "Member",
-    desc: "制作進行の閲覧が中心で、Pages は基本的に閲覧のみ",
+    desc: "案件進行の閲覧が中心で、Pages は基本的に閲覧のみ",
     icon: Users,
   },
 ];

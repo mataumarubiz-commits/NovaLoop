@@ -77,8 +77,19 @@ SUPABASE_SERVICE_ROLE_KEY=YOUR_SUPABASE_SERVICE_ROLE_KEY
 - `LINE_CHANNEL_ACCESS_TOKEN`
 - `LINE_CHANNEL_SECRET`
 - `DISCORD_PUBLIC_KEY`
+- `DISCORD_APP_ID`
+- `DISCORD_BOT_TOKEN`
+- `DISCORD_REDIRECT_URI`
 - `EXTERNAL_AI_SHARED_SECRET`
 - `INVOICE_REMINDER_CRON_SECRET`
+
+Month-close automation also has optional external adapters:
+
+- `FREEE_CLIENT_ID`, `FREEE_CLIENT_SECRET`, `FREEE_REDIRECT_URI`, `FREEE_TOKEN_ENCRYPTION_KEY`
+- `FREEE_TOKEN_URL` defaults to `https://accounts.secure.freee.co.jp/public_api/token`
+- `FREEE_SYNC_MODE=queue` keeps freee work as queued/logged sync; `local_success` is for non-production adapter testing only
+- `TRANSFER_PROVIDER_MODE=manual` records approved manual execution; other provider values fail closed until a real adapter is configured
+- `TRANSFER_WEBHOOK_SECRET` protects `/api/transfers/webhook` when a provider webhook is used
 
 ## 4. Supabase Edge Function で使う値
 

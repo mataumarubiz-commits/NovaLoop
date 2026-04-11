@@ -85,10 +85,11 @@ async function executeRemindersForOrg(input: ReminderExecutionInput) {
     let query = admin
       .from("invoice_requests")
       .select(
-        "id, client_id, guest_name, guest_company_name, recipient_email, requested_title, status, request_deadline, due_date, reminder_enabled, reminder_lead_days, reminder_count, last_reminded_at"
+        "id, client_id, guest_name, guest_company_name, recipient_email, requested_title, status, request_deadline, due_date, reminder_enabled, reminder_lead_days, reminder_count, last_reminded_at, issued_invoice_id"
       )
       .eq("org_id", orgId)
       .in("status", ["sent", "viewed"])
+      .is("issued_invoice_id", null)
 
     if (!manual) query = query.eq("reminder_enabled", true)
     if (invoiceRequestIds.length > 0) query = query.in("id", invoiceRequestIds)

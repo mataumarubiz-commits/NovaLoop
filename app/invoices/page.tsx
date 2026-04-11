@@ -65,7 +65,7 @@ const badgeBase: CSSProperties = {
 }
 
 const STATUS_META: Record<string, { label: string; bg: string; text: string }> = {
-  draft: { label: "Draft", bg: "#f8fafc", text: "#475569" },
+  draft: { label: "下書き", bg: "#f8fafc", text: "#475569" },
   issued: { label: "発行済み", bg: "var(--success-bg)", text: "var(--success-text)" },
   void: { label: "無効", bg: "var(--error-bg)", text: "var(--error-text)" },
 }
@@ -241,16 +241,30 @@ export default function InvoicesPage() {
     setRows((data ?? []) as InvoiceRow[])
   }
 
-  const openPdf = async (invoiceId: string) => {
+  const openPdf = async (invoice: InvoiceRow) => {
     const token = await getAccessToken()
     if (!token) {
       setError("ログイン状態を確認できませんでした。")
       return
     }
-    setBusyKey(`pdf:${invoiceId}`)
+    setBusyKey(`pdf:${invoice.id}`)
     setError(null)
     try {
-      const res = await fetch(`/api/invoices/${invoiceId}/pdf`, {
+      const existingRes = await fetch(`/api/invoices/${invoice.id}/pdf`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const existingJson = (await existingRes.json().catch(() => null)) as { signed_url?: string } | null
+      if (existingRes.ok && existingJson?.signed_url) {
+        window.open(existingJson.signed_url, "_blank", "noopener,noreferrer")
+        return
+      }
+
+      if (invoice.status !== "issued") {
+        setError(invoice.status === "draft" ? "PDF は発行確定後に生成できます。" : "この請求書では PDF を生成できません。")
+        return
+      }
+
+      const res = await fetch(`/api/invoices/${invoice.id}/pdf`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
       })
@@ -333,6 +347,10 @@ export default function InvoicesPage() {
 
   const runBulkPdf = async () => {
     if (selectedRows.length === 0) return
+    if (selectedRows.some((row) => row.status !== "issued" && !row.pdf_path)) {
+      setError("PDF は発行済みの請求書だけ生成できます。下書きは先に発行を確定してください。")
+      return
+    }
     const token = await getAccessToken()
     if (!token) {
       setError("ログイン状態を確認できませんでした。")
@@ -343,7 +361,7 @@ export default function InvoicesPage() {
     setError(null)
     try {
       if (selectedRows.length === 1) {
-        await openPdf(selectedRows[0].id)
+        await openPdf(selectedRows[0])
         return
       }
 
@@ -374,6 +392,10 @@ export default function InvoicesPage() {
 
   const prepareSend = async () => {
     if (!orgId || selectedRows.length === 0) return
+    if (selectedRows.some((row) => row.status !== "issued")) {
+      setError("送付準備は発行済みの請求書だけに実行できます。")
+      return
+    }
     const confirmed = window.confirm(
       `${selectedRows.length}件の請求書を「送付準備済み」にします。メール自動送信は行わず、PDF送付の準備情報だけを残します。`
     )
@@ -458,7 +480,7 @@ export default function InvoicesPage() {
             <div>
               <h1 style={{ margin: 0, fontSize: 30, color: "var(--text)" }}>請求書</h1>
               <p style={{ margin: "8px 0 0", color: "var(--muted)" }}>
-                一括発行、一括PDF、一括送付準備、コピー新規をここから行います。
+                下書き確認、発行確定、一括PDF、一括送付準備、コピー新規をここから行います。
               </p>
             </div>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -532,7 +554,7 @@ export default function InvoicesPage() {
               style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--input-bg)" }}
             >
               <option value="">すべてのステータス</option>
-              <option value="draft">Draft</option>
+              <option value="draft">下書き</option>
               <option value="issued">発行済み</option>
               <option value="void">無効</option>
             </select>
@@ -552,7 +574,7 @@ export default function InvoicesPage() {
             <div>
               <div style={{ fontWeight: 700, color: "var(--text)" }}>一括操作</div>
               <div style={{ marginTop: 4, fontSize: 13, color: "var(--muted)" }}>
-                {selectedRows.length}件選択中。発行済みにする前に金額と宛先を確認してください。
+                {selectedRows.length}件選択中。発行確定の前に金額と宛先を確認してください。
               </div>
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -560,24 +582,24 @@ export default function InvoicesPage() {
                 {selectedRows.length === filteredRows.length && filteredRows.length > 0 ? "全解除" : "表示中をすべて選択"}
               </button>
               <button type="button" disabled={selectedRows.length === 0 || busyKey !== null} onClick={() => void runBulkStatus("issued")} style={secondaryButtonStyle}>
-                一括発行
+                発行を確定
               </button>
               <button type="button" disabled={selectedRows.length === 0 || busyKey !== null} onClick={() => void runBulkStatus("draft")} style={secondaryButtonStyle}>
-                Draftに戻す
+                下書きに戻す
               </button>
               <button type="button" disabled={selectedRows.length === 0 || busyKey !== null} onClick={() => void runBulkStatus("void")} style={secondaryButtonStyle}>
                 一括無効化
               </button>
-              <button type="button" disabled={selectedRows.length === 0 || busyKey !== null} onClick={() => void runBulkPdf()} style={secondaryButtonStyle}>
+              <button type="button" disabled={selectedRows.length === 0 || busyKey !== null || selectedRows.some((row) => row.status !== "issued" && !row.pdf_path)} onClick={() => void runBulkPdf()} style={secondaryButtonStyle}>
                 {selectedRows.length > 1 ? "一括PDF ZIP" : "PDF"}
               </button>
-              <button type="button" disabled={selectedRows.length === 0 || busyKey !== null} onClick={() => void prepareSend()} style={primaryButtonStyle}>
+              <button type="button" disabled={selectedRows.length === 0 || busyKey !== null || selectedRows.some((row) => row.status !== "issued")} onClick={() => void prepareSend()} style={primaryButtonStyle}>
                 一括送付準備
               </button>
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", fontSize: 12, color: "var(--muted)" }}>
-            <span>Draft: まだ社外に出していない状態</span>
+            <span>下書き: まだ社外に出していない状態</span>
             <span>発行済み: PDF送付または送付準備に進める状態</span>
             <span>無効: 参照用に残すが運用対象から外す状態</span>
           </div>
@@ -676,8 +698,8 @@ export default function InvoicesPage() {
                         <button type="button" onClick={() => setExpandedId((prev) => (prev === row.id ? null : row.id))} style={secondaryButtonStyle}>
                           {isExpanded ? "明細を閉じる" : "明細を見る"}
                         </button>
-                        <button type="button" onClick={() => void openPdf(row.id)} disabled={busyKey === `pdf:${row.id}`} style={secondaryButtonStyle}>
-                          PDF
+                        <button type="button" onClick={() => void openPdf(row)} disabled={busyKey === `pdf:${row.id}` || (row.status !== "issued" && !row.pdf_path)} style={secondaryButtonStyle}>
+                          {row.pdf_path ? "PDFを開く" : row.status === "issued" ? "PDF生成" : "発行後にPDF"}
                         </button>
                         <button type="button" onClick={() => void copyInvoice(row.id)} disabled={busyKey === `copy:${row.id}`} style={secondaryButtonStyle}>
                           複製して新規

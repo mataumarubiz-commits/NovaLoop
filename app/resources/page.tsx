@@ -130,8 +130,8 @@ export default function ResourcesPage() {
           <Link href="/timeline" style={{ textDecoration: "none", color: "var(--primary)", fontWeight: 700 }}>
             タイムラインへ
           </Link>
-          <Link href="/contents" style={{ textDecoration: "none", color: "var(--primary)", fontWeight: 700 }}>
-            制作一覧へ
+          <Link href="/projects" style={{ textDecoration: "none", color: "var(--primary)", fontWeight: 700 }}>
+            案件一覧へ
           </Link>
         </div>
       }

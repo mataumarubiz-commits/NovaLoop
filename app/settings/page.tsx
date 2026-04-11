@@ -81,6 +81,7 @@ export default function SettingsPage() {
     { href: "/settings/templates", title: "テンプレート", description: "コンテンツテンプレートの一覧・追加・編集・並び順を管理します。" },
     { href: "/settings/ai-history", title: "AI 履歴", description: "AI の利用履歴を確認します。" },
     { href: "/settings/ai-channels", title: "外部AI連携", description: "Discord / LINE の AI 連携設定を確認します。" },
+    { href: "/settings/integrations/discord", title: "Discord運用連携", description: "管理チャンネル、コマンド、通知ルール、送信ログを管理します。" },
   ]
   const dataItems: MenuItem[] = isAdmin
     ? [

@@ -148,7 +148,7 @@ export async function loadBillingPreview(params: {
       delivery_month: String(row.delivery_month ?? ""),
       invoice_id: row.invoice_id ? String(row.invoice_id) : null,
     }))
-    .filter((row) => isBillableWorkItemStatus(row.status, row.billing_model))
+    .filter((row) => isBillableWorkItemStatus(row.status, row.billing_model) && Number(row.amount) > 0)
 
   const contentClientIds = Array.from(new Set(contents.map((row) => row.client_id)))
 

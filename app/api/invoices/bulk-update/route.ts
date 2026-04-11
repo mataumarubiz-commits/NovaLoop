@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { requireOrgAdmin } from "@/lib/adminApi"
 import { writeAuditLog } from "@/lib/auditLog"
+import { issueInvoices } from "@/lib/invoiceIssuance"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -51,23 +52,36 @@ export async function POST(req: NextRequest) {
     }
 
     const now = new Date().toISOString()
-    const nextIssueDate = now.slice(0, 10)
-    const payload: Record<string, unknown> = {
-      status,
-      updated_at: now,
-    }
+    let updatedCount = invoices.length
+    let assignedCount = 0
+
     if (status === "issued") {
-      payload.issue_date = nextIssueDate
-    }
+      const issueResult = await issueInvoices({
+        admin,
+        orgId: auth.orgId,
+        invoiceIds: invoices.map((invoice) => invoice.id),
+        nowIso: now,
+      })
+      updatedCount = issueResult.updatedCount
+      assignedCount = issueResult.assignedCount
+    } else {
+      const payload: Record<string, unknown> = {
+        status,
+        updated_at: now,
+      }
+      if (status === "draft") {
+        payload.issued_at = null
+      }
 
-    const { error: updateError } = await admin
-      .from("invoices")
-      .update(payload)
-      .eq("org_id", auth.orgId)
-      .in("id", invoices.map((invoice) => invoice.id))
+      const { error: updateError } = await admin
+        .from("invoices")
+        .update(payload)
+        .eq("org_id", auth.orgId)
+        .in("id", invoices.map((invoice) => invoice.id))
 
-    if (updateError) {
-      return NextResponse.json({ ok: false, error: updateError.message }, { status: 500 })
+      if (updateError) {
+        return NextResponse.json({ ok: false, error: updateError.message }, { status: 500 })
+      }
     }
 
     await admin.from("bulk_action_logs").insert({
@@ -92,13 +106,15 @@ export async function POST(req: NextRequest) {
       meta: {
         invoice_ids: invoices.map((invoice) => invoice.id),
         next_status: status,
+        assigned_count: assignedCount,
         note: note || null,
       },
     })
 
     return NextResponse.json({
       ok: true,
-      updatedCount: invoices.length,
+      updatedCount,
+      assignedCount,
       status,
     })
   } catch (error) {

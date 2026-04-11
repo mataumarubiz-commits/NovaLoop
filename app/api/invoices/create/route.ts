@@ -100,7 +100,6 @@ export async function POST(req: NextRequest) {
 
     const settingsRes = await supabase.from("org_settings").select("*").eq("org_id", orgId).maybeSingle()
     const settings = (settingsRes.data ?? {}) as Record<string, unknown>
-    const nextSeq = Number(settings.invoice_seq ?? 1)
     const issueDate = typeof body.issue_date === "string" && body.issue_date ? body.issue_date : new Date().toISOString().slice(0, 10)
     const dueDate = typeof body.due_date === "string" && body.due_date ? body.due_date : issueDate
     const invoiceMonth =
@@ -114,8 +113,6 @@ export async function POST(req: NextRequest) {
     const subtotal = normalizedLines.reduce((sum, line) => sum + line.quantity * line.unit_price, 0)
     const totals = calcTotals(subtotal, taxMode, taxRate, withholdingEnabled, withholdingRate)
     const sourceType = normalizeInvoiceSourceTypeForWrite(body.source_type)
-
-    const invoiceNo = `INV-${issueDate.slice(0, 4)}-${String(nextSeq).padStart(7, "0")}`
     const bankAccountId = typeof body.bank_account_id === "string" && body.bank_account_id ? body.bank_account_id : null
 
     let bankSnapshot: Record<string, unknown> = {}
@@ -158,7 +155,7 @@ export async function POST(req: NextRequest) {
       client_id: body.client_id ?? null,
       invoice_month: invoiceMonth,
       status: "draft",
-      invoice_no: invoiceNo,
+      invoice_no: null,
       invoice_title: body.invoice_title?.trim() || "請求書",
       issue_date: issueDate,
       due_date: dueDate,
@@ -203,14 +200,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, message: lineError.message }, { status: 500 })
     }
 
-    await supabase
-      .from("org_settings")
-      .upsert({ org_id: orgId, invoice_seq: nextSeq + 1 }, { onConflict: "org_id" })
-
     if (body.request_id) {
       await supabase
         .from("invoice_requests")
-        .update({ status: "issued", issued_invoice_id: invoiceId, updated_at: new Date().toISOString() })
+        .update({ issued_invoice_id: invoiceId, updated_at: new Date().toISOString() })
         .eq("id", body.request_id)
         .eq("org_id", orgId)
     }
@@ -224,13 +217,14 @@ export async function POST(req: NextRequest) {
       resource_id: invoiceId,
       meta: {
         source_type: sourceType,
-        invoice_no: invoiceNo,
+        invoice_no: null,
+        invoice_status: "draft",
         invoice_month: invoiceMonth,
         total: totals.total,
       },
     })
 
-    return NextResponse.json({ ok: true, invoiceId, invoiceNo, createdBy: userId }, { status: 200 })
+    return NextResponse.json({ ok: true, invoiceId, invoiceNo: null, createdBy: userId }, { status: 200 })
   } catch (e) {
     console.error("[api/invoices/create]", e)
     return NextResponse.json({ ok: false, message: "請求書の作成に失敗しました" }, { status: 500 })

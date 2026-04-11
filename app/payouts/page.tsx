@@ -49,6 +49,25 @@ type CsvPreviewRow = {
   warning: string | null
 }
 
+type TransferPreviewItem = {
+  payoutId: string
+  vendorInvoiceId: string | null
+  vendorName: string
+  payDate: string
+  amount: number
+  status: string
+  bankReady: boolean
+  warning: string | null
+}
+
+type TransferPreview = {
+  count: number
+  executableCount: number
+  warningCount: number
+  totalAmount: number
+  items: TransferPreviewItem[]
+}
+
 type CsvHistoryRow = {
   id: string
   export_month: string
@@ -147,6 +166,9 @@ export default function PayoutsPage() {
   const [csvPreview, setCsvPreview] = useState<CsvPreviewRow[]>([])
   const [csvNotes, setCsvNotes] = useState<string[]>([])
   const [csvHistory, setCsvHistory] = useState<CsvHistoryRow[]>([])
+  const [transferPreview, setTransferPreview] = useState<TransferPreview | null>(null)
+  const [transferBatchId, setTransferBatchId] = useState<string | null>(null)
+  const [transferStatus, setTransferStatus] = useState<string | null>(null)
 
   useEffect(() => {
     if (!activeOrgId || !canUse) return
@@ -433,6 +455,146 @@ export default function PayoutsPage() {
     }
   }
 
+  const generatePayouts = async () => {
+    if (!activeOrgId) return
+    const token = await getAccessToken()
+    if (!token) {
+      setError("ログイン状態を確認できませんでした。")
+      return
+    }
+    setBusyKey("generate-payouts")
+    setError(null)
+    setSuccess(null)
+    try {
+      const res = await fetch("/api/payouts/auto-generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ orgId: activeOrgId, targetMonth: month }),
+      })
+      const json = await res.json().catch(() => null)
+      if (!res.ok || !json?.ok) {
+        setError(json?.error ?? "支払ドラフト生成に失敗しました。")
+        return
+      }
+      setSuccess(`外注請求 ${json.vendorInvoiceCount ?? 0}件 / 支払 ${json.payoutCount ?? 0}件を生成しました。`)
+    } finally {
+      setBusyKey(null)
+    }
+  }
+
+  const previewTransferBatch = async () => {
+    if (!activeOrgId) return
+    const token = await getAccessToken()
+    if (!token) {
+      setError("ログイン状態を確認できませんでした。")
+      return
+    }
+    setBusyKey("transfer-preview")
+    setError(null)
+    try {
+      const res = await fetch("/api/payout-batches/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          orgId: activeOrgId,
+          targetMonth: month,
+          invoiceIds: selectedRows.length > 0 ? selectedRows.map((row) => row.id) : undefined,
+        }),
+      })
+      const json = await res.json().catch(() => null)
+      if (!res.ok || !json?.ok) {
+        setError(json?.error ?? "振込プレビューに失敗しました。")
+        return
+      }
+      setTransferPreview(json as TransferPreview)
+      setTransferBatchId(null)
+      setTransferStatus(null)
+    } finally {
+      setBusyKey(null)
+    }
+  }
+
+  const createTransferBatch = async () => {
+    if (!activeOrgId) return
+    const token = await getAccessToken()
+    if (!token) {
+      setError("ログイン状態を確認できませんでした。")
+      return
+    }
+    setBusyKey("transfer-create")
+    setError(null)
+    setSuccess(null)
+    try {
+      const res = await fetch("/api/payout-batches/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          orgId: activeOrgId,
+          targetMonth: month,
+          invoiceIds: selectedRows.length > 0 ? selectedRows.map((row) => row.id) : undefined,
+        }),
+      })
+      const json = await res.json().catch(() => null)
+      if (!res.ok || !json?.ok) {
+        setError(json?.error ?? json?.message ?? "振込バッチ作成に失敗しました。")
+        return
+      }
+      setTransferBatchId(String(json.batchId))
+      setTransferPreview((json.preview ?? null) as TransferPreview | null)
+      setTransferStatus(json.reused ? "既存バッチを再利用しました。" : "振込バッチを作成しました。")
+      setSuccess("振込バッチを作成しました。")
+    } finally {
+      setBusyKey(null)
+    }
+  }
+
+  const approveTransferBatch = async () => {
+    if (!activeOrgId || !transferBatchId) return
+    const token = await getAccessToken()
+    if (!token) return
+    setBusyKey("transfer-approve")
+    setError(null)
+    try {
+      const res = await fetch(`/api/payout-batches/${encodeURIComponent(transferBatchId)}/approve-stage1`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ orgId: activeOrgId }),
+      })
+      const json = await res.json().catch(() => null)
+      if (!res.ok || !json?.ok) {
+        setError(json?.error ?? "一次承認に失敗しました。")
+        return
+      }
+      setTransferStatus("一次承認済みです。")
+    } finally {
+      setBusyKey(null)
+    }
+  }
+
+  const executeTransferBatch = async () => {
+    if (!activeOrgId || !transferBatchId) return
+    const token = await getAccessToken()
+    if (!token) return
+    setBusyKey("transfer-execute")
+    setError(null)
+    try {
+      const res = await fetch(`/api/payout-batches/${encodeURIComponent(transferBatchId)}/execute-stage2`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ orgId: activeOrgId, provider: "manual" }),
+      })
+      const json = await res.json().catch(() => null)
+      if (!res.ok || !json?.ok) {
+        setError(json?.error ?? json?.message ?? "実行記録に失敗しました。")
+        return
+      }
+      setTransferStatus(`実行済み: ${json.succeededCount ?? 0}件`)
+      setSuccess("手動振込の実行記録を保存しました。")
+    } finally {
+      setBusyKey(null)
+    }
+  }
+
   if (loading) return <div style={{ padding: 32, color: "var(--muted)" }}>読み込み中...</div>
   if (!activeOrgId) return <div style={{ padding: 32, color: "var(--muted)" }}>ワークスペースを選択してください。</div>
   if (!canUse) return <div style={{ padding: 32, color: "var(--muted)" }}>owner / executive_assistant のみ利用できます。</div>
@@ -529,8 +691,57 @@ export default function PayoutsPage() {
               <button type="button" disabled={selectedRows.length === 0 || busyKey !== null} onClick={() => void previewCsv()} style={primaryButtonStyle}>
                 CSVプレビュー
               </button>
+              <button type="button" disabled={busyKey !== null} onClick={() => void generatePayouts()} style={secondaryButtonStyle}>
+                支払ドラフト生成
+              </button>
+              <button type="button" disabled={busyKey !== null} onClick={() => void previewTransferBatch()} style={secondaryButtonStyle}>
+                振込プレビュー
+              </button>
+              <button type="button" disabled={busyKey !== null} onClick={() => void createTransferBatch()} style={primaryButtonStyle}>
+                振込バッチ作成
+              </button>
             </div>
           </div>
+        </section>
+
+        <section style={{ ...cardStyle, display: "grid", gap: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
+            <div>
+              <h2 style={{ margin: 0, fontSize: 18, color: "var(--text)" }}>振込自動化</h2>
+              <p style={{ margin: "6px 0 0", fontSize: 13, color: "var(--muted)" }}>
+                口座と金額を検証してから、一次承認、実行記録の順に進めます。外部送金API未設定時は手動実行ログとして保存します。
+              </p>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button type="button" disabled={!transferBatchId || busyKey !== null} onClick={() => void approveTransferBatch()} style={secondaryButtonStyle}>
+                一次承認
+              </button>
+              <button type="button" disabled={!transferBatchId || busyKey !== null} onClick={() => void executeTransferBatch()} style={primaryButtonStyle}>
+                実行記録
+              </button>
+            </div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10 }}>
+            <SummaryCard label="バッチID" value={transferBatchId ? transferBatchId.slice(0, 8) : "-"} />
+            <SummaryCard label="実行可能" value={String(transferPreview?.executableCount ?? 0)} />
+            <SummaryCard label="警告" value={String(transferPreview?.warningCount ?? 0)} />
+            <SummaryCard label="合計" value={formatCurrency(transferPreview?.totalAmount ?? 0)} />
+          </div>
+          {transferStatus ? <div style={{ color: "var(--success-text)" }}>{transferStatus}</div> : null}
+          {(transferPreview?.items?.length ?? 0) > 0 ? (
+            <div style={{ display: "grid", gap: 8 }}>
+              {transferPreview?.items.slice(0, 8).map((item) => (
+                <div key={item.payoutId} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: 10, display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                  <span>{item.vendorName}</span>
+                  <span>{item.payDate}</span>
+                  <strong>{formatCurrency(item.amount)}</strong>
+                  <span style={{ color: item.bankReady ? "var(--success-text)" : "var(--warning-text)" }}>
+                    {item.bankReady ? "ready" : item.warning ?? "warning"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </section>
 
         <section style={{ ...cardStyle, display: "grid", gap: 14 }}>

@@ -19,7 +19,7 @@ export type ContentRuleInput = {
   integrationMissing?: boolean | null
 }
 
-import { CONTENT_WORKFLOW_STATUS_OPTIONS } from "@/lib/projectStatus"
+import { CONTENT_WORKFLOW_STATUS_OPTIONS } from "./projectStatus.ts"
 
 export type ContentWorkflowOption = {
   value: string

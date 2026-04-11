@@ -18,6 +18,7 @@ import TemplateInstallDialog from "@/components/pages/TemplateInstallDialog"
 import { supabase } from "@/lib/supabase"
 import { useAuthOrg } from "@/hooks/useAuthOrg"
 import {
+  getContentBillingMonthYm,
   hasClientSubmissionSignal,
   isContentClientOverdue,
   isContentEditorOverdue,
@@ -28,14 +29,14 @@ import { notificationActionHref, notificationPriority, notificationTitle } from 
 const SIDEBAR_NAV_ORDER_KEY = "sidebar_nav_order"
 
 const SIDEBAR_WIDTH = 260
-const PRIMARY_NAV_HREFS = ["/home", "/contents", "/projects", "/billing", "/vendors", "/documents"] as const
+const PRIMARY_NAV_HREFS = ["/home", "/projects", "/billing", "/close", "/vendors", "/documents"] as const
 const NAV_ITEMS: { href: string; label: string; locked?: boolean; childPaths?: string[] }[] = [
   { href: "/home", label: "ホーム" },
   { href: "/members", label: "メンバー" },
   { href: "/resources", label: "稼働管理" },
-  { href: "/contents", label: "タスク" },
   { href: "/projects", label: "案件" },
   { href: "/billing", label: "請求", locked: true, childPaths: ["/invoices"] },
+  { href: "/close", label: "締め", locked: true, childPaths: ["/expenses", "/profitability"] },
   { href: "/vendors", label: "外注", locked: true, childPaths: ["/payouts"] },
   { href: "/documents", label: "請求書保管", locked: true },
   { href: "/settings", label: "設定" },
@@ -69,6 +70,7 @@ const EMPTY_STATUS_SNAPSHOT = {
   todaySubmitCount: 0,
   overdueCount: 0,
   unissuedCount: 0,
+  missingReceiptCount: 0,
   vendorReviewCount: 0,
   payoutPendingCount: 0,
 }
@@ -135,6 +137,7 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
   const [switcherOpen, setSwitcherOpen] = useState(false)
 
   const canAccessBilling = role === "owner" || role === "executive_assistant"
+  const canAccessProjects = role === "owner" || role === "executive_assistant"
   const canCreatePage = role === "owner" || role === "executive_assistant"
   const currentOrgName = activeOrgId ? memberships.find((m) => m.org_id === activeOrgId)?.org_name ?? "ワークスペース" : "ワークスペース"
 
@@ -192,8 +195,9 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
     return navOrder
       .map((href) => NAV_ITEMS.find((n) => n.href === href))
       .filter((n): n is (typeof NAV_ITEMS)[0] => n != null)
+      .filter((n) => n.href !== "/projects" || canAccessProjects)
       .filter((n) => n.href !== "/settings/e2e" || canAccessBilling)
-  }, [navOrder, canAccessBilling])
+  }, [navOrder, canAccessBilling, canAccessProjects])
 
   const middleNavItems = useMemo(
     () => orderedItems.filter((n) => PRIMARY_NAV_HREFS.includes(n.href as (typeof PRIMARY_NAV_HREFS)[number])),
@@ -327,13 +331,18 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
         ? supabase.from("invoices").select("id").eq("org_id", activeOrgId).eq("invoice_month", thisMonth)
         : Promise.resolve({ data: [], error: null })
 
+      const expensesPromise = canAccessBilling
+        ? supabase.from("expenses").select("occurred_on, receipt_path").eq("org_id", activeOrgId)
+        : Promise.resolve({ data: [], error: null })
+
       const vendorInvoicesPromise = canAccessBilling
         ? supabase.from("vendor_invoices").select("status").eq("org_id", activeOrgId).eq("billing_month", thisMonth)
         : Promise.resolve({ data: [], error: null })
 
-      const [contentsRes, invoicesRes, vendorInvoicesRes] = await Promise.all([
+      const [contentsRes, invoicesRes, expensesRes, vendorInvoicesRes] = await Promise.all([
         contentsPromise,
         invoicesPromise,
+        expensesPromise,
         vendorInvoicesPromise,
       ])
 
@@ -354,12 +363,14 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
       const openRows = contentRows.filter((row) => !COMPLETED_CONTENT_STATUSES.has(String(row.status ?? "")))
       const invoiceTargets = contentRows.filter(
         (row) =>
-          row.delivery_month === thisMonth &&
+          getContentBillingMonthYm(row.delivery_month, row.due_client_at) === thisMonth &&
           Boolean(row.billable_flag) &&
           BILLABLE_DONE_STATUSES.has(String(row.status ?? ""))
       )
       const vendorRows =
         (vendorInvoicesRes.data as Array<{ status: string | null }> | null) ?? []
+      const expenseRows =
+        (expensesRes.data as Array<{ occurred_on: string; receipt_path: string | null }> | null) ?? []
 
       const dueTodayRows = openRows.filter(
         (row) =>
@@ -375,6 +386,9 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
             isContentEditorOverdue(row.status, row.due_editor_at, todayYmd, row.editor_submitted_at)
         ).length,
         unissuedCount: invoiceTargets.filter((row) => !row.invoice_id).length,
+        missingReceiptCount: expenseRows.filter(
+          (row) => row.occurred_on.startsWith(thisMonth) && !String(row.receipt_path ?? "").trim()
+        ).length,
         vendorReviewCount: vendorRows.filter((row) => row.status === "draft" || row.status === "rejected").length,
         payoutPendingCount: vendorRows.filter((row) => row.status === "submitted" || row.status === "approved").length,
       }
@@ -387,11 +401,12 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
         snapshot: nextSnapshot,
       }
 
-      if (contentsRes.error || invoicesRes.error || vendorInvoicesRes.error) {
+      if (contentsRes.error || invoicesRes.error || expensesRes.error || vendorInvoicesRes.error) {
         if (process.env.NODE_ENV === "development") {
           console.error("[Sidebar] status snapshot load error", {
             contents: contentsRes.error?.message,
             invoices: invoicesRes.error?.message,
+            expenses: expensesRes.error?.message,
             vendorInvoices: vendorInvoicesRes.error?.message,
           })
         }
@@ -419,15 +434,27 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
 
   const navBadges = useMemo<Record<string, SidebarNavBadge | undefined>>(() => {
     const badges: Record<string, SidebarNavBadge | undefined> = {}
+    const closePendingCount =
+      statusSnapshot.unissuedCount +
+      statusSnapshot.missingReceiptCount +
+      statusSnapshot.vendorReviewCount +
+      statusSnapshot.payoutPendingCount
 
-    if (statusSnapshot.overdueCount > 0) {
-      badges["/contents"] = { text: `遅れ ${statusSnapshot.overdueCount}`, tone: "danger" }
-    } else if (statusSnapshot.todaySubmitCount > 0) {
-      badges["/contents"] = { text: `今日 ${statusSnapshot.todaySubmitCount}`, tone: "info" }
+    if (canAccessProjects && statusSnapshot.overdueCount > 0) {
+      badges["/projects"] = { text: `遅れ ${statusSnapshot.overdueCount}`, tone: "danger" }
+    } else if (canAccessProjects && statusSnapshot.todaySubmitCount > 0) {
+      badges["/projects"] = { text: `今日 ${statusSnapshot.todaySubmitCount}`, tone: "info" }
     }
 
     if (canAccessBilling && statusSnapshot.unissuedCount > 0) {
       badges["/billing"] = { text: `未発行 ${statusSnapshot.unissuedCount}`, tone: "danger" }
+    }
+
+    if (canAccessBilling && closePendingCount > 0) {
+      badges["/close"] = {
+        text: `未処理 ${closePendingCount}`,
+        tone: closePendingCount >= 5 ? "danger" : "warn",
+      }
     }
 
     if (canAccessBilling && statusSnapshot.vendorReviewCount > 0) {
@@ -439,7 +466,7 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
     }
 
     return badges
-  }, [canAccessBilling, statusSnapshot])
+  }, [canAccessBilling, canAccessProjects, statusSnapshot])
 
   const createBlankPage = useCallback(
     async () => {
@@ -1252,24 +1279,24 @@ export default function Sidebar({ isMobile, onNavigate }: SidebarProps) {
             >
               空ページ
             </button>
-            <button
+            {canAccessProjects ? <button
               type="button"
               onClick={() => {
                 setQuickCreateOpen(false)
                 onNavigate?.()
-                router.push("/contents")
+                router.push("/projects?create=1")
               }}
               style={{ border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", borderRadius: 8, padding: "8px 10px", textAlign: "left", cursor: "pointer", fontSize: 12 }}
             >
-              新規タスク
-              </button>
-            {canAccessBilling && (
+              新規案件
+              </button> : null}
+            {canAccessProjects && (
               <button
                 type="button"
                 onClick={() => {
                   setQuickCreateOpen(false)
                   onNavigate?.()
-                  router.push("/contents?newClient=1")
+                  router.push("/projects?create=1&newClient=1")
                 }}
                 style={{ border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", borderRadius: 8, padding: "8px 10px", textAlign: "left", cursor: "pointer", fontSize: 12 }}
               >

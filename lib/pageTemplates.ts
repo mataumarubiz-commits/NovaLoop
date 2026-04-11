@@ -105,7 +105,7 @@ export const PAGE_TEMPLATES: Record<Exclude<PageTemplateKey, "blank">, PageTempl
         heading(1, "請求手順"),
         paragraph("月次請求を安全に進めるための確認順を残します。"),
         heading(2, "事前確認"),
-        bullet(["対象月を確認する", "請求対象の Contents を確認する", "重複請求がないかを見る"]),
+        bullet(["対象月を確認する", "請求対象の案件明細を確認する", "重複請求がないかを見る"]),
         heading(2, "Billing の操作"),
         ordered(["対象月を選ぶ", "プレビューを確認する", "請求書を生成する"]),
         heading(2, "Invoices の確認"),

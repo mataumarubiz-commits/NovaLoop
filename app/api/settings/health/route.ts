@@ -66,6 +66,9 @@ export async function GET(req: NextRequest) {
     { id: "payouts", label: "payouts", table: "payouts" },
     { id: "pages", label: "pages", table: "pages" },
     { id: "notifications", label: "notifications", table: "notifications", orgColumn: "org_id" },
+    { id: "org_discord_connections", label: "org_discord_connections", table: "org_discord_connections" },
+    { id: "discord_delivery_logs", label: "discord_delivery_logs", table: "discord_delivery_logs" },
+    { id: "discord_command_logs", label: "discord_command_logs", table: "discord_command_logs" },
     { id: "export_jobs", label: "export_jobs", table: "export_jobs" },
     { id: "import_jobs", label: "import_jobs", table: "import_jobs" },
   ]

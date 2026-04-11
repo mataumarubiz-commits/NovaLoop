@@ -417,7 +417,7 @@ export default function PagesListPage() {
       </div>
 
       <div style={{ marginBottom: 16, fontSize: 12, color: "var(--muted)", lineHeight: 1.7, borderLeft: "2px solid var(--border)", paddingLeft: 12 }}>
-        Pages はルールと型を管理する場所です。案件データの実体は /contents に置き、ここでは運用ルール・チェックリスト・テンプレートを整理します。
+        Pages はルールと型を管理する場所です。案件データの実体は案件画面に置き、ここでは運用ルール・チェックリスト・テンプレートを整理します。
       </div>
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>

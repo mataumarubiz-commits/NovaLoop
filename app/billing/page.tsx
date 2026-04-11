@@ -46,7 +46,8 @@ type GenerateResponse = {
     client_id: string
     client_name: string
     invoice_id: string
-    invoice_no: string
+    invoice_no: string | null
+    status?: "draft"
     content_count: number
   }>
   skipped?: Array<{
@@ -86,6 +87,7 @@ type InvoiceRequestRow = {
   last_reminded_at: string | null
   last_sent_at: string | null
   issued_invoice_id: string | null
+  issued_invoice_status?: string | null
   created_at: string
   reminder_logs?: InvoiceRequestLog[]
 }
@@ -117,6 +119,18 @@ function requestDeadlineState(deadline?: string | null) {
   if (diff < 0) return { label: "期限超過", color: "#b91c1c", bg: "#fee2e2" }
   if (diff <= 3) return { label: "期限が近い", color: "#b45309", bg: "#fef3c7" }
   return { label: "進行中", color: "#166534", bg: "#dcfce7" }
+}
+
+function requestProgressLabel(row: InvoiceRequestRow) {
+  if (row.issued_invoice_id) {
+    if (row.issued_invoice_status === "draft") return "下書き作成済み"
+    if (row.issued_invoice_status === "issued") return "発行済み"
+    if (row.issued_invoice_status === "void") return "請求書無効"
+    return "請求書作成済み"
+  }
+  if (row.status === "viewed") return "確認済み"
+  if (row.status === "sent") return "送付済み"
+  return row.status || "-"
 }
 
 async function getAccessToken() {
@@ -165,6 +179,10 @@ export default function BillingPage() {
   const [requestLeadDays, setRequestLeadDays] = useState(3)
 
   const selectedRequestClient = useMemo(() => clients.find((client) => client.id === requestClientId) ?? null, [clients, requestClientId])
+  const monthIssuedInvoices = useMemo(
+    () => monthInvoices.filter((row) => row.status === "issued"),
+    [monthInvoices]
+  )
 
   const buildRequestAiContext = useCallback(() => {
     return [
@@ -354,7 +372,7 @@ export default function BillingPage() {
 
     if (warningTargets.length > 0 && duplicateMode === "allow_additional") {
       const ok = window.confirm(
-        `既存請求書がある取引先を ${warningTargets.length} 件含みます。追加請求書として新規発行しますか。`
+        `既存請求書がある取引先を ${warningTargets.length} 件含みます。追加の請求書下書きを作成しますか。`
       )
       if (!ok) return
     }
@@ -391,21 +409,10 @@ export default function BillingPage() {
       }
 
       const generated = Array.isArray(json.generated) ? json.generated : []
-      if (generated.length > 0) {
-        await Promise.allSettled(
-          generated.map((row) =>
-            fetch(`/api/invoices/${row.invoice_id}/pdf`, {
-              method: "POST",
-              headers: { Authorization: `Bearer ${token}` },
-            }).catch(() => null)
-          )
-        )
-      }
-
       setResult(json)
       setSuccess(
         generated.length > 0
-          ? `${generated.length} 件の請求書を作成しました。PDF もあわせて生成しています。`
+          ? `${generated.length} 件の請求書下書きを作成しました。請求書画面から発行を確定できます。`
           : "新しく作成された請求書はありませんでした。"
       )
       await Promise.all([loadPreview(), loadMonthInvoices()])
@@ -416,7 +423,10 @@ export default function BillingPage() {
   }
 
   const downloadMonthZip = async () => {
-    if (monthInvoices.length === 0) return
+    if (monthIssuedInvoices.length === 0) {
+      setError("PDF ZIP は発行済みの請求書がある月だけ作成できます。")
+      return
+    }
     setZipLoading(true)
     setError(null)
     try {
@@ -425,7 +435,7 @@ export default function BillingPage() {
         setError("ログイン状態を確認してください")
         return
       }
-      const ids = monthInvoices.map((row) => row.id)
+      const ids = monthIssuedInvoices.map((row) => row.id)
       const res = await fetch("/api/invoices/bulk-zip", {
         method: "POST",
         headers: {
@@ -643,12 +653,12 @@ export default function BillingPage() {
                   請求をまとめて進める
                 </h1>
                 <p style={{ margin: 0, color: "var(--muted)", fontSize: 15, lineHeight: 1.7 }}>
-                  対象月を選んで候補を確認し、必要な取引先だけ請求書を発行します。PDF の生成までをこの画面で終わらせて、送付判断は人が確認します。
+                  対象月を選んで候補を確認し、必要な取引先だけ請求書下書きを作成します。発行確定まではこの画面で進め、PDF 生成と送付判断は発行後に人が確認します。
                 </p>
               </div>
 
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                {["1. 候補を見る", "2. 請求書を作る", "3. PDFを確認する"].map((step) => (
+                {["1. 候補を見る", "2. 下書きを作る", "3. 発行後に PDF"].map((step) => (
                   <span key={step} style={heroStepStyle}>
                     {step}
                   </span>
@@ -663,7 +673,7 @@ export default function BillingPage() {
                 }}
               >
                 <MetricCard label="請求対象金額" value={formatCurrency(preview?.total_amount ?? 0)} />
-                <MetricCard label="発行できる取引先" value={`${generatableClientCount}社`} />
+                <MetricCard label="作成できる取引先" value={`${generatableClientCount}社`} />
                 <MetricCard label="当月の請求書" value={`${monthInvoices.length}件`} />
                 <MetricCard
                   label="期限超過の依頼"
@@ -676,8 +686,8 @@ export default function BillingPage() {
             <div style={controlPanelStyle}>
               <SectionHeading
                 eyebrow="CONTROL"
-                title="対象月と発行条件"
-                description="候補を更新してから、一括発行か取引先単位の発行を選びます。"
+                title="対象月と作成条件"
+                description="候補を更新してから、一括作成か取引先単位の作成を選びます。"
               />
 
               <div
@@ -728,7 +738,7 @@ export default function BillingPage() {
                     style={inputStyle}
                   >
                     <option value="skip_existing">スキップする</option>
-                    <option value="allow_additional">追加請求書として発行</option>
+                    <option value="allow_additional">追加の下書きを作成</option>
                   </select>
                 </label>
               </div>
@@ -756,7 +766,7 @@ export default function BillingPage() {
                     opacity: generating || previewClients.length === 0 ? 0.7 : 1,
                   }}
                 >
-                  {generating && !generatingClientId ? "請求書を作成中..." : "この条件で一括発行"}
+                  {generating && !generatingClientId ? "請求書下書きを作成中..." : "この条件で下書きを作成"}
                 </button>
               </div>
 
@@ -768,8 +778,8 @@ export default function BillingPage() {
                       ? `${clientNameMap.get(clientFilter) ?? "選択中の取引先"}だけを表示しています。`
                       : "すべての取引先を表示しています。"}{" "}
                     {duplicateMode === "skip_existing"
-                      ? "既存の請求書がある取引先は新規発行せずにスキップします。"
-                      : "既存の請求書があっても追加の請求書を発行します。"}
+                      ? "既存の請求書がある取引先は新しい下書きを作らずにスキップします。"
+                      : "既存の請求書があっても追加の下書きを作成します。"}
                   </span>
                   <span style={{ fontSize: 13, color: "var(--muted)" }}>
                     今月の請求書合計は {formatCurrency(monthInvoiceTotal)}、未処理の請求依頼は{" "}
@@ -802,7 +812,7 @@ export default function BillingPage() {
           <p style={{ fontSize: 12, letterSpacing: "0.08em", color: "var(--muted)", margin: 0 }}>BILLING</p>
           <h1 style={{ fontSize: 28, margin: 0, color: "var(--text)" }}>月次請求と請求依頼</h1>
           <p style={{ margin: 0, color: "var(--muted)", fontSize: 14 }}>
-            月次請求の一括発行と、請求依頼の期限フォローを同じ画面で管理します。送付は PDF 生成まで、人の確認フローは維持します。
+            月次請求の下書き作成と、請求依頼の期限フォローを同じ画面で管理します。PDF 生成は発行確定後に行い、送付は人の確認フローを維持します。
           </p>
         </header>
 
@@ -832,7 +842,7 @@ export default function BillingPage() {
             <span style={{ fontSize: 12, color: "var(--muted)" }}>重複請求の扱い</span>
             <select value={duplicateMode} onChange={(event) => setDuplicateMode(event.target.value as BillingDuplicateMode)} style={{ ...inputStyle, minWidth: 220 }}>
               <option value="skip_existing">既存請求があればスキップ</option>
-              <option value="allow_additional">追加請求書として発行</option>
+              <option value="allow_additional">追加の下書きを作成</option>
             </select>
           </label>
           <div style={{ display: "flex", gap: 10, alignItems: "center", marginLeft: "auto", flexWrap: "wrap" }}>
@@ -845,7 +855,7 @@ export default function BillingPage() {
               disabled={generating || !preview || preview.clients.length === 0}
               style={{ padding: "10px 16px", borderRadius: 10, border: "1px solid var(--button-primary-bg)", background: "var(--button-primary-bg)", color: "var(--primary-contrast)", fontWeight: 700, cursor: generating ? "not-allowed" : "pointer" }}
             >
-              {generating && !generatingClientId ? "一括発行中..." : "この月を一括発行"}
+              {generating && !generatingClientId ? "一括作成中..." : "この月の下書きを一括作成"}
             </button>
           </div>
         </section>
@@ -855,8 +865,8 @@ export default function BillingPage() {
           <MetricCard label="請求対象金額" value={formatCurrency(preview?.total_amount ?? 0)} />
           <MetricCard label="対象取引先" value={String(preview?.total_clients ?? 0)} />
           <MetricCard label="既存請求あり" value={String(existingClientCount)} accent={existingClientCount > 0 ? "#b45309" : undefined} />
-          <MetricCard label="発行可能取引先" value={String(generatableClientCount)} />
-          <MetricCard label="当月の発行済み数" value={String(monthInvoices.length)} />
+          <MetricCard label="作成可能取引先" value={String(generatableClientCount)} />
+          <MetricCard label="当月の請求書数" value={String(monthInvoices.length)} />
           <MetricCard label="請求依頼件数" value={String(invoiceRequests.length)} />
           <MetricCard label="期限超過" value={String(overdueCount)} accent={overdueCount > 0 ? "#b91c1c" : undefined} />
         </section>
@@ -871,8 +881,8 @@ export default function BillingPage() {
           <Link href="/settings/workspace" style={{ color: "var(--primary)", fontWeight: 700, textDecoration: "none" }}>
             請求元情報と銀行設定
           </Link>
-          <button type="button" onClick={() => void downloadMonthZip()} disabled={zipLoading || monthInvoices.length === 0} style={{ marginLeft: "auto", ...inputStyle, cursor: monthInvoices.length === 0 ? "not-allowed" : "pointer", fontWeight: 700 }}>
-            {zipLoading ? "ZIP 作成中..." : "当月の請求書 ZIP"}
+          <button type="button" onClick={() => void downloadMonthZip()} disabled={zipLoading || monthIssuedInvoices.length === 0} style={{ marginLeft: "auto", ...inputStyle, cursor: monthIssuedInvoices.length === 0 ? "not-allowed" : "pointer", fontWeight: 700 }}>
+            {zipLoading ? "ZIP 作成中..." : "発行済み請求書 ZIP"}
           </button>
         </section>
         </details>
@@ -889,7 +899,7 @@ export default function BillingPage() {
                     <strong>{row.client_name}</strong>
                     <span>{row.content_count}件</span>
                     <Link href={`/invoices/${row.invoice_id}`} style={{ color: "var(--primary)", fontWeight: 700 }}>
-                      {row.invoice_no}
+                      {row.invoice_no || "下書きを開く"}
                     </Link>
                   </div>
                 ))}
@@ -917,9 +927,9 @@ export default function BillingPage() {
           {!previewLoading && (!preview || preview.clients.length === 0) ? (
             <GuideEmptyState
               title="この月に請求対象はありません"
-              description="コンテンツの delivery_month と billable_flag を見直すと、この一覧に請求候補が出ます。"
-              primaryHref="/contents"
-              primaryLabel="コンテンツを確認"
+              description="案件明細の delivery_month と billable_flag を見直すと、この一覧に請求候補が出ます。"
+              primaryHref="/projects"
+              primaryLabel="案件明細を確認"
               helpHref="/help/billing"
               helpLabel="請求フローを見る"
             />
@@ -927,7 +937,7 @@ export default function BillingPage() {
             <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 920 }}>
               <thead>
                 <tr>
-                  {["取引先", "対象月", "件数", "金額", "既存請求", "発行可否", "注意", "操作"].map((label) => (
+                  {["取引先", "対象月", "件数", "金額", "既存請求", "作成可否", "注意", "操作"].map((label) => (
                     <th key={label} style={{ textAlign: "left", padding: "10px 12px", borderBottom: "1px solid var(--table-border)", color: "var(--muted)", fontSize: 12, fontWeight: 600 }}>
                       {label}
                     </th>
@@ -944,12 +954,12 @@ export default function BillingPage() {
                       <td style={tableCell}>{client.target_count}</td>
                       <td style={tableCell}>{formatCurrency(client.total_amount)}</td>
                       <td style={tableCell}>{client.existing_invoice_count > 0 ? `${client.existing_invoice_count}件` : "なし"}</td>
-                      <td style={{ ...tableCell, color: allowGenerate ? "#166534" : "#b45309" }}>{allowGenerate ? "発行できます" : "既存請求あり"}</td>
+                      <td style={{ ...tableCell, color: allowGenerate ? "#166534" : "#b45309" }}>{allowGenerate ? "作成できます" : "既存請求あり"}</td>
                       <td style={{ ...tableCell, maxWidth: 280 }}>{client.warning ?? "-"}</td>
                       <td style={tableCell}>
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                           <button type="button" disabled={generating} onClick={() => void generateInvoices([client.client_id])} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--button-primary-bg)", background: "var(--button-primary-bg)", color: "var(--primary-contrast)", cursor: generating ? "not-allowed" : "pointer" }}>
-                            {generating && generatingClientId === client.client_id ? "発行中..." : "この取引先だけ発行"}
+                            {generating && generatingClientId === client.client_id ? "作成中..." : "この取引先だけ作成"}
                           </button>
                           {client.existing_invoice_count > 0 ? (
                             <Link href={`/invoices?month=${encodeURIComponent(billingMonth)}`} style={secondaryLinkStyle}>
@@ -1276,10 +1286,10 @@ export default function BillingPage() {
                       </td>
                       <td style={tableCell}>
                         <div style={{ display: "grid", gap: 4 }}>
-                          <span>{row.status}</span>
+                          <span>{requestProgressLabel(row)}</span>
                           {row.issued_invoice_id ? (
                             <Link href={`/invoices/${row.issued_invoice_id}`} style={{ color: "var(--primary)", fontSize: 12, fontWeight: 700 }}>
-                              請求書を見る
+                              {row.issued_invoice_status === "draft" ? "下書きを見る" : "請求書を見る"}
                             </Link>
                           ) : null}
                         </div>

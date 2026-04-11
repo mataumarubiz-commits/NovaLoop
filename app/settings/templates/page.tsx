@@ -248,8 +248,8 @@ export default function TemplatesSettingsPage() {
           <h1 style={{ margin: 0, fontSize: 28, color: "var(--text)" }}>コンテンツテンプレート</h1>
           <p style={{ margin: 0, color: "var(--muted)", lineHeight: 1.8 }}>
             一覧・追加・編集・削除・並び順をこの画面に集約しました。作成したテンプレートは
-            <Link href="/contents" style={{ marginLeft: 4, color: "var(--primary)", textDecoration: "none", fontWeight: 600 }}>
-              /contents
+            <Link href="/projects" style={{ marginLeft: 4, color: "var(--primary)", textDecoration: "none", fontWeight: 600 }}>
+              案件
             </Link>
             のテンプレート導線から使えます。
           </p>

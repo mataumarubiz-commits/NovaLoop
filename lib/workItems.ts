@@ -395,7 +395,7 @@ export const LYCOLLECTION_DEMO_WORK_ITEMS: DemoWorkItemSeed[] = [
   },
 ]
 
-const BILLABLE_STATUS_SET = new Set(["delivered", "approved", "completed", "billable", "published", "launched"])
+const BILLABLE_STATUS_SET = new Set(["delivered", "approved", "completed", "billable", "published", "launched", "rejected"])
 const MONTHLY_FIXED_EXTRA_STATUS_SET = new Set(["operating"])
 
 export function calculateWorkItemAmount(quantity: number, unitPrice: number) {

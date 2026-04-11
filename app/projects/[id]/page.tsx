@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { useParams, useSearchParams } from "next/navigation"
-import { useCallback, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { ProjectInfoCard, ProjectSection, ProjectShell } from "@/components/project/ProjectShell"
 import {
   buttonPrimaryStyle,
@@ -16,13 +16,20 @@ import {
   thStyle,
 } from "@/components/project/projectPageStyles"
 import { useProjectWorkspace } from "@/hooks/useProjectWorkspace"
+import { canAccessProjectsSurface } from "@/lib/projectWorkspaceAccess"
 import {
   buildContentHealthScore,
+  getContentBillingMonthYm,
   isContentClientOverdue,
   normalizeContentDueYmd,
   normalizeContentLinks,
   validateContentRules,
 } from "@/lib/contentWorkflow"
+import {
+  isMissingContentsLinksJsonColumn,
+  isMissingContentsWorkItemFieldsColumn,
+  sanitizeContentWritePayload,
+} from "@/lib/contentsCompat"
 import {
   normalizeAutomationContentDates,
   shiftIsoDateTimeByDays,
@@ -41,7 +48,7 @@ type TabKey = (typeof tabs)[number]
 
 const tabLabels: Record<TabKey, string> = {
   overview: "概要",
-  contents: "タスク",
+  contents: "案件明細",
   tasks: "工程",
   calendar: "カレンダー",
   materials: "素材",
@@ -53,7 +60,7 @@ const tabLabels: Record<TabKey, string> = {
 
 /* ─── Label Maps ─── */
 
-const contractLabels: Record<string, string> = { per_content: "タスク単価", retainer: "リテナー", fixed_fee: "固定費", monthly: "月額" }
+const contractLabels: Record<string, string> = { per_content: "明細単価", retainer: "リテナー", fixed_fee: "固定費", monthly: "月額" }
 
 const taskStatus: Record<string, string> = { not_started: "未着手", in_progress: "進行中", blocked: "ブロック", done: "完了" }
 const taskType: Record<string, string> = { materials: "素材", script: "台本", editing: "編集", internal_review: "社内確認", client_review: "先方確認", revision: "修正", publishing: "公開準備", publish: "公開" }
@@ -121,8 +128,9 @@ export default function ProjectDetailPage() {
   const params = useParams<{ id: string }>()
   const id = typeof params?.id === "string" ? params.id : ""
   const {
-    loading, error, canEdit, canViewFinance, orgId, todayYmd, members, projects, contents, tasks, events, assets, changes, expenses, rateCards, storedExceptions, runtimeExceptions, invoices, invoiceLines, vendorInvoices, vendorInvoiceLines, projectSummaries, refresh,
-  } = useProjectWorkspace()
+    loading, error, role, canEdit, canViewFinance, orgId, todayYmd, members, projects, contents, tasks, events, assets, changes, expenses, rateCards, storedExceptions, runtimeExceptions, invoices, invoiceLines, vendorInvoices, vendorInvoiceLines, projectSummaries, refresh,
+  } = useProjectWorkspace({ requireAdminSurface: true })
+  const canAccessProjects = canAccessProjectsSurface(role)
 
   const project = useMemo(() => projects.find((r) => r.id === id) ?? null, [id, projects])
   const summary = useMemo(() => projectSummaries.find((r) => r.project.id === id) ?? null, [id, projectSummaries])
@@ -188,7 +196,7 @@ export default function ProjectDetailPage() {
   const monthlyTrend = useMemo(() => {
     const map = new Map<string, { sales: number; cost: number; expense: number }>()
     for (const r of rows) {
-      const month = r.delivery_month || r.due_client_at.slice(0, 7)
+      const month = getContentBillingMonthYm(r.delivery_month, r.due_client_at)
       const cur = map.get(month) ?? { sales: 0, cost: 0, expense: 0 }
       cur.sales += salesByContent.get(r.id) ?? Number(r.unit_price ?? 0)
       cur.cost += costByContent.get(r.id) ?? Number(r.estimated_cost ?? 0)
@@ -206,7 +214,13 @@ export default function ProjectDetailPage() {
   /* ─── UI State ─── */
   const searchParams = useSearchParams()
   const initialTab = (searchParams?.get("tab") ?? "overview") as TabKey
+  const highlightContentId = searchParams?.get("highlight") ?? ""
   const [tab, setTabRaw] = useState<TabKey>(tabs.includes(initialTab as TabKey) ? initialTab : "overview")
+  useEffect(() => {
+    queueMicrotask(() => {
+      setTabRaw(tabs.includes(initialTab as TabKey) ? initialTab : "overview")
+    })
+  }, [initialTab])
   const setTab = useCallback((t: TabKey) => {
     setTabRaw(t)
     const url = new URL(window.location.href)
@@ -224,6 +238,16 @@ export default function ProjectDetailPage() {
   const [bulkChecker, setBulkChecker] = useState("")
   const [bulkBillable, setBulkBillable] = useState<"keep" | "true" | "false">("keep")
   const [bulkUnitPrice, setBulkUnitPrice] = useState("")
+  const [newContent, setNewContent] = useState({
+    title: "",
+    dueClientAt: todayYmd,
+    unitPrice: "",
+    status: "not_started",
+    billable: true,
+    assigneeEditorUserId: "",
+    assigneeCheckerUserId: "",
+  })
+  const [createContentBusy, setCreateContentBusy] = useState(false)
   const [rateCardDraft, setRateCardDraft] = useState<RateCardDraft>(emptyRateCard)
   const [rateCardBusy, setRateCardBusy] = useState(false)
 
@@ -233,6 +257,13 @@ export default function ProjectDetailPage() {
 
   /* ─── Loading / Not found ─── */
   if (loading) return <ProjectShell title="案件詳細" description="読み込み中です。">読み込み中...</ProjectShell>
+  if (!canAccessProjects) {
+    return (
+      <ProjectShell title="案件詳細" description="案件詳細は owner / executive_assistant のみ利用できます。">
+        <ProjectSection title="権限不足">この画面は owner / executive_assistant のみ利用できます。</ProjectSection>
+      </ProjectShell>
+    )
+  }
   if (!project || !summary) return <ProjectShell title="案件詳細" description="案件が見つかりません。"><ProjectSection title="案件が見つかりません"><Link href="/projects">案件一覧へ戻る</Link></ProjectSection></ProjectShell>
 
   /* ─── Draft fields ─── */
@@ -276,7 +307,6 @@ export default function ProjectDetailPage() {
       discord_channel_id: d.discordChannelId.trim() || null,
       drive_folder_url: d.driveFolderUrl.trim() || null,
     }).eq("id", project.id).eq("org_id", orgId)
-    setBusy(false)
     if (e) return flashError(e.message)
     flashSuccess("保存しました。")
     setDraft({})
@@ -355,6 +385,7 @@ export default function ProjectDetailPage() {
     const automationProject = toAutomationProject(project)
     setBusy(true)
     clearUi()
+    try {
 
     for (const row of selectedRows) {
       const editorId = bulkEditor || row.assignee_editor_user_id || null
@@ -411,19 +442,62 @@ export default function ProjectDetailPage() {
       }
       if (bulkUnitPrice !== "") updatePayload.unit_price = unitPrice
 
-      const { error: contentError } = await supabase.from("contents").update(updatePayload).eq("id", row.id).eq("org_id", orgId)
-      if (contentError) { setBusy(false); return flashError(contentError.message) }
+      let contentResult = await supabase.from("contents").update(updatePayload).eq("id", row.id).eq("org_id", orgId)
+      let contentError = contentResult.error ? { message: contentResult.error.message } : null
+      if (
+        contentError &&
+        (isMissingContentsLinksJsonColumn(contentError.message) ||
+          isMissingContentsWorkItemFieldsColumn(contentError.message))
+      ) {
+        contentResult = await supabase
+          .from("contents")
+          .update(
+            sanitizeContentWritePayload(updatePayload, {
+              supportsLinksJson: !isMissingContentsLinksJsonColumn(contentError.message),
+              supportsWorkItemFields: !isMissingContentsWorkItemFieldsColumn(contentError.message),
+            })
+          )
+          .eq("id", row.id)
+          .eq("org_id", orgId)
+        contentError = contentResult.error ? { message: contentResult.error.message } : null
+        if (
+          contentError &&
+          (isMissingContentsLinksJsonColumn(contentError.message) ||
+            isMissingContentsWorkItemFieldsColumn(contentError.message))
+        ) {
+          contentResult = await supabase
+            .from("contents")
+            .update(
+              sanitizeContentWritePayload(updatePayload, {
+                supportsLinksJson: false,
+                supportsWorkItemFields: false,
+              })
+            )
+            .eq("id", row.id)
+            .eq("org_id", orgId)
+          contentError = contentResult.error ? { message: contentResult.error.message } : null
+        }
+      }
+      if (contentError) return flashError(contentError.message)
 
-      await syncAutomationArtifacts({ db: supabase, orgId, previous: toAutomationContent(row), next: normalized, project: automationProject, todayYmd })
+      try {
+        await syncAutomationArtifacts({ db: supabase, orgId, previous: toAutomationContent(row), next: normalized, project: automationProject, todayYmd })
+      } catch (error) {
+        setBusy(false)
+        await refresh()
+        return flashError(
+          `一括更新の内容は保存されましたが、自動同期に失敗しました: ${error instanceof Error ? error.message : "unknown error"}`
+        )
+      }
 
       if (shiftDays === 0) continue
       for (const task of taskRows.filter((t) => t.content_id === row.id)) {
         const { error: taskError } = await supabase.from("project_tasks").update({ planned_start_date: task.planned_start_date ? shiftYmdByDaysAligned(task.planned_start_date, shiftDays) : null, planned_end_date: task.planned_end_date ? shiftYmdByDaysAligned(task.planned_end_date, shiftDays) : null }).eq("id", task.id).eq("org_id", orgId)
-        if (taskError) { setBusy(false); return flashError(taskError.message) }
+        if (taskError) return flashError(taskError.message)
       }
       for (const event of eventRows.filter((ev) => ev.content_id === row.id)) {
         const { error: eventError } = await supabase.from("schedule_events").update({ start_at: shiftIsoDateTimeByDays(event.start_at, shiftDays), end_at: event.end_at ? shiftIsoDateTimeByDays(event.end_at, shiftDays) : null }).eq("id", event.id).eq("org_id", orgId)
-        if (eventError) { setBusy(false); return flashError(eventError.message) }
+        if (eventError) return flashError(eventError.message)
       }
     }
 
@@ -432,6 +506,195 @@ export default function ProjectDetailPage() {
     setSelectedIds([])
     setBulkUnitPrice("")
     await refresh()
+    } catch (error) {
+      flashError(error instanceof Error ? error.message : "一括更新に失敗しました。")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const createContent = async () => {
+    if (!canEdit || !orgId) return
+    const title = newContent.title.trim()
+    if (!title) return flashError("タイトルを入力してください。")
+
+    const contentId = crypto.randomUUID()
+    const baseDueClientAt = newContent.dueClientAt || todayYmd
+    const automationProject = toAutomationProject(project)
+    const draftContent: AutomationContent = {
+      id: contentId,
+      org_id: orgId,
+      project_id: project.id,
+      project_name: project.name,
+      title,
+      due_client_at: baseDueClientAt,
+      due_editor_at: baseDueClientAt,
+      publish_at: null,
+      status: newContent.status,
+      billable_flag: Boolean(newContent.billable),
+      delivery_month: baseDueClientAt.slice(0, 7),
+      unit_price: Number(newContent.unitPrice || 0),
+      invoice_id: null,
+      assignee_editor_user_id: newContent.assigneeEditorUserId || null,
+      assignee_checker_user_id: newContent.assigneeCheckerUserId || null,
+      revision_count: 0,
+      estimated_cost: 0,
+      next_action: null,
+      blocked_reason: null,
+      material_status: "not_ready",
+      draft_status: "not_started",
+      final_status: "not_started",
+      health_score: null,
+      links_json: {},
+      editor_submitted_at: null,
+      client_submitted_at: null,
+    }
+
+    const normalized = normalizeAutomationContentDates({
+      previous: null,
+      next: draftContent,
+      todayYmd,
+      project: automationProject,
+    })
+    const links = normalizeContentLinks(normalized.links_json)
+    const errs = validateContentRules({
+      dueClientAt: normalized.due_client_at,
+      dueEditorAt: normalized.due_editor_at,
+      status: normalized.status,
+      unitPrice: Number(normalized.unit_price),
+      billable: Boolean(normalized.billable_flag),
+      materialStatus: normalized.material_status,
+      draftStatus: normalized.draft_status,
+      finalStatus: normalized.final_status,
+      assigneeEditorUserId: normalized.assignee_editor_user_id,
+      assigneeCheckerUserId: normalized.assignee_checker_user_id,
+      nextAction: normalized.next_action,
+      revisionCount: Number(normalized.revision_count ?? 0),
+      estimatedCost: Number(normalized.estimated_cost ?? 0),
+      links,
+    })
+    if (errs.length > 0) return flashError(errs[0])
+
+    const payload: Record<string, unknown> = {
+      id: normalized.id,
+      org_id: orgId,
+      client_id: project.client_id,
+      project_id: project.id,
+      project_name: project.name,
+      title: normalized.title,
+      due_client_at: normalized.due_client_at,
+      due_editor_at: normalized.due_editor_at,
+      publish_at: normalized.publish_at,
+      status: normalized.status,
+      thumbnail_done: false,
+      billable_flag: normalized.billable_flag,
+      delivery_month: normalized.delivery_month,
+      unit_price: normalized.unit_price,
+      invoice_id: null,
+      sequence_no: null,
+      assignee_editor_user_id: normalized.assignee_editor_user_id,
+      assignee_checker_user_id: normalized.assignee_checker_user_id,
+      revision_count: normalized.revision_count ?? 0,
+      workload_points: 1,
+      estimated_cost: normalized.estimated_cost ?? 0,
+      next_action: normalized.next_action,
+      blocked_reason: normalized.blocked_reason,
+      material_status: normalized.material_status,
+      draft_status: normalized.draft_status,
+      final_status: normalized.final_status,
+      health_score: normalized.health_score ?? buildContentHealthScore({
+        dueClientAt: normalized.due_client_at,
+        dueEditorAt: normalized.due_editor_at,
+        status: normalized.status,
+        unitPrice: Number(normalized.unit_price),
+        billable: Boolean(normalized.billable_flag),
+        materialStatus: normalized.material_status,
+        draftStatus: normalized.draft_status,
+        finalStatus: normalized.final_status,
+        assigneeEditorUserId: normalized.assignee_editor_user_id,
+        assigneeCheckerUserId: normalized.assignee_checker_user_id,
+        nextAction: normalized.next_action,
+        revisionCount: Number(normalized.revision_count ?? 0),
+        estimatedCost: Number(normalized.estimated_cost ?? 0),
+        links,
+        todayYmd,
+      }),
+      links_json: links,
+      editor_submitted_at: null,
+      client_submitted_at: null,
+    }
+
+    setCreateContentBusy(true)
+    clearUi()
+    let inserted = false
+    try {
+      let insertError: { message: string } | null = null
+    let insertResult = await supabase.from("contents").insert(payload)
+    insertError = insertResult.error ? { message: insertResult.error.message } : null
+    if (
+      insertError &&
+      (isMissingContentsLinksJsonColumn(insertError.message) ||
+        isMissingContentsWorkItemFieldsColumn(insertError.message))
+    ) {
+      insertResult = await supabase.from("contents").insert(
+        sanitizeContentWritePayload(payload, {
+          supportsLinksJson: !isMissingContentsLinksJsonColumn(insertError.message),
+          supportsWorkItemFields: !isMissingContentsWorkItemFieldsColumn(insertError.message),
+        })
+      )
+      insertError = insertResult.error ? { message: insertResult.error.message } : null
+      if (
+        insertError &&
+        (isMissingContentsLinksJsonColumn(insertError.message) ||
+          isMissingContentsWorkItemFieldsColumn(insertError.message))
+      ) {
+        insertResult = await supabase.from("contents").insert(
+          sanitizeContentWritePayload(payload, {
+            supportsLinksJson: false,
+            supportsWorkItemFields: false,
+          })
+        )
+        insertError = insertResult.error ? { message: insertResult.error.message } : null
+      }
+    }
+      if (insertError) {
+        return flashError(insertError.message)
+      }
+
+      inserted = true
+      await syncAutomationArtifacts({ db: supabase, orgId, previous: null, next: normalized, project: automationProject, todayYmd })
+    setNewContent({
+      title: "",
+      dueClientAt: todayYmd,
+      unitPrice: "",
+      status: "not_started",
+      billable: true,
+      assigneeEditorUserId: "",
+      assigneeCheckerUserId: "",
+    })
+    flashSuccess("コンテンツを追加しました。")
+    setTab("contents")
+    await refresh()
+    } catch (error) {
+      if (inserted) {
+        setNewContent({
+          title: "",
+          dueClientAt: todayYmd,
+          unitPrice: "",
+          status: "not_started",
+          billable: true,
+          assigneeEditorUserId: "",
+          assigneeCheckerUserId: "",
+        })
+        await refresh()
+        return flashError(
+          `明細は追加されましたが、自動同期に失敗しました: ${error instanceof Error ? error.message : "unknown error"}`
+        )
+      }
+      return flashError(error instanceof Error ? error.message : "明細の追加に失敗しました。")
+    } finally {
+      setCreateContentBusy(false)
+    }
   }
 
   /* ─── Clipboard / Navigation helpers ─── */
@@ -589,7 +852,53 @@ export default function ProjectDetailPage() {
   )
 
   const contentsView = (
-    <ProjectSection title="コンテンツ" description="タスクの一括操作と単価の確認ができます。">
+    <ProjectSection title="コンテンツ" description="案件配下の請求対象明細をこのタブで管理します。">
+      {canEdit && (
+        <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", padding: "14px 16px", borderRadius: 14, border: "1px solid var(--border)", background: "var(--surface-2)", marginBottom: 14 }}>
+          <label style={{ display: "grid", gap: 4, gridColumn: "span 2" }}>
+            <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600 }}>タイトル *</span>
+            <input value={newContent.title} onChange={(e) => setNewContent((prev) => ({ ...prev, title: e.target.value }))} placeholder="例: 4月1本目" style={inputStyle} />
+          </label>
+          <label style={{ display: "grid", gap: 4 }}>
+            <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600 }}>先方納期</span>
+            <input type="date" value={newContent.dueClientAt} onChange={(e) => setNewContent((prev) => ({ ...prev, dueClientAt: e.target.value }))} style={inputStyle} />
+          </label>
+          <label style={{ display: "grid", gap: 4 }}>
+            <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600 }}>単価</span>
+            <input type="number" min="0" value={newContent.unitPrice} onChange={(e) => setNewContent((prev) => ({ ...prev, unitPrice: e.target.value }))} placeholder="0" style={inputStyle} />
+          </label>
+          <label style={{ display: "grid", gap: 4 }}>
+            <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600 }}>ステータス</span>
+            <select value={newContent.status} onChange={(e) => setNewContent((prev) => ({ ...prev, status: e.target.value }))} style={inputStyle}>
+              {CONTENT_WORKFLOW_STATUS_OPTIONS.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
+            </select>
+          </label>
+          <label style={{ display: "grid", gap: 4 }}>
+            <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600 }}>編集担当</span>
+            <select value={newContent.assigneeEditorUserId} onChange={(e) => setNewContent((prev) => ({ ...prev, assigneeEditorUserId: e.target.value }))} style={inputStyle}>
+              <option value="">未設定</option>
+              {members.map((m) => <option key={m.userId} value={m.userId}>{m.displayName || m.email || m.userId}</option>)}
+            </select>
+          </label>
+          <label style={{ display: "grid", gap: 4 }}>
+            <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600 }}>確認担当</span>
+            <select value={newContent.assigneeCheckerUserId} onChange={(e) => setNewContent((prev) => ({ ...prev, assigneeCheckerUserId: e.target.value }))} style={inputStyle}>
+              <option value="">未設定</option>
+              {members.map((m) => <option key={m.userId} value={m.userId}>{m.displayName || m.email || m.userId}</option>)}
+            </select>
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, alignSelf: "end", paddingBottom: 10 }}>
+            <input type="checkbox" checked={newContent.billable} onChange={(e) => setNewContent((prev) => ({ ...prev, billable: e.target.checked }))} />
+            <span style={{ fontSize: 13, color: "var(--text)", fontWeight: 600 }}>請求対象</span>
+          </label>
+          <div style={{ display: "flex", gap: 8, alignItems: "end", gridColumn: "1 / -1" }}>
+            <button type="button" onClick={() => void createContent()} disabled={createContentBusy} style={buttonPrimaryStyle}>
+              {createContentBusy ? "追加中..." : "明細を追加"}
+            </button>
+          </div>
+        </div>
+      )}
+
       <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))" }}>
         <label style={{ display: "grid", gap: 4 }}><span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600 }}>日程調整(日)</span><input type="number" value={bulkShift} onChange={(e) => setBulkShift(e.target.value)} style={inputStyle} /></label>
         <label style={{ display: "grid", gap: 4 }}><span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600 }}>ステータス</span><select value={bulkStatus} onChange={(e) => setBulkStatus(e.target.value)} style={inputStyle}><option value="">変更しない</option>{CONTENT_WORKFLOW_STATUS_OPTIONS.map(({ value: v, label: l }) => <option key={v} value={v}>{l}</option>)}</select></label>
@@ -600,7 +909,6 @@ export default function ProjectDetailPage() {
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
         <button type="button" onClick={() => void applyBulk()} disabled={busy} style={buttonPrimaryStyle}>{busy ? "更新中..." : `一括更新${selectedIds.length > 0 ? ` (${selectedIds.length}件)` : ""}`}</button>
-        <Link href={`/contents?projectId=${encodeURIComponent(project.id)}`} style={{ ...buttonSecondaryStyle, textDecoration: "none" }}>制作シートを開く</Link>
       </div>
       <div style={{ marginTop: 14, overflowX: "auto" }}>
         <table style={{ ...tableStyle, minWidth: 1280 }}>
@@ -611,7 +919,7 @@ export default function ProjectDetailPage() {
           </thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={r.id} style={{ background: isContentClientOverdue(r.status, r.due_client_at, todayYmd, r.client_submitted_at) ? "rgba(254, 242, 242, 0.5)" : undefined }}>
+              <tr key={r.id} style={{ background: highlightContentId === r.id ? "color-mix(in srgb, var(--primary) 10%, var(--surface))" : isContentClientOverdue(r.status, r.due_client_at, todayYmd, r.client_submitted_at) ? "rgba(254, 242, 242, 0.5)" : undefined }}>
                 <td style={tdStyle}><input type="checkbox" checked={selectedIds.includes(r.id)} onChange={() => setSelectedIds((p) => p.includes(r.id) ? p.filter((x) => x !== r.id) : [...p, r.id])} /></td>
                 <td style={{ ...tdStyle, fontWeight: 600 }}>{r.title}</td>
                 <td style={tdStyle}>
@@ -727,7 +1035,7 @@ export default function ProjectDetailPage() {
         <ProjectInfoCard label="粗利率" value={pct(summary.marginRate)} accent={(summary.marginRate ?? 1) < 0.35 ? "var(--warning-text)" : undefined} />
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
-        <Link href={`/finance-lite?projectId=${encodeURIComponent(project.id)}`} style={{ ...buttonSecondaryStyle, textDecoration: "none" }}>収支ダッシュボードを開く</Link>
+        <Link href={`/profitability?projectId=${encodeURIComponent(project.id)}`} style={{ ...buttonSecondaryStyle, textDecoration: "none" }}>収支ダッシュボードを開く</Link>
       </div>
       <div style={{ marginTop: 14, overflowX: "auto" }}>
         <table style={{ ...tableStyle, minWidth: 680 }}>
@@ -888,7 +1196,7 @@ export default function ProjectDetailPage() {
       action={
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <Link href="/projects" style={{ ...buttonSecondaryStyle, textDecoration: "none" }}>案件一覧へ戻る</Link>
-          <Link href={`/contents?projectId=${encodeURIComponent(project.id)}`} style={{ ...buttonSecondaryStyle, textDecoration: "none" }}>制作シートを開く</Link>
+          <Link href={`/projects/${encodeURIComponent(project.id)}?tab=contents`} style={{ ...buttonSecondaryStyle, textDecoration: "none" }}>コンテンツを開く</Link>
         </div>
       }
     >

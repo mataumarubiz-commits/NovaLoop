@@ -3,10 +3,13 @@
 import { useCallback, useEffect, useState } from "react"
 import { useAuthOrg } from "@/hooks/useAuthOrg"
 import { hasOrgPermission } from "@/lib/orgRolePermissions"
+import { shouldLoadProjectWorkspace } from "@/lib/projectWorkspaceAccess"
 import {
   ensureContentLinksJsonRows,
   isMissingContentsLinksJsonColumn,
+  isMissingContentsWorkItemFieldsColumn,
   removeLinksJsonFromSelect,
+  removeWorkItemFieldsFromSelect,
 } from "@/lib/contentsCompat"
 import { supabase } from "@/lib/supabase"
 import {
@@ -136,7 +139,7 @@ const workspaceInflight = new Map<string, Promise<ProjectWorkspaceSnapshot>>()
 const workspaceFetchGeneration = new Map<string, number>()
 const workspaceContentSelect =
   "id, org_id, client_id, project_id, project_name, title, due_client_at, due_editor_at, publish_at, status, thumbnail_done, billable_flag, delivery_month, unit_price, invoice_id, sequence_no, assignee_editor_user_id, assignee_checker_user_id, revision_count, workload_points, estimated_cost, next_action, blocked_reason, material_status, draft_status, final_status, health_score, links_json, editor_submitted_at, client_submitted_at"
-const workspaceContentSelectLegacy = removeLinksJsonFromSelect(workspaceContentSelect)
+const workspaceContentSelectLegacy = removeWorkItemFieldsFromSelect(removeLinksJsonFromSelect(workspaceContentSelect))
 
 function getWorkspaceKey(orgId: string, role: string | null, canEdit: boolean, canViewFinance: boolean) {
   return `${orgId}:${role ?? "none"}:${canEdit ? "edit" : "read"}:${canViewFinance ? "finance" : "base"}`
@@ -178,7 +181,11 @@ async function fetchWorkspaceSnapshot(params: {
       .eq("org_id", orgId)
       .order("due_client_at", { ascending: true })
 
-    if (result.error && isMissingContentsLinksJsonColumn(result.error.message)) {
+    if (
+      result.error &&
+      (isMissingContentsLinksJsonColumn(result.error.message) ||
+        isMissingContentsWorkItemFieldsColumn(result.error.message))
+    ) {
       const legacyResult = await supabase
         .from("contents")
         .select(workspaceContentSelectLegacy)
@@ -376,15 +383,23 @@ async function refreshWorkspaceSnapshot(params: {
   return promise
 }
 
-export function useProjectWorkspace(): ProjectWorkspaceState {
+export function useProjectWorkspace(options?: { requireAdminSurface?: boolean }): ProjectWorkspaceState {
   const { activeOrgId, role, permissions, loading: authLoading, needsOnboarding } = useAuthOrg({ redirectToOnboarding: true })
   const canEdit = hasOrgPermission(role, permissions, "contents_write")
   const canViewFinance = role === "owner" || role === "executive_assistant"
+  const requireAdminSurface = Boolean(options?.requireAdminSurface)
   const [snapshot, setSnapshot] = useState<ProjectWorkspaceSnapshot>(() => emptyWorkspaceSnapshot())
 
   const load = useCallback(
-    async (options?: { force?: boolean }) => {
-      if (!activeOrgId) {
+    async (loadOptions?: { force?: boolean }) => {
+      const shouldLoad = shouldLoadProjectWorkspace({
+        activeOrgId,
+        needsOnboarding,
+        requireAdminSurface,
+        role,
+      })
+
+      if (!shouldLoad) {
         setSnapshot({
           ...emptyWorkspaceSnapshot(),
           loading: false,
@@ -392,18 +407,19 @@ export function useProjectWorkspace(): ProjectWorkspaceState {
           role: role ?? null,
           canEdit,
           canViewFinance,
-          orgId: null,
+          orgId: activeOrgId,
         })
         return
       }
 
-      const key = getWorkspaceKey(activeOrgId, role, canEdit, canViewFinance)
-      const cached = options?.force ? null : readWorkspaceCache(key)
+      const workspaceOrgId = activeOrgId as string
+      const key = getWorkspaceKey(workspaceOrgId, role, canEdit, canViewFinance)
+      const cached = loadOptions?.force ? null : readWorkspaceCache(key)
       if (cached) {
         setSnapshot(cached.snapshot)
         if (cached.stale) {
           void refreshWorkspaceSnapshot({
-            orgId: activeOrgId,
+            orgId: workspaceOrgId,
             role,
             canEdit,
             canViewFinance,
@@ -424,7 +440,7 @@ export function useProjectWorkspace(): ProjectWorkspaceState {
         ...prev,
         loading: true,
         error: null,
-        orgId: activeOrgId,
+        orgId: workspaceOrgId,
         role: role ?? null,
         canEdit,
         canViewFinance,
@@ -433,7 +449,7 @@ export function useProjectWorkspace(): ProjectWorkspaceState {
 
       try {
         const nextSnapshot = await refreshWorkspaceSnapshot({
-          orgId: activeOrgId,
+          orgId: workspaceOrgId,
           role,
           canEdit,
           canViewFinance,
@@ -447,7 +463,7 @@ export function useProjectWorkspace(): ProjectWorkspaceState {
           ...prev,
           loading: false,
           error: "ワークスペースの読み込みに失敗しました",
-          orgId: activeOrgId,
+          orgId: workspaceOrgId,
           role: role ?? null,
           canEdit,
           canViewFinance,
@@ -455,13 +471,20 @@ export function useProjectWorkspace(): ProjectWorkspaceState {
         }))
       }
     },
-    [activeOrgId, canEdit, canViewFinance, needsOnboarding, role]
+    [activeOrgId, canEdit, canViewFinance, needsOnboarding, requireAdminSurface, role]
   )
 
   useEffect(() => {
     if (authLoading) return
 
-    if (!activeOrgId || needsOnboarding) {
+    if (
+      !shouldLoadProjectWorkspace({
+        activeOrgId,
+        needsOnboarding,
+        requireAdminSurface,
+        role,
+      })
+    ) {
       queueMicrotask(() =>
         setSnapshot({
           ...emptyWorkspaceSnapshot(),
@@ -476,13 +499,14 @@ export function useProjectWorkspace(): ProjectWorkspaceState {
       return
     }
 
-    const key = getWorkspaceKey(activeOrgId, role, canEdit, canViewFinance)
+    const workspaceOrgId = activeOrgId as string
+    const key = getWorkspaceKey(workspaceOrgId, role, canEdit, canViewFinance)
     const cached = readWorkspaceCache(key)
     if (cached) {
       queueMicrotask(() => setSnapshot(cached.snapshot))
       if (cached.stale) {
         void refreshWorkspaceSnapshot({
-          orgId: activeOrgId,
+          orgId: workspaceOrgId,
           role,
           canEdit,
           canViewFinance,
@@ -502,18 +526,37 @@ export function useProjectWorkspace(): ProjectWorkspaceState {
     queueMicrotask(() => {
       void load({ force: true })
     })
-  }, [activeOrgId, authLoading, canEdit, canViewFinance, load, needsOnboarding, role])
+  }, [activeOrgId, authLoading, canEdit, canViewFinance, load, needsOnboarding, requireAdminSurface, role])
 
-  const refresh = useCallback(async (options?: { silent?: boolean }) => {
-    if (!activeOrgId) return
-    const silent = Boolean(options?.silent)
+  const refresh = useCallback(async (refreshOptions?: { silent?: boolean }) => {
+    if (
+      !shouldLoadProjectWorkspace({
+        activeOrgId,
+        needsOnboarding,
+        requireAdminSurface,
+        role,
+      })
+    ) {
+      setSnapshot({
+        ...emptyWorkspaceSnapshot(),
+        loading: false,
+        needsOnboarding,
+        role: role ?? null,
+        canEdit,
+        canViewFinance,
+        orgId: activeOrgId ?? null,
+      })
+      return
+    }
+    const workspaceOrgId = activeOrgId as string
+    const silent = Boolean(refreshOptions?.silent)
 
     if (!silent) {
       setSnapshot((prev) => ({
         ...prev,
         loading: true,
         error: null,
-        orgId: activeOrgId,
+        orgId: workspaceOrgId,
         role: role ?? null,
         canEdit,
         canViewFinance,
@@ -525,7 +568,7 @@ export function useProjectWorkspace(): ProjectWorkspaceState {
 
     try {
       const nextSnapshot = await refreshWorkspaceSnapshot({
-        orgId: activeOrgId,
+        orgId: workspaceOrgId,
         role,
         canEdit,
         canViewFinance,
@@ -540,14 +583,14 @@ export function useProjectWorkspace(): ProjectWorkspaceState {
         ...prev,
         loading: false,
         error: "ワークスペースの再取得に失敗しました",
-        orgId: activeOrgId,
+        orgId: workspaceOrgId,
         role: role ?? null,
         canEdit,
         canViewFinance,
         needsOnboarding: false,
       }))
     }
-  }, [activeOrgId, canEdit, canViewFinance, role])
+  }, [activeOrgId, canEdit, canViewFinance, needsOnboarding, requireAdminSurface, role])
 
   return {
     ...snapshot,

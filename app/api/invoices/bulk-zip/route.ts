@@ -52,6 +52,9 @@ async function buildPdfBuffer(admin: ReturnType<typeof createSupabaseAdmin>, org
     .eq("id", invoiceId)
     .eq("org_id", orgId)
     .maybeSingle()
+  if (invoice && (invoice as { status?: string | null }).status !== "issued") {
+    throw new Error("PDF ZIP では発行済みの請求書だけ生成できます。")
+  }
   if (invoiceError || !invoice) throw new Error("請求書が見つかりません。")
 
   const clientId = (invoice as { client_id?: string | null }).client_id
@@ -165,7 +168,7 @@ export async function POST(req: NextRequest) {
     for (const invoiceId of invoiceIds) {
       const { data: invoice } = await admin
         .from("invoices")
-        .select("pdf_path")
+        .select("pdf_path, status")
         .eq("id", invoiceId)
         .eq("org_id", orgId)
         .maybeSingle()
@@ -180,6 +183,10 @@ export async function POST(req: NextRequest) {
           files.push({ name, data: new Uint8Array(arrayBuffer) })
           continue
         }
+      }
+
+      if ((invoice as { status?: string | null }).status !== "issued") {
+        return NextResponse.json({ ok: false, message: "PDF ZIP は発行済みの請求書だけ生成できます。" }, { status: 422 })
       }
 
       const generated = await buildPdfBuffer(admin, orgId, invoiceId)

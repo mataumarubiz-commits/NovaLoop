@@ -82,21 +82,6 @@ export function ProjectShell({
                 </Link>
               )
             })}
-            <Link
-              href="/contents"
-              style={{
-                padding: "10px 16px",
-                marginLeft: "auto",
-                borderBottom: "2px solid transparent",
-                color: "var(--muted)",
-                textDecoration: "none",
-                fontSize: 13,
-                fontWeight: 500,
-                whiteSpace: "nowrap",
-              }}
-            >
-              制作シートへ &rarr;
-            </Link>
           </nav>
         </header>
 

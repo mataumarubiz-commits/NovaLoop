@@ -1,20 +1,27 @@
 import Link from "next/link"
-import { notFound } from "next/navigation"
+import { notFound, redirect } from "next/navigation"
 import type { CSSProperties } from "react"
 import HelpArticleTracker from "@/components/help/HelpArticleTracker"
-import { HELP_ARTICLES, getCategoryLabel } from "@/lib/helpCenter"
+import { HELP_ARTICLES, HELP_SLUG_ALIASES, getCategoryLabel, resolveHelpSlug } from "@/lib/helpCenter"
 
 type Props = {
   params: Promise<{ slug: string }>
 }
 
 export function generateStaticParams() {
-  return HELP_ARTICLES.map((article) => ({ slug: article.slug }))
+  return [
+    ...HELP_ARTICLES.map((article) => ({ slug: article.slug })),
+    ...Object.keys(HELP_SLUG_ALIASES).map((slug) => ({ slug })),
+  ]
 }
 
 export default async function HelpArticlePage({ params }: Props) {
   const { slug } = await params
-  const article = HELP_ARTICLES.find((item) => item.slug === slug)
+  const canonicalSlug = resolveHelpSlug(slug)
+  if (canonicalSlug !== slug) {
+    redirect(`/help/${canonicalSlug}`)
+  }
+  const article = HELP_ARTICLES.find((item) => item.slug === canonicalSlug)
   if (!article) notFound()
 
   const related = HELP_ARTICLES.filter((item) => item.category === article.category && item.id !== article.id)
@@ -119,8 +126,8 @@ export default async function HelpArticlePage({ params }: Props) {
               <Link href="/pages" style={quickLinkStyle}>
                 Pages を開く
               </Link>
-              <Link href="/contents" style={quickLinkStyle}>
-                Contents を開く
+              <Link href="/projects" style={quickLinkStyle}>
+                案件を開く
               </Link>
               <Link href="/billing" style={quickLinkStyle}>
                 Billing を開く

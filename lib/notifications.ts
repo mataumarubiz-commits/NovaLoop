@@ -13,7 +13,12 @@ export const NOTIFICATION_TYPES = [
   "billing.request_sent",
   "billing.request_due_soon",
   "billing.request_overdue",
+  "payout.batch_ready",
+  "payout.transfer_succeeded",
+  "payout.transfer_failed",
   "payouts.pending_action",
+  "bank_account.change_requested",
+  "bank_account.change_approved",
   "vendor_invoice.submitted",
   "vendor_invoice.requested",
   "vendor_invoice.request_due_soon",
@@ -62,6 +67,8 @@ export function notificationPriority(n: NotificationLike): number {
       return 79
     case "billing.request_overdue":
       return 78
+    case "payout.transfer_failed":
+      return 77
     case "billing.request_due_soon":
       return 76
     case "vendor_invoice.submitted":
@@ -76,10 +83,17 @@ export function notificationPriority(n: NotificationLike): number {
       return 70
     case "payouts.pending_action":
       return 68
+    case "payout.batch_ready":
+      return 67
     case "vendor_invoice.rejected":
       return 66
+    case "bank_account.change_requested":
+      return 65
     case "vendor_portal.invited":
       return 64
+    case "payout.transfer_succeeded":
+    case "bank_account.change_approved":
+      return 63
     case "vendor_invoice.approved":
       return 62
     case "membership.rejected":
@@ -113,8 +127,18 @@ export function notificationSeverity(n: NotificationLike): { label: string; bg: 
       return { label: "期限接近", bg: "#fff7ed", text: "#9a3412" }
     case "billing.request_overdue":
       return { label: "期限超過", bg: "#fff1f2", text: "#9f1239" }
+    case "payout.transfer_failed":
+      return { label: "振込失敗", bg: "#fff1f2", text: "#9f1239" }
+    case "payout.transfer_succeeded":
+      return { label: "振込完了", bg: "#f0fdf4", text: "#166534" }
+    case "payout.batch_ready":
+      return { label: "承認待ち", bg: "#fffbeb", text: "#92400e" }
     case "payouts.pending_action":
       return { label: "支払い待ち", bg: "#ecfeff", text: "#155e75" }
+    case "bank_account.change_requested":
+      return { label: "口座変更", bg: "#fff7ed", text: "#9a3412" }
+    case "bank_account.change_approved":
+      return { label: "口座承認", bg: "#f0fdf4", text: "#166534" }
     case "vendor_invoice.submitted":
       return { label: "外注提出", bg: "#eff6ff", text: "#1d4ed8" }
     case "vendor_invoice.requested":
@@ -180,10 +204,20 @@ export function notificationTitle(n: NotificationLike): string {
       const deadline = String(payload.request_deadline ?? "")
       return deadline ? `請求依頼の期限を過ぎています: ${deadline}` : "請求依頼の期限を過ぎています"
     }
+    case "payout.batch_ready":
+      return "支払バッチの承認待ちがあります"
+    case "payout.transfer_succeeded":
+      return "振込が完了しました"
+    case "payout.transfer_failed":
+      return "振込に失敗しました"
     case "payouts.pending_action": {
       const month = String(payload.target_month ?? payload.month ?? "")
       return `${month || "対象月"} の支払い待ち: ${Number(payload.pending_payout_count ?? payload.count ?? 0)}件`
     }
+    case "bank_account.change_requested":
+      return "口座変更申請があります"
+    case "bank_account.change_approved":
+      return "口座変更を承認しました"
     case "vendor_invoice.submitted": {
       const vendorName = String(payload.vendor_name ?? "")
       const month = String(payload.billing_month ?? "")
@@ -235,16 +269,22 @@ export function notificationActionHref(n: NotificationLike): string {
     case "membership.rejected":
       return "/settings/members"
     case "contents.client_due_overdue":
-      return "/contents?filter=client_overdue"
+      return "/projects?focus=client_overdue"
     case "contents.editor_due_overdue":
-      return "/contents?filter=editor_overdue"
+      return "/projects?focus=editor_overdue"
     case "billing.month_close_ready":
     case "billing.request_sent":
     case "billing.request_due_soon":
     case "billing.request_overdue":
       return `/billing${monthQuery}`
+    case "payout.batch_ready":
+    case "payout.transfer_succeeded":
+    case "payout.transfer_failed":
     case "payouts.pending_action":
       return `/payouts${monthQuery}`
+    case "bank_account.change_requested":
+    case "bank_account.change_approved":
+      return "/vendors"
     case "vendor_invoice.requested":
     case "vendor_invoice.request_due_soon":
     case "vendor_invoice.request_overdue":
@@ -270,6 +310,8 @@ export function notificationResolved(n: NotificationLike): boolean {
     normalized === "membership.approved" ||
     normalized === "membership.rejected" ||
     normalized === "vendor_invoice.approved" ||
+    normalized === "payout.transfer_succeeded" ||
+    normalized === "bank_account.change_approved" ||
     normalized === "platform.license_activated" ||
     normalized === "platform.transfer_completed"
   )

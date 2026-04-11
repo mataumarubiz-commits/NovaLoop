@@ -40,6 +40,7 @@ type InvoiceRequestRow = {
   last_reminded_at: string | null
   last_sent_at: string | null
   issued_invoice_id: string | null
+  issued_invoice_status?: string | null
   created_at: string
 }
 
@@ -122,6 +123,9 @@ export async function GET(req: NextRequest) {
   const requests = (data ?? []) as InvoiceRequestRow[]
   const requestIds = requests.map((row) => row.id)
   const clientIds = Array.from(new Set(requests.map((row) => row.client_id).filter((value): value is string => Boolean(value))))
+  const issuedInvoiceIds = Array.from(
+    new Set(requests.map((row) => row.issued_invoice_id).filter((value): value is string => Boolean(value)))
+  )
 
   const { data: clientRows, error: clientError } =
     clientIds.length > 0
@@ -147,6 +151,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, message: logsError.message }, { status: 500 })
   }
 
+  const { data: linkedInvoices, error: invoiceError } =
+    issuedInvoiceIds.length > 0
+      ? await supabase.from("invoices").select("id, status").eq("org_id", orgId).in("id", issuedInvoiceIds)
+      : { data: [], error: null }
+
+  if (invoiceError) {
+    return NextResponse.json({ ok: false, message: invoiceError.message }, { status: 500 })
+  }
+
   const logsByRequest = new Map<string, ReminderLogRow[]>()
   for (const log of (logs ?? []) as ReminderLogRow[]) {
     if (!log.invoice_request_id) continue
@@ -158,10 +171,14 @@ export async function GET(req: NextRequest) {
   const clientNameById = new Map(
     ((clientRows ?? []) as Array<{ id: string; name: string | null }>).map((row) => [row.id, row.name ?? null])
   )
+  const invoiceStatusById = new Map(
+    ((linkedInvoices ?? []) as Array<{ id: string; status: string | null }>).map((row) => [row.id, row.status ?? null])
+  )
 
   const enriched = requests.map((row) => ({
     ...row,
     client_name: row.client_id ? clientNameById.get(row.client_id) ?? null : null,
+    issued_invoice_status: row.issued_invoice_id ? invoiceStatusById.get(row.issued_invoice_id) ?? null : null,
     reminder_logs: (logsByRequest.get(row.id) ?? []).slice(0, 5),
   }))
 

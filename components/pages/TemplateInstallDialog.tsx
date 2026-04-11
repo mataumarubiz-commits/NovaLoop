@@ -116,7 +116,8 @@ function pageTypeLabel(pt: string) {
 
 function integrationTargetLabel(t: string) {
   switch (t) {
-    case "/contents": return "進行管理"
+    case "/contents":
+    case "/projects": return "案件管理"
     case "/billing": return "請求"
     case "/vendors": return "外注"
     case "/payouts": return "支払い"

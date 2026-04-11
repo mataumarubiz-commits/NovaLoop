@@ -84,6 +84,10 @@ export async function POST(
     return NextResponse.json({ error: "Invoice not found or access denied" }, { status: 404 })
   }
 
+  if ((invoice as { status?: string | null }).status !== "issued") {
+    return NextResponse.json({ error: "PDF can only be generated after the invoice is issued" }, { status: 422 })
+  }
+
   const clientId = (invoice as { client_id?: string | null }).client_id
   let clientName = ""
   if (clientId) {
@@ -171,6 +175,7 @@ export async function POST(
       .update({
         pdf_path: storagePath,
         pdf_generated_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
       })
       .eq("id", invoiceId)
       .eq("org_id", orgId)

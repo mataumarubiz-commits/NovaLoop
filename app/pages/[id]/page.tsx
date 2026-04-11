@@ -265,7 +265,8 @@ function taskListNode(items: string[]): JSONContent {
 function formatIntegrationTargetLabel(target: string): string {
   switch (target) {
     case "/contents":
-      return "進行管理"
+    case "/projects":
+      return "案件管理"
     case "/billing":
       return "請求"
     case "/vendors":
@@ -285,7 +286,11 @@ function formatIntegrationTargetLabel(target: string): string {
 
 function buildTemplateStarterBlocks(pageType: TemplateStarterKind, integrationTargets: string[]): JSONContent[] {
   const targets = Array.from(
-    new Set(integrationTargets.length > 0 ? integrationTargets : ["/contents", "/notifications", "/settings"])
+    new Set(
+      (integrationTargets.length > 0 ? integrationTargets : ["/projects", "/notifications", "/settings"]).map((target) =>
+        target === "/contents" ? "/projects" : target
+      )
+    )
   ).slice(0, 4)
 
   if (pageType === "checklist") {
@@ -332,7 +337,7 @@ function buildTemplateStarterBlocks(pageType: TemplateStarterKind, integrationTa
     bulletListNode([
       [{ text: "結論や目的を最初に1行で書く" }],
       [{ text: "次の更新条件を箇条書きで残す" }],
-      [{ text: `${formatIntegrationTargetLabel(targets[0] ?? "/contents")}の正式データを先に更新する`, href: targets[0] ?? "/contents" }],
+      [{ text: `${formatIntegrationTargetLabel(targets[0] ?? "/projects")}の正式データを先に更新する`, href: targets[0] ?? "/projects" }],
     ]),
   ]
 }
@@ -465,7 +470,7 @@ function buildPracticalGuide(rawText: string, canUseAccounting: boolean): Practi
     title: "日常運用の導線を開く",
     description: "タイトルに強い請求 / 支払い / 通知文脈がないため、Pages と日次運用の導線を表示しています。",
     actions: [
-      { href: "/contents", label: "進行管理を開く", description: "案件一覧と遅延状況を確認します。" },
+      { href: "/projects", label: "案件管理を開く", description: "案件一覧と遅延状況を確認します。" },
       { href: "/home", label: "ホームへ戻る", description: "全体 KPI と優先タスクを確認します。" },
       { href: "/help/pages-manual", label: "Pages ヘルプを見る", description: "社内マニュアル運用の基本を確認します。" },
     ],

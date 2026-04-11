@@ -298,8 +298,8 @@ export default function NewInvoicePage() {
     <div style={{ padding: "32px 40px 60px", background: "var(--bg-grad)", minHeight: "100vh" }}>
       <header style={{ marginBottom: 24 }}>
         <Link href="/invoices" style={{ color: "var(--primary)", fontWeight: 600, textDecoration: "none" }}>← 請求書</Link>
-        <h1 style={{ margin: "12px 0 6px", fontSize: 28, color: "var(--text)" }}>手動で請求書作成</h1>
-        <p style={{ color: "var(--muted)", margin: 0 }}>既存UIを変えずに、Bill Change 相当の手動発行だけを追加しています。</p>
+        <h1 style={{ margin: "12px 0 6px", fontSize: 28, color: "var(--text)" }}>手動で請求書下書きを作成</h1>
+        <p style={{ color: "var(--muted)", margin: 0 }}>請求条件を先に整えて下書きを作成し、発行は請求書詳細で確定します。</p>
       </header>
 
       {requestPrefill ? (

@@ -61,13 +61,14 @@ export default function PlatformPaymentsPage() {
     }
     setRows(Array.isArray(json.payments) ? json.payments : [])
     setLoading(false)
-  }, [])
+  }, [qStr])
 
-  /* eslint-disable */
   useEffect(() => {
-    void load()
+    const timer = setTimeout(() => {
+      void load()
+    }, 0)
+    return () => clearTimeout(timer)
   }, [load, qStr])
-  /* eslint-enable */
   
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()

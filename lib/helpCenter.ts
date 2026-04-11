@@ -41,8 +41,22 @@ function createArticle(article: Omit<HelpArticle, "href">): HelpArticle {
   }
 }
 
+export const HELP_SLUG_ALIASES: Record<string, string> = {
+  setup: "setup-workspace",
+  "first-week": "setup-workspace",
+  "org-roles": "organization-roles",
+  billing: "billing-monthly",
+  notifications: "notifications-delays",
+  "pages-manual": "pages-first-three",
+  "contents-daily": "projects-daily",
+}
+
+export function resolveHelpSlug(slug: string) {
+  return HELP_SLUG_ALIASES[slug] ?? slug
+}
+
 export const HELP_CATEGORIES: HelpCategory[] = [
-  { id: "contents", label: "Contents / 制作進行", description: "日々の案件進行・納期・ステータス管理", order: 1 },
+  { id: "contents", label: "Projects / 案件進行", description: "日々の案件進行・納期・ステータス管理", order: 1 },
   { id: "clients", label: "Clients / 案件・クライアント", description: "クライアント・案件・進行単位の管理", order: 2 },
   { id: "billing", label: "Billing / 請求", description: "請求対象・請求書・PDF 作成の流れ", order: 3 },
   { id: "vendors-payouts", label: "Vendors / Payouts", description: "外注請求の確認から支払いまで", order: 4 },
@@ -79,7 +93,7 @@ export const HELP_ARTICLES: HelpArticle[] = [
         heading: "迷いやすいポイント",
         body: [
           "会計系の画面はすべてのメンバーに公開されるわけではありません。Billing / Invoices / Vendors / Payouts / Vault は Owner / Executive Assistant のみアクセスできます。",
-          "Pages は運用ルールや判断基準を残す場所です。案件の正式な進行データは Contents 側で管理します。",
+          "Pages は運用ルールや判断基準を残す場所です。案件の正式な進行データは案件画面で管理します。",
         ],
       },
     ],
@@ -94,7 +108,7 @@ export const HELP_ARTICLES: HelpArticle[] = [
     order: 1,
     recommended_order: 2,
     highlights: [
-      "Contents は 1 行が 1 つの進行単位に対応します。",
+      "案件明細は 1 行が 1 つの進行単位に対応します。",
       "請求対象月は delivery_month を基準に決まります。",
       "納期・担当・ステータスを毎日更新するのが基本の運用です。",
     ],
@@ -126,7 +140,7 @@ export const HELP_ARTICLES: HelpArticle[] = [
     recommended_order: 3,
     highlights: [
       "Pages は手順書と判断基準を置くための場所です。",
-      "Contents や Billing の正式データとの二重管理を避けるのが前提です。",
+      "案件画面や Billing の正式データとの二重管理を避けるのが前提です。",
       "毎日参照する導線というより、迷ったときに立ち戻る基準をつくる役割です。",
     ],
     sections: [
@@ -134,13 +148,13 @@ export const HELP_ARTICLES: HelpArticle[] = [
         heading: "最初の 3 ページに向いている内容",
         body: [
           "まずは「請求手順」「外注請求の確認フロー」「通知対応ルール」の 3 ページを作成すると、日常の運用で迷う場面が減ります。",
-          "運用ルールや例外時の判断は Pages に残し、案件の状態や納期は Contents に残すという使い分けが基本です。",
+          "運用ルールや例外時の判断は Pages に残し、案件の状態や納期は案件画面に残すという使い分けが基本です。",
         ],
       },
       {
         heading: "Pages の使い方で押さえておくこと",
         body: [
-          "Pages はナレッジの置き場であり、正式な案件台帳ではありません。案件の実態は Contents、請求の実態は Billing / Invoices で管理します。",
+          "Pages はナレッジの置き場であり、正式な案件台帳ではありません。案件の実態は案件画面、請求の実態は Billing / Invoices で管理します。",
           "更新頻度が高いルールは短いページに分けておくと、あとから探しやすくなります。",
         ],
       },
@@ -148,8 +162,8 @@ export const HELP_ARTICLES: HelpArticle[] = [
   }),
   createArticle({
     id: "contents-daily",
-    slug: "contents-daily",
-    title: "Contents の日常運用",
+    slug: "projects-daily",
+    title: "案件の日常運用",
     description: "毎日どこを確認し、何を更新すれば進行が安定するかをまとめます。",
     category: "contents",
     icon: "C",
@@ -163,7 +177,7 @@ export const HELP_ARTICLES: HelpArticle[] = [
       {
         heading: "毎日確認する順番",
         body: [
-          "まず当日の納期、次に遅延、最後に未提出を確認します。Home や Notifications で気になる行を見つけたら、最終的な更新は Contents で行います。",
+          "まず当日の納期、次に遅延、最後に未提出を確認します。Home や Notifications で気になる行を見つけたら、最終的な更新は案件画面で行います。",
           "status、due_client_at、due_editor_at、担当、nextAction など、進行に直結する項目を止めずに更新することが重要です。",
         ],
       },
@@ -171,7 +185,7 @@ export const HELP_ARTICLES: HelpArticle[] = [
         heading: "停滞しやすい場面",
         body: [
           "納期だけ変更して delivery_month を見直していないと、請求側とのずれが生じます。請求対象かどうかは billable_flag とあわせて確認してください。",
-          "Pages にだけ運用メモを書いて Contents を更新しないままだと、現場の状況を把握できなくなります。",
+          "Pages にだけ運用メモを書いて案件画面を更新しないままだと、現場の状況を把握できなくなります。",
         ],
       },
     ],
@@ -201,7 +215,7 @@ export const HELP_ARTICLES: HelpArticle[] = [
         heading: "迷ったときの判断基準",
         body: [
           "請求書を分けたい、担当を分けたい、納期の山を分けたい、のいずれかに該当するなら案件を分けるのが確実です。",
-          "Pages は案件ごとの補足ルールを残すのに向いていますが、日々の進行状況は Contents や Projects で管理します。",
+          "Pages は案件ごとの補足ルールを残すのに向いていますが、日々の進行状況は案件画面で管理します。",
         ],
       },
     ],
@@ -328,7 +342,7 @@ export const HELP_ARTICLES: HelpArticle[] = [
       {
         heading: "Pages に書かない方がよい内容",
         body: [
-          "日々変わる納期、担当、請求状態などの正式データを Pages に持つと二重管理になります。正式な更新は Contents や Billing 側で行ってください。",
+          "日々変わる納期、担当、請求状態などの正式データを Pages に持つと二重管理になります。正式な更新は案件画面や Billing 側で行ってください。",
           "Pages には背景や判断理由を残し、数値や進行状態は各機能の画面に集約するのが安全です。",
         ],
       },
@@ -345,20 +359,20 @@ export const HELP_ARTICLES: HelpArticle[] = [
     highlights: [
       "通知は入り口であり、最終的な確認は対象画面で行います。",
       "遅延・未確認・支払い待ちなど、優先度の高い項目から処理します。",
-      "通知を確認しただけで終えず、Contents や Payouts で状態を更新します。",
+      "通知を確認しただけで終えず、案件画面や Payouts で状態を更新します。",
     ],
     sections: [
       {
         heading: "通知の基本的な確認方法",
         body: [
           "Notifications では、何が滞留しているかを一覧で把握し、対応先の画面に移動します。",
-          "通知はあくまで入り口です。実際の更新は Contents、Vendors、Payouts など対象の画面で行います。",
+          "通知はあくまで入り口です。実際の更新は案件画面、Vendors、Payouts など対象の画面で行います。",
         ],
       },
       {
         heading: "遅延に気づいたとき",
         body: [
-          "納期の遅れなら Contents、外注の確認待ちなら Vendors、支払い待ちなら Payouts というように、対応先の画面を分けて考えます。",
+          "納期の遅れなら案件画面、外注の確認待ちなら Vendors、支払い待ちなら Payouts というように、対応先の画面を分けて考えます。",
           "遅延の原因や再発防止のルールは Pages に残しておくと、次回以降の判断が早くなります。",
         ],
       },
@@ -374,7 +388,7 @@ export const HELP_ARTICLES: HelpArticle[] = [
     order: 1,
     highlights: [
       "AI は下書きや整理の補助として使い、最終判断は人が行います。",
-      "Contents では下書き作成を中心とした使い方が基本です。",
+      "案件画面では下書き作成を中心とした使い方が基本です。",
       "Pages や外部連携の AI は、判断材料を整える用途に向いています。",
     ],
     sections: [
@@ -382,7 +396,7 @@ export const HELP_ARTICLES: HelpArticle[] = [
         heading: "AI の活用場面",
         body: [
           "AI は文章のたたき台づくり、要約、情報整理に向いています。判断や承認そのものを自動化する前提ではありません。",
-          "Pages では手順書や文面の整形に、Contents では下書きの作成に使うと実務に馴染みやすくなります。",
+          "Pages では手順書や文面の整形に、案件画面では下書きの作成に使うと実務に馴染みやすくなります。",
         ],
       },
       {

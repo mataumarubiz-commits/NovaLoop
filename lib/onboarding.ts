@@ -39,7 +39,7 @@ export const ONBOARDING_ITEMS: OnboardingItemDefinition[] = [
     key: "client_created",
     title: "クライアントを登録する",
     description: "最初の取引先を登録して運用の土台をつくります。",
-    href: withChecklistSource("/contents?newClient=1"),
+    href: withChecklistSource("/projects?create=1&newClient=1"),
     helpHref: "/help/setup",
   },
   {
@@ -53,8 +53,8 @@ export const ONBOARDING_ITEMS: OnboardingItemDefinition[] = [
     key: "first_content",
     title: "最初の案件を登録する",
     description: "運用中の案件をまず 1 件だけ登録します。",
-    href: withChecklistSource("/contents"),
-    helpHref: "/help/contents-daily",
+    href: withChecklistSource("/projects?create=1"),
+    helpHref: "/help/projects-daily",
   },
   {
     key: "first_invoice",
